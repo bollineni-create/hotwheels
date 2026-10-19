@@ -57,6 +57,8 @@
     s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo' }, s.prefs);
     s.liveCars = s.liveCars || {};
     if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
+    // A desktop build with a built-in auto.dev key starts on live data.
+    if (!s.prefs.sourceChosen && window.gridlineDesktop && window.gridlineDesktop.defaultKeys && window.gridlineDesktop.defaultKeys.autodev) s.prefs.dataSource = 'autodev';
     return {
       get: () => s,
       update(fn) {
@@ -1935,8 +1937,10 @@
     const ad = Live.usage('autodev');
     const vz = Live.usage('visor');
     const keyRow = (prov, label, help) => {
-      const key = Live.getKey(prov);
-      return `<div class="set-row key-row"><span><b>${label}</b><small>${help}</small></span>
+      const saved = (() => { try { return localStorage.getItem('gridline:key:' + prov) || ''; } catch (e) { return ''; } })();
+      const key = saved;
+      const builtIn = !saved && Live.builtInKey(prov);
+      return `<div class="set-row key-row"><span><b>${label}</b><small>${builtIn ? 'Using the key built into this app. Paste a different one to override it.' : help}</small></span>
         <form class="key-form" data-provider="${prov}"><input type="password" id="api-key-${prov}" placeholder="Paste API key" autocomplete="off" spellcheck="false" value="${esc(key)}">
           <button class="btn primary" type="submit">Save</button>${key ? `<button class="btn ghost" type="button" data-action="clear-key" data-provider="${prov}">Remove</button>` : ''}</form></div>`;
     };
@@ -2197,6 +2201,7 @@
       const k = t.dataset.pref;
       store.update((s) => {
         s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : t.value || null;
+        if (k === 'dataSource') s.prefs.sourceChosen = true;
       });
       if (k === 'dataSource') {
         syncProvider();

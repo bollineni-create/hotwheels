@@ -4,6 +4,16 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+
+// Optional API keys baked into your own build (electron/keys.local.json, not in git).
+function bundledKeys() {
+  try {
+    const keys = JSON.parse(fs.readFileSync(path.join(__dirname, 'keys.local.json'), 'utf8'));
+    return Object.fromEntries(Object.entries(keys).filter(([k, v]) => ['autodev', 'visor'].includes(k) && typeof v === 'string' && v.trim()));
+  } catch (e) {
+    return {};
+  }
+}
 const STATE_FILE = () => path.join(app.getPath('userData'), 'window-state.json');
 const isMac = process.platform === 'darwin';
 
@@ -52,6 +62,7 @@ function createWindow() {
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: [`--gridline-keys=${Buffer.from(JSON.stringify(bundledKeys())).toString('base64')}`],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

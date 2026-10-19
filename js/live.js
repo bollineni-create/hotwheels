@@ -30,9 +30,11 @@
   const provider = () => current;
   const info = (p) => PROVIDERS[p || current];
   const keyStore = (p) => 'gridline:key:' + p;
+  // A key saved in Settings wins; otherwise use one built into this desktop app.
+  const builtInKey = (prov) => (root.gridlineDesktop && root.gridlineDesktop.defaultKeys && root.gridlineDesktop.defaultKeys[prov]) || '';
   const getKey = (p) => {
     const prov = p || current;
-    return safe(() => localStorage.getItem(keyStore(prov)) || (prov === 'visor' ? localStorage.getItem('gridline:visorKey') : null), null) || '';
+    return safe(() => localStorage.getItem(keyStore(prov)) || (prov === 'visor' ? localStorage.getItem('gridline:visorKey') : null), null) || builtInKey(prov);
   };
   const setKey = (k, p) => safe(() => (k ? localStorage.setItem(keyStore(p || current), k.trim()) : localStorage.removeItem(keyStore(p || current))));
   const monthKey = (p) => `gridline:calls:${p}:${new Date().toISOString().slice(0, 7)}`;
@@ -729,7 +731,7 @@
   const call = (name) => (...args) => mod()[name](...args);
 
   const api = {
-    PROVIDERS, setProvider, provider, info, getKey, setKey, usage, costs, request, transport, LiveError,
+    PROVIDERS, setProvider, provider, info, getKey, setKey, builtInKey, usage, costs, request, transport, LiveError,
     caps: () => mod().caps, get SORT() { return mod().SORT; }, get PAGE() { return mod().PAGE; },
     toParams: (...a) => mod().toParams(...a),
     search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), inventoryTrend: call('inventoryTrend'),
