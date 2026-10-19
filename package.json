@@ -1,0 +1,10 @@
+{
+  "name": "gridline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Whole-market used and new car search with fair value, price history and market insights. No build step.",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test"
+  }
+}
