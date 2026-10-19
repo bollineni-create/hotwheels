@@ -17,7 +17,7 @@ To build your API keys in at the same time, put them in front of `zsh`: `... | V
 
 The first time, it asks for your Visor and auto.dev keys so you get real listings (Visor is used when both are given). Press Enter to skip either; with neither, it uses the demo listings. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
 
-After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It keeps itself up to date: each time you open or switch to it, and every 15 minutes while it's open, it pulls the latest version from GitHub into `~/hotwheels`. Changes to the pages show up in the open window within a second. If the update changed the Mac app itself (`app/macos/`), Gridline rebuilds, reinstalls and reopens itself. Edits you make to the HTML, CSS or JS in `~/hotwheels` also show up right away. If the folder moves, the app falls back to the copy built into it.
+After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It keeps itself up to date: each time you open or switch to it, and every 15 minutes while it's open, it pulls the latest version of the `main` branch from GitHub into `~/hotwheels`. Changes to the pages show up in the open window within a second. If the update changed the Mac app itself (`app/macos/`), Gridline rebuilds, reinstalls and reopens itself. Edits you make to the HTML, CSS or JS in `~/hotwheels` also show up right away. If the folder moves, the app falls back to the copy built into it.
 
 ## Run it as an Electron app
 

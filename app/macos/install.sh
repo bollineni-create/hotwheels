@@ -14,9 +14,11 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 
 if [[ -d "$DIR/.git" ]]; then
-  git -C "$DIR" pull --ff-only --quiet
+  git -C "$DIR" fetch --quiet origin main
+  git -C "$DIR" checkout --quiet main
+  git -C "$DIR" merge --ff-only --quiet origin/main
 else
-  git clone --quiet https://github.com/bollineni-create/hotwheels.git "$DIR"
+  git clone --quiet --branch main https://github.com/bollineni-create/hotwheels.git "$DIR"
 fi
 
 if [[ -n "${VISOR_KEY:-}${AUTODEV_KEY:-}" ]]; then
