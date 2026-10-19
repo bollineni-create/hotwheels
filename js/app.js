@@ -57,8 +57,9 @@
     s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo' }, s.prefs);
     s.liveCars = s.liveCars || {};
     if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
-    // A desktop build with a built-in auto.dev key starts on live data.
-    if (!s.prefs.sourceChosen && window.gridlineDesktop && window.gridlineDesktop.defaultKeys && window.gridlineDesktop.defaultKeys.autodev) s.prefs.dataSource = 'autodev';
+    // A desktop build with a built-in key starts on live data, preferring Visor (fuller data) over auto.dev.
+    const builtIn = (window.gridlineDesktop && window.gridlineDesktop.defaultKeys) || {};
+    if (!s.prefs.sourceChosen && (builtIn.visor || builtIn.autodev)) s.prefs.dataSource = builtIn.visor ? 'visor' : 'autodev';
     return {
       get: () => s,
       update(fn) {

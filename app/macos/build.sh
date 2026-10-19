@@ -13,11 +13,13 @@ APP="$ROOT/build/Gridline.app"
 RES="$APP/Contents/Resources"
 KEYS="$ROOT/electron/keys.local.json"
 
-# A free auto.dev key turns on real listings. It stays in this folder (git ignores it) and in the app.
+# API keys turn on real listings: Visor (paid, fullest data) and auto.dev (free).
+# They stay in this folder (git ignores them) and in the app.
 if [[ ! -f "$KEYS" && -t 0 ]]; then
-  read "key?Paste your auto.dev API key for real listings (or press Enter to skip): "
-  if [[ -n "$key" ]]; then
-    printf '{ "autodev": "%s" }\n' "$key" > "$KEYS"
+  read "visor?Paste your Visor API key (or press Enter to skip): "
+  read "autodev?Paste your auto.dev API key (or press Enter to skip): "
+  if [[ -n "$visor$autodev" ]]; then
+    printf '{ "visor": "%s", "autodev": "%s" }\n' "$visor" "$autodev" > "$KEYS"
     chmod 600 "$KEYS"
   fi
 fi

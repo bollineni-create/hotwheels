@@ -14,7 +14,7 @@ git clone https://github.com/bollineni-create/hotwheels.git ~/hotwheels
 ~/hotwheels/app/macos/build.sh
 ```
 
-The first time, it asks for your free auto.dev key so you get real listings. Press Enter to skip, and it uses the demo listings instead. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
+The first time, it asks for your Visor and auto.dev keys so you get real listings (Visor is used when both are given). Press Enter to skip either; with neither, it uses the demo listings. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
 
 After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It reads its pages live from the `~/hotwheels` folder: after a `git pull`, or any edit to the HTML, CSS or JS, the open window reloads within a second, with no rebuild. If the folder moves, the app falls back to the copy built into it. Run `build.sh` again only after changing something in `app/macos/`.
 
