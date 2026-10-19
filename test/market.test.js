@@ -265,3 +265,35 @@ test('mock auto.dev enforces the free plan page size and rejects unknown paramet
   assert.equal((await get('/listings?make=Toyota')).status, 400);
   server.close();
 });
+
+test('transmission is a filter, and "manual" or "stick" in a search asks for it', () => {
+  assert.ok(Market.FACETS.includes('transmission'));
+  const ctx = { delta: () => 0 };
+  const f = Object.assign(Market.emptyFilters(), { transmission: ['Manual'] });
+  const { results, facets } = Market.search(listings, f, ctx);
+  assert.ok(results.length > 0 && results.every((l) => l.transmission === 'Manual'));
+  // A facet's own pick doesn't narrow its counts.
+  assert.ok(facets.transmission.find((x) => x.value === 'Automatic').count > 0);
+  // Hybrids and EVs never come with a manual; Civic Si and Type R always do.
+  assert.ok(listings.every((l) => l.transmission !== 'Manual' || l.fuel === 'Gas'));
+  assert.ok(listings.filter((l) => l.model === 'Civic' && ['Si', 'Type R'].includes(l.trim)).every((l) => l.transmission === 'Manual'));
+
+  assert.deepEqual(NLQ.parse('manual miata under 30k', vocab).filters.transmission, ['Manual']);
+  assert.deepEqual(NLQ.parse('6-speed manual mustang gt', vocab).filters.transmission, ['Manual']);
+  const stick = NLQ.parse('stick shift wrangler', vocab);
+  assert.deepEqual(stick.filters.transmission, ['Manual']);
+  assert.deepEqual(stick.filters.model, ['Jeep Wrangler']);
+  assert.equal(stick.rest, '');
+  assert.deepEqual(NLQ.parse('subaru outback no cvt', vocab).filters.ex.transmission, ['CVT']);
+});
+
+test('live modes send the transmission filter in each API’s own terms', () => {
+  Live.setProvider('visor');
+  const f = Object.assign(Market.emptyFilters(), { transmission: ['Manual'], ex: { transmission: ['CVT'] } });
+  const p = Live.toParams(f, { makes: [], cityByName: () => null });
+  assert.equal(p.transmission, 'Manual');
+  assert.equal(p.exclude_transmission, 'CVT');
+  const ad = Live.adToParams(f, { makes: [], cityByName: () => null, known: { transmissions: ['Automatic', '6-Speed Manual', '5-Speed Manual', 'Automatic CVT'] } });
+  assert.equal(ad['vehicle.transmission'], '6-Speed Manual,5-Speed Manual');
+  Live.setProvider('autodev');
+});

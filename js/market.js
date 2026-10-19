@@ -110,7 +110,7 @@
 
   /* ---------- Search ---------- */
 
-  const FACETS = ['condition', 'make', 'model', 'trim', 'year', 'body', 'drivetrain', 'fuel', 'colorFamily', 'extColor', 'interiorFamily',
+  const FACETS = ['condition', 'make', 'model', 'trim', 'year', 'body', 'drivetrain', 'transmission', 'fuel', 'colorFamily', 'extColor', 'interiorFamily',
     'features', 'options', 'upfitter', 'assembly', 'seller', 'state'];
   // Facets where a listing carries several values. Selecting two means "has both".
   const MULTI = new Set(['features', 'options']);
@@ -136,7 +136,7 @@
 
   function haystack(l) {
     if (!l._hay) {
-      l._hay = [l.year, l.make, l.model, l.trim, l.body, l.segment, l.drivetrain, l.fuel, l.condition, l.extColor, l.colorFamily,
+      l._hay = [l.year, l.make, l.model, l.trim, l.body, l.segment, l.drivetrain, l.transmission || '', l.fuel, l.condition, l.extColor, l.colorFamily,
         l.intColor, l.dealer, l.city, l.state, l.vin, l.upfitter ? l.upfitter.name : '', l.features.join(' ')]
         .join(' ').toLowerCase();
     }

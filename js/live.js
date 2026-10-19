@@ -128,7 +128,7 @@
   };
   // Gridline facet key -> Visor parameter / facet name
   const PARAM = {
-    condition: 'inventory_type', make: 'make', model: 'model', trim: 'trim', year: 'year', body: 'body_type', drivetrain: 'drivetrain',
+    condition: 'inventory_type', make: 'make', model: 'model', trim: 'trim', year: 'year', body: 'body_type', drivetrain: 'drivetrain', transmission: 'transmission',
     fuel: 'fuel_type', colorFamily: 'base_exterior_color', extColor: 'exterior_color', interiorFamily: 'base_interior_color',
     features: 'features', options: 'options_packages', upfitter: 'upfitter', assembly: 'assembly_location', seller: 'dealer_type', state: 'state',
   };
@@ -311,7 +311,7 @@
 
   /* ---------- Facets ---------- */
 
-  const FACET_NAMES = ['inventory_type', 'make', 'model', 'trim', 'year', 'body_type', 'fuel_type', 'drivetrain', 'base_exterior_color', 'exterior_color',
+  const FACET_NAMES = ['inventory_type', 'make', 'model', 'trim', 'year', 'body_type', 'fuel_type', 'drivetrain', 'transmission', 'base_exterior_color', 'exterior_color',
     'base_interior_color', 'features', 'options_packages', 'upfitter', 'assembly_location', 'dealer_type', 'state'];
   const FACET_IN = Object.fromEntries(Object.entries(PARAM).map(([k, v]) => [v, k]));
   function valueIn(key, v) {
@@ -551,6 +551,8 @@
     if (f.oneOwner) p['history.ownerCount'] = '1';
     put('fuel', (f.fuel || []).map((v) => AD_FUEL_OUT[v] || v));
     put('drivetrain', f.drivetrain || []);
+    // auto.dev's transmission names vary ("6-Speed Manual"); pick every one that matches.
+    put('transmission', [...new Set((f.transmission || []).flatMap((v) => matchAll(v, ctx.known && ctx.known.transmissions)))]);
     put('colorFamily', f.colorFamily || []);
     put('interiorFamily', f.interiorFamily || []);
     put('state', f.state || []);
@@ -644,7 +646,7 @@
       facets = { condition: ['New', 'Used', 'Certified'].map((value) => ({ value, count: null })) };
       for (const [group, buckets] of Object.entries(r.facets)) {
         const key = AD_GROUP[group];
-        if (!key || key === 'transmission') continue;
+        if (!key) continue;
         facets[key] = adBuckets(buckets).map((b) => ({ value: key === 'fuel' ? AD_FUEL_IN[b.value] || b.value : b.value, count: b.count, avgPrice: null, avgDays: null, avgDiscount: null }));
       }
     }
@@ -684,19 +686,20 @@
     return r.total || 0;
   }
 
-  // One call gives the makes, models and body styles auto.dev knows; kept for a week.
+  // One call gives the makes, models, body styles and transmissions auto.dev knows; kept for a week.
+  const AD_VOCAB = 'gridline:autodev:vocab:v2';
   async function adVocabulary() {
-    const cached = safe(() => JSON.parse(localStorage.getItem('gridline:autodev:vocab')), null);
+    const cached = safe(() => JSON.parse(localStorage.getItem(AD_VOCAB)), null);
     if (cached && Date.now() - cached.t < 7 * 864e5) return cached.v;
     const r = await adGet('/listings', { limit: 1, includes: 'facets' });
     learnParams(r.facets || {});
     const fx = r.facets || {};
     const v = {
       makes: adBuckets(fx.makes).map((b) => b.value), models: adBuckets(fx.models).map((b) => b.value),
-      bodies: adBuckets(fx.types).map((b) => b.value), features: [], upfitters: [],
+      bodies: adBuckets(fx.types).map((b) => b.value), transmissions: adBuckets(fx.transmissions).map((b) => b.value), features: [], upfitters: [],
       overview: { makes: adBuckets(fx.makes).slice(0, 12), prices: adBuckets(fx.prices), states: adBuckets(fx.states) },
     };
-    safe(() => localStorage.setItem('gridline:autodev:vocab', JSON.stringify({ t: Date.now(), v })));
+    safe(() => localStorage.setItem(AD_VOCAB, JSON.stringify({ t: Date.now(), v })));
     return v;
   }
 

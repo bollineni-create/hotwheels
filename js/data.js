@@ -166,6 +166,21 @@
     'Toyota Sienna': [['BraunAbility', 'Mobility', 30000], ['VMI', 'Mobility', 30000]],
   };
 
+  // Transmissions, in Visor's terms: Automatic, CVT or Manual. Share of each trim
+  // built with a manual, whether the automatic is a CVT, and the premium a used
+  // manual brings over the same car with an automatic (enthusiasts pay for three pedals).
+  const GEARBOX = {
+    'Mazda MX-5 Miata': { manual: { Sport: 0.75, Club: 0.6, 'Grand Touring': 0.35 }, premium: 0.05 },
+    'Honda Civic': { manual: { Sport: 0.12, Si: 1, 'Type R': 1 }, cvt: true, premium: 0.04 },
+    'Ford Mustang': { manual: { EcoBoost: 0.1, GT: 0.35, 'Dark Horse': 0.45 }, premium: 0.07 },
+    'Jeep Wrangler': { manual: { Sport: 0.25, Sahara: 0.08, Rubicon: 0.2 }, premium: 0.03 },
+    'Ford Bronco': { manual: { 'Big Bend': 0.25, Badlands: 0.3, Wildtrak: 0.1 }, premium: 0.04 },
+    'Toyota Tacoma': { manual: { 'TRD Sport': 0.15, 'TRD Off-Road': 0.25, 'TRD Pro': 0.2 }, premium: 0.06 },
+    'Honda CR-V': { cvt: true }, 'Honda Accord': { cvt: true }, 'Subaru Forester': { cvt: true }, 'Subaru Outback': { cvt: true },
+  };
+  // Makes whose hybrids use a power-split (eCVT) transmission.
+  const ECVT_MAKES = ['Toyota', 'Lexus', 'Honda', 'Subaru', 'Mazda'];
+
   const THIRD_ROW = { 'Hyundai Palisade': 1, 'Kia Telluride': 1, 'Toyota Sienna': 1, 'Volvo XC90': 1, 'Lexus GX': 0.7, 'BMW X5': 0.15 };
   const OPTION_FEATURES = {
     'Moonroof': ['Sunroof/Moonroof'], 'Sunroof': ['Sunroof/Moonroof'], 'Panoramic Roof': ['Sunroof/Moonroof', 'Panoramic Roof'],
@@ -362,6 +377,10 @@
     const rand2 = mulberry32(o.seed ^ 0x9e3779b9);
     for (const l of listings) enrich(l, rand2, o.currentYear);
 
+    // A third stream picks transmissions, so adding them left everything above unchanged.
+    const rand3 = mulberry32(o.seed ^ 0x5bd1e995);
+    for (const l of listings) setGearbox(l, rand3);
+
     // Listings past the active count left the market: they sold.
     const sold = listings.splice(o.count);
     for (const l of sold) {
@@ -379,6 +398,29 @@
       l.id = 'S' + l.id.slice(1);
     }
     return { listings, sold, dealers: [...dealers.values()], models: MODELS, cities: CITIES };
+  }
+
+  function setGearbox(l, rand) {
+    const key = `${l.make} ${l.model}`;
+    const g = GEARBOX[key] || {};
+    // Manual-only trims (Civic Si, Type R) were never built as hybrids.
+    if (g.manual && g.manual[l.trim] >= 1 && l.fuel !== 'Gas') {
+      l.fuel = 'Gas';
+      l.economy = ECONOMY[key];
+    }
+    const share = l.fuel === 'Gas' && g.manual ? g.manual[l.trim] || 0 : 0;
+    if (share && rand() < share) {
+      l.transmission = 'Manual';
+      if (l.condition !== 'New' && g.premium) {
+        const factor = 1 + g.premium;
+        l.price = Math.round(l.price * factor / 100) * 100 - 1;
+        for (const h of l.history) h.price = Math.round(h.price * factor / 100) * 100 - 1;
+        l.history[l.history.length - 1].price = l.price;
+        l.pricing.advertised = l.price;
+      }
+    } else {
+      l.transmission = g.cvt || (l.fuel === 'Hybrid' && ECVT_MAKES.includes(l.make)) ? 'CVT' : 'Automatic';
+    }
   }
 
   function enrich(l, rand, currentYear) {
@@ -503,7 +545,7 @@
     }
   }
 
-  const api = { generateInventory, mulberry32, colorFamily, MODELS, CITIES, PLANTS, UPFITTERS };
+  const api = { generateInventory, mulberry32, colorFamily, MODELS, CITIES, PLANTS, UPFITTERS, GEARBOX };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MarketData = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -22,7 +22,7 @@ function record(l) {
   }
   return {
     id: 'v-' + l.id.toLowerCase(), vin: l.vin, year: l.year, make: l.make, model: l.model, trim: l.trim, version: null,
-    body_type: BODY[l.body], drivetrain: l.drivetrain, fuel_type: FUEL[l.fuel] || l.fuel, powertrain_type: null, transmission: 'Automatic', engine: null,
+    body_type: BODY[l.body], drivetrain: l.drivetrain, fuel_type: FUEL[l.fuel] || l.fuel, powertrain_type: null, transmission: l.transmission, engine: null,
     exterior_color: l.extColor, interior_color: l.intColor, base_exterior_color: COLOR(l.colorFamily), base_interior_color: l.interiorFamily,
     spec_source: 'legacy', msrp: l.msrp, discount_from_msrp: l.msrp ? l.price / l.msrp - 1 : null, price: l.price, miles: l.miles,
     days_on_market: isSold ? l.sold.daysToSell : l.daysListed, listed_at: iso(l.daysListed), last_checked_at: iso(0),
@@ -50,7 +50,7 @@ function filter(q) {
     const d = Math.round((now - Date.parse(q.get('snapshot_date'))) / 864e5);
     pool = Market.snapshot(listings, sold, d).map(record);
   } else pool = ACTIVE;
-  const eq = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', body_type: 'body_type', fuel_type: 'fuel_type', drivetrain: 'drivetrain',
+  const eq = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', body_type: 'body_type', fuel_type: 'fuel_type', drivetrain: 'drivetrain', transmission: 'transmission',
     base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color', state: 'state', dealer_type: 'dealer_type', assembly_location: '_assembly' };
   for (const [p, field] of Object.entries(eq)) {
     const inc = list(q, p), exc = list(q, 'exclude_' + p);
@@ -85,7 +85,7 @@ const strip = (r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.sta
 const pctl = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const stat = (arr) => (arr.length ? { min: Math.min(...arr), max: Math.max(...arr), mean: arr.reduce((a, b) => a + b, 0) / arr.length, median: pctl(arr, 0.5) } : null);
 const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', year: 'year', body_type: 'body_type', fuel_type: 'fuel_type',
-  drivetrain: 'drivetrain', base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color',
+  drivetrain: 'drivetrain', transmission: 'transmission', base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color',
   features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state' };
 
 function handle(req, res) {

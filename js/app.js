@@ -192,7 +192,7 @@
   const NUM_KEYS = ['priceMin', 'priceMax', 'msrpMin', 'msrpMax', 'milesMax', 'radius'];
   const BOOL_KEYS = ['dropsOnly', 'belowMarket', 'noAccidents', 'oneOwner'];
   const FACET_LABELS = {
-    condition: 'Condition', make: 'Make', model: 'Model', trim: 'Trim', year: 'Model year', body: 'Body style', drivetrain: 'Drivetrain',
+    condition: 'Condition', make: 'Make', model: 'Model', trim: 'Trim', year: 'Model year', body: 'Body style', drivetrain: 'Drivetrain', transmission: 'Transmission',
     fuel: 'Fuel', colorFamily: 'Exterior color', extColor: 'Paint name', interiorFamily: 'Interior color', features: 'Top features',
     options: 'Installed options', upfitter: 'Upfitter', assembly: 'Assembly location', seller: 'Seller type', state: 'State',
   };
@@ -251,7 +251,7 @@
     if (f.year.length) parts.push(f.year.length > 2 ? `${f.year[0]}–${f.year[f.year.length - 1]}` : f.year.join(', '));
     if (f.model.length) parts.push(f.model.join(', '));
     else if (f.make.length) parts.push(f.make.join(', '));
-    for (const k of ['trim', 'body', 'fuel', 'drivetrain', 'colorFamily', 'extColor', 'upfitter', 'assembly']) if (list(k)) parts.push(list(k));
+    for (const k of ['trim', 'body', 'fuel', 'drivetrain', 'transmission', 'colorFamily', 'extColor', 'upfitter', 'assembly']) if (list(k)) parts.push(list(k));
     if (f.interiorFamily.length) parts.push(`${f.interiorFamily.join('/')} interior`);
     if (f.features.length) parts.push(`with ${f.features.join(', ')}`);
     if (f.options.length) parts.push(`with ${f.options.join(', ')}`);
@@ -1075,7 +1075,8 @@
         ${singleModel || f.trim.length ? facetList('trim', facets) : ''}
         ${facetList('body', facets)}
         ${facetList('fuel', facets)}
-        ${facetList('drivetrain', facets)}`)}
+        ${facetList('drivetrain', facets)}
+        ${facetList('transmission', facets, { hint: S.live ? null : 'Type “manual” or “stick” in any search box.' })}`)}
       ${group('Colors', `
         ${facetList('colorFamily', facets, { swatch: (v) => FAMILY_HEX[v] || '#999' })}
         ${S.live && !can('extColor') ? '' : facetList('extColor', facets, { limit: 6, swatch: (v) => HEX.get(v) || '#999' })}
@@ -1473,7 +1474,7 @@
               <div><dt>Fuel</dt><dd>${esc(l.fuel)}</dd></div>
               ${l.series ? `<div><dt>Version</dt><dd>${esc(l.series)}</dd></div>` : ''}
               ${l.engine ? `<div><dt>Engine</dt><dd>${esc(l.engine)}</dd></div>` : ''}
-              ${l.transmission ? `<div><dt>Transmission</dt><dd>${esc(l.transmission)}</dd></div>` : ''}
+              ${l.transmission ? `<div><dt>Transmission</dt><dd>${live ? esc(l.transmission) : `<a href="${searchHref({ model: key, transmission: l.transmission })}">${esc(l.transmission)}</a>`}</dd></div>` : ''}
               <div><dt>Exterior</dt><dd><span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span>${r ? ` <span class="muted">1 of ${r.extCount} of ${r.total}</span>` : ''}</dd></div>
               <div><dt>Interior</dt><dd>${esc(l.intColor)}${r ? ` <span class="muted">1 of ${r.intCount}</span>` : ''}</dd></div>
               ${l.titleStatus ? `<div><dt>Title</dt><dd class="${l.titleStatus === 'clean' ? 'good' : l.titleStatus === 'unknown' ? '' : 'bad'}">${esc(Live.titleCase(l.titleStatus))}</dd></div>` : ''}
@@ -1872,6 +1873,7 @@
       ['Trim', cars.map((l) => esc(l.trim)), []],
       ['Condition', cars.map((l) => conditionBadge(l)), []],
       ['Drivetrain', cars.map((l) => esc(l.drivetrain)), []],
+      ['Transmission', cars.map((l) => esc(l.transmission || '—')), []],
       ['Fuel', cars.map((l) => esc(l.fuel)), []],
       ['Exterior', cars.map((l) => `<span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span>`), []],
       ['Interior', cars.map((l) => esc(l.intColor)), []],
