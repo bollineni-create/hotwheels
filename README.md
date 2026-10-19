@@ -1,9 +1,11 @@
-# Gridline: see the whole car market
+<p align="center"><img src="assets/icons/icon-256.png" width="96" alt=""></p>
 
-A local, dependency-free car search and market-insights site, modeled on [visor.vin](https://visor.vin) and extended past it.
-**Use it in your browser:** https://bollineni-create.github.io/hotwheels/
+<h1 align="center">Gridline</h1>
 
-It runs as a desktop app (Electron) or as a plain website. The site itself is HTML, CSS and JavaScript with no build step.
+<p align="center"><b>See the whole car market: every listing, its fair value, and how fast it sells.</b><br>
+A local, dependency-free car search and market-insights site, modeled on <a href="https://visor.vin">visor.vin</a> and extended past it. It runs as a desktop app (Electron) or as a plain website: HTML, CSS and JavaScript with no build step.</p>
+
+<p align="center"><b><a href="https://bollineni-create.github.io/hotwheels/">Open Gridline in your browser</a></b></p>
 
 ## Install it on a Mac (simplest)
 
