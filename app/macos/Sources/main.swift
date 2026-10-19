@@ -5,6 +5,7 @@ import WebKit
 // Pages load live from the project folder named in Info.plist (GridlineSourceFolder), so edits show up
 // without rebuilding: the app checks the folder every second and reloads when a file changes.
 // If that folder is missing, it falls back to the copy bundled inside the app.
+// It also pulls the latest version from GitHub when opened and every 15 minutes.
 // Listing APIs (auto.dev, Visor) refuse requests from web pages, so the page hands them to the app,
 // which sends them itself and replies by id: the same bridge the Electron build provides (window.gridlineDesktop).
 
@@ -91,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         load()
         lastSignature = signature()
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.checkForChanges() }
+        Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in self?.pullUpdates() }
+        pullUpdates()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -186,6 +189,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             }
             .joined(separator: "|")
     }
+
+    // MARK: Updates
+
+    var lastPull = Date.distantPast
+
+    /// Runs git in the project folder and returns its trimmed output, or nil if it failed.
+    private func git(_ args: [String], in folder: URL) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-C", folder.path] + args
+        p.environment = ProcessInfo.processInfo.environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { $1 }
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return p.terminationStatus == 0 ? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    }
+
+    /// Pulls the latest version from GitHub. Page changes then show up through checkForChanges;
+    /// if the Mac app itself changed, it rebuilds, reinstalls and reopens itself.
+    func pullUpdates() {
+        guard let folder = sourceFolder, Date().timeIntervalSince(lastPull) > 60,
+              FileManager.default.fileExists(atPath: folder.appendingPathComponent(".git").path) else { return }
+        lastPull = Date()
+        DispatchQueue.global(qos: .utility).async { [self] in
+            guard let before = git(["rev-parse", "HEAD"], in: folder),
+                  git(["pull", "--ff-only", "--quiet"], in: folder) != nil,
+                  let after = git(["rev-parse", "HEAD"], in: folder), after != before,
+                  git(["diff", "--quiet", before, after, "--", "app/macos"], in: folder) == nil
+            else { return }
+            let build = Process()
+            build.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            build.arguments = [folder.appendingPathComponent("app/macos/build.sh").path]
+            try? build.run()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) { pullUpdates() }
 
     private func checkForChanges() {
         let sig = signature()
