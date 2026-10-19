@@ -6,7 +6,7 @@ import WebKit
 // Pages load live from the project folder named in Info.plist (GridlineSourceFolder), so edits show up
 // without rebuilding: the app checks the folder every second and reloads when a file changes.
 // If that folder is missing, it falls back to the copy bundled inside the app.
-// It also pulls the latest version from GitHub when opened and every 15 minutes.
+// It also pulls the latest version of main from GitHub when opened and every 15 minutes.
 // Listing APIs (auto.dev, Visor) refuse requests from web pages, so the page hands them to the app,
 // which sends them itself and replies by id: the same bridge the Electron build provides (window.gridlineDesktop).
 // Hunts (saved searches that keep watching) post native notifications through the same bridge, and the app
@@ -261,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         return p.terminationStatus == 0 ? String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
     }
 
-    /// Pulls the latest version from GitHub. Page changes then show up through checkForChanges;
+    /// Pulls the latest version of the main branch from GitHub. Page changes then show up through checkForChanges;
     /// if the Mac app itself changed, it rebuilds, reinstalls and reopens itself.
     func pullUpdates() {
         guard let folder = sourceFolder, Date().timeIntervalSince(lastPull) > 60,
@@ -269,7 +269,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         lastPull = Date()
         DispatchQueue.global(qos: .utility).async { [self] in
             guard let before = git(["rev-parse", "HEAD"], in: folder),
-                  git(["pull", "--ff-only", "--quiet"], in: folder) != nil,
+                  git(["fetch", "--quiet", "origin", "main"], in: folder) != nil,
+                  git(["checkout", "--quiet", "main"], in: folder) != nil,
+                  git(["merge", "--ff-only", "--quiet", "origin/main"], in: folder) != nil,
                   let after = git(["rev-parse", "HEAD"], in: folder), after != before,
                   git(["diff", "--quiet", before, after, "--", "app/macos"], in: folder) == nil
             else { return }
