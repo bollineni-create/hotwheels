@@ -1,5 +1,5 @@
 // Desktop shell: loads the same static site in a native window.
-const { app, BrowserWindow, Menu, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, Menu, shell, nativeTheme, ipcMain, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -78,6 +78,19 @@ function createWindow() {
 
   win.loadFile(path.join(ROOT, 'index.html'));
 }
+
+// Visor API requests from the page. Only GET /v1/* on api.visor.vin is allowed.
+const VISOR_BASE = process.env.VISOR_API_BASE || 'https://api.visor.vin';
+ipcMain.handle('visor:fetch', async (event, req) => {
+  const { path: apiPath, query, key } = req || {};
+  if (typeof apiPath !== 'string' || !/^\/v1\/[A-Za-z0-9_\-/.%]+$/.test(apiPath)) return { status: 400, body: '{"error":{"message":"Bad path"}}', cost: 0 };
+  try {
+    const res = await net.fetch(`${VISOR_BASE}${apiPath}${query ? '?' + query : ''}`, { headers: { Authorization: `Bearer ${key || ''}` } });
+    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0 };
+  } catch (e) {
+    return { status: 502, body: JSON.stringify({ error: { message: `Could not reach the Visor API: ${e.message}` } }), cost: 0 };
+  }
+});
 
 function buildMenu() {
   const template = [

@@ -29,7 +29,7 @@ The desktop app adds a native menu with shortcuts: `⌘/Ctrl+F` or `⌘/Ctrl+K` 
 ## Run it as a website
 
 ```bash
-npm start          # or: python3 -m http.server 8080
+npm start          # local server on http://localhost:8080 (needed for live data in the browser)
 open http://localhost:8080
 npm test           # node's built-in test runner
 ```
@@ -60,6 +60,34 @@ The baseline homepage only describes its search, filters, price history and aler
 - **Dark mode** (follows the system, with a manual toggle), a responsive layout down to 375px with a slide-in filter drawer, a skip link, labeled controls, keyboard-operable map tiles, and support for `prefers-reduced-motion`.
 - **No hotlinked dealer photos.** Every car is drawn as an SVG side profile by body style, painted in its real exterior color.
 
+## Live data (real listings)
+
+Gridline ships with a demo sample. To search **real** cars, connect it to the [Visor Public API](https://api.visor.vin/docs):
+
+1. Create an API key at [visor.vin/account/api](https://visor.vin/account/api). New accounts get starter credit, and after that you pay per request: about $0.002–$0.003 per search or count, and about $0.04 for a full listing page with price history and options. Visor shows your balance and lets you set a spending cap.
+2. In Gridline open **Settings → Listing data**, paste the key, and press **Save**. **Test connection** confirms it works, and Settings shows what you've spent.
+
+Where live data works:
+
+| Where you run Gridline | Live data |
+| --- | --- |
+| Desktop app (`npm run app` or the Mac app) | ✅ Requests go out from the app itself |
+| `npm start`, then http://localhost:8080 | ✅ The local server relays requests |
+| The public GitHub Pages site | ❌ Demo data only. Visor only accepts browser requests from visor.vin |
+
+What changes with live data:
+- Search, filters, filter counts, sorting, sold listings and past-date snapshots all come from Visor
+- Listings show the dealer's photos, link to the dealer's own page, and show dealer pricing line items (fees, add-ons, conditional discounts) where Visor has them
+- Leaderboard, comparables, fair value, velocity and Deal Check use live comparable listings
+- The inventory trend loads on request (9 calls, about 3¢)
+- Repeat requests within 30 minutes come from a cache, so they cost nothing
+
+Your key is stored only on your device (browser storage, or the desktop app's storage). It is never written to the code or uploaded. Per Visor's [API agreement](https://visor.vin/legal/api-license/2026-06-12), keys must not be embedded in public pages, and Visor's attribution must stay visible; Gridline shows "Live listings from Visor" on every live page.
+
+A few demo features have no live equivalent. Visor covers dealer listings only, so there are no private sellers. It has no free-text search, so describe what you want in the main search box instead. Seller history across past dealers and "has price cuts" are demo-only.
+
+To develop against a stand-in API without spending credit, run `node test/mock-visor.js` (key: `vis_test_key`) and start Gridline with `VISOR_API_BASE=http://127.0.0.1:8799`.
+
 ## Visor Plus features, included
 
 Visor charges for these as "Visor Plus". Here they're all built in, with no account or paywall.
@@ -89,7 +117,7 @@ Visor charges for these as "Visor Plus". Here they're all built in, with no acco
 | Map search | **Map** layout: listings grouped by city, sized by count, colored by price vs. market, with your search radius drawn |
 | Display preferences | **Settings**: home location (distances and a "Distance from home" sort), seller name vs. location, compact cards |
 
-Two Visor features are left out on purpose. NHTSA recalls and complaints would have to be made up for synthetic cars, and the API/MCP server and email alerts need a server.
+With a Visor API key, all of this runs on real listings (see **Live data** above). Two Visor features are left out on purpose. NHTSA recalls and complaints would have to be made up for synthetic cars, and the API/MCP server and email alerts need a server.
 
 ## Data
 
@@ -108,6 +136,9 @@ js/vin.js         VIN validation and decoding (works in the browser and Node)
 js/data.js        seeded inventory generator
 js/market.js      search, facets, fair value, snapshots, velocity, leaderboard, Deal Check (pure functions)
 js/nlq.js         natural-language search and filter search
+js/live.js        Visor API client: filter mapping, caching, cost tracking, normalizing records
+server.js         local server that also relays /visor/* requests to the Visor API
+test/mock-visor.js  stand-in Visor API for tests and development
 js/charts.js      SVG scatter, bars, tile map, price-history and car illustrations
 js/app.js         hash router and views: home, search, car, compare, saved, VIN
 test/             node --test unit tests

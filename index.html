@@ -23,6 +23,7 @@
         </span>
         <span class="brand-name">Gridline</span>
       </a>
+      <a class="mode-pill" id="mode-pill" href="#/settings">Demo</a>
       <div class="header-search" id="header-search"></div>
       <nav class="main-nav" aria-label="Main">
         <a href="#/search" data-nav="search">Search</a>
@@ -50,11 +51,8 @@
       </div>
       <div class="footer-links" id="footer-links"></div>
     </div>
-    <p class="disclaimer">
-      This build runs on a synthetic, deterministic sample of the national market, so it needs no data feed.
-      Prices, dealers and VINs are generated for demonstration; plug a real inventory feed into
-      <code>js/data.js</code> to go live. Market signals are informational only and are not financial advice.
-      Vehicle makes and model names belong to their respective owners.
+    <p class="disclaimer"><span id="data-attribution"></span>
+      Market signals are informational only and are not financial advice. Vehicle makes and model names belong to their respective owners.
     </p>
   </footer>
 
@@ -65,6 +63,7 @@
   <script src="js/market.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/nlq.js"></script>
+  <script src="js/live.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

@@ -47,16 +47,16 @@
   function build(data) {
     const models = data.models.map((m) => {
       const name = m.model.toLowerCase();
-      const aliases = new Set([name, `${m.make.toLowerCase()} ${name}`, name.replace(/-/g, ''), name.replace(/-/g, ' ')]);
+      const aliases = new Set([name, `${(m.make || '').toLowerCase()} ${name}`.trim(), name.replace(/-/g, ''), name.replace(/-/g, ' ')]);
       if (m.model === 'MX-5 Miata') ['miata', 'mx5', 'mx-5'].forEach((a) => aliases.add(a));
       if (m.model === '3 Series') ['3 series', '3-series', '330i', 'm340i'].forEach((a) => aliases.add(a));
       if (m.model === 'Silverado 1500') ['silverado'].forEach((a) => aliases.add(a));
       if (m.model === '2') ['polestar 2', 'polestar'].forEach((a) => aliases.add(a));
       if (m.model === '1500') { aliases.delete('1500'); aliases.add('ram 1500'); aliases.add('ram'); }
       if (m.make === 'Tesla') aliases.add(name.replace('model ', 'model'));
-      return { key: `${m.make} ${m.model}`, make: m.make, trims: m.trims.map((t) => t[0]), aliases: [...aliases].filter((a) => a.length > 1) };
+      return { key: m.make ? `${m.make} ${m.model}` : m.model, make: m.make, trims: (m.trims || []).map((t) => t[0]), aliases: [...aliases].filter((a) => a.length > 1) };
     });
-    const makes = [...new Set(data.models.map((m) => m.make))];
+    const makes = [...new Set(data.models.map((m) => m.make).concat(data.makes || []).filter(Boolean))];
     const cities = [...new Set(data.cities.map((c) => `${c[0]}, ${c[1]}`))];
     const paints = [...new Set(data.paints || [])];
     const upfitters = [...new Set(data.upfitters || [])];

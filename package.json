@@ -4,13 +4,13 @@
   "private": true,
   "description": "Whole-market used and new car search with fair value, price history and market insights. No build step.",
   "scripts": {
-    "start": "python3 -m http.server 8080",
+    "start": "node server.js",
     "app": "electron .",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux",
-    "test": "node --test"
+    "test": "node --test test/*.test.js"
   },
   "main": "electron/main.js",
   "author": "Gridline",

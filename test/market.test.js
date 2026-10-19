@@ -135,3 +135,79 @@ test('Deal Check totals a deal and flags a high doc fee', () => {
   assert.equal(Math.round(r.payment), Math.round((r.outTheDoor - 5000) / 60));
   assert.ok(r.flags.some((f) => /Doc fee/.test(f.text)));
 });
+
+const Live = require('../js/live.js');
+global.Market = Market;
+
+test('live mode maps Gridline filters to Visor API parameters', () => {
+  const ctx = { cityByName: (n) => (n === 'Denver, CO' ? ['Denver', 'CO', 39.74, -104.99] : null), makes: ['Toyota', 'Ford'], known: { bodies: ['SUV', 'Pickup Truck', 'Chassis Cab Truck'], features: ['heated_seats', 'leather_seats'] } };
+  const f = Object.assign(Market.emptyFilters(), {
+    condition: ['Used', 'Certified'], model: ['Toyota RAV4'], body: ['Truck'], features: ['Leather Seats'], fuel: ['Electric'], seller: ['Franchise'],
+    assembly: ['Georgetown, KY', 'Woodstock, ON'], upfitter: ['Rocky Ridge'], priceMax: 30000, milesMax: 50000, msrpMin: 20000,
+    vin: '5TF*B5D', near: 'Denver, CO', radius: 900, sort: 'discount', when: 'sold', ex: { features: ['Sunroof/Moonroof'], colorFamily: ['Red'] },
+  });
+  const p = Live.toParams(f, ctx);
+  assert.equal(p.inventory_type, 'used,certified');
+  assert.equal(p.make, 'Toyota');
+  assert.equal(p.model, 'RAV4');
+  assert.equal(p.body_type, 'Pickup Truck,Chassis Cab Truck');
+  assert.equal(p.features, 'leather_seats');
+  assert.equal(p.fuel_type, 'Full Electric');
+  assert.equal(p.dealer_type, 'franchise');
+  assert.equal(p.assembly_location, 'Georgetown, KY|Woodstock, ON');
+  assert.equal(p.upfitter, 'rocky_ridge');
+  assert.equal(p.exclude_base_exterior_color, 'Red');
+  assert.equal(p.vin_pattern, '5TF?B5D');
+  assert.equal(p.radius, 500);
+  assert.equal(p.latitude, 39.74);
+  assert.equal(p.inventory_status, 'sold');
+  assert.equal(p.max_price, 30000);
+  assert.equal(p.max_mileage, 50000);
+  assert.equal(p.min_msrp, 20000);
+  const snap = Live.toParams(Object.assign(Market.emptyFilters(), { when: '30' }), ctx);
+  assert.match(snap.snapshot_date, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('live mode turns Visor records into Gridline listings', () => {
+  const day = (n) => new Date(Date.now() - n * 864e5).toISOString().replace('T', ' ').replace('Z', '000');
+  const l = Live.normalize({
+    id: 'abc', vin: '5TFAB5DB1MX123456', year: 2021, make: 'Toyota', model: 'Tundra', trim: 'SR5', body_type: 'Pickup Truck', drivetrain: '4WD',
+    fuel_type: 'Gas only', base_exterior_color: 'Red', exterior_color: 'Barcelona Red', msrp: 45000, discount_from_msrp: -0.1, price: 40500, miles: 30000,
+    days_on_market: 20, status: 'active', availability_status: 'transit', inventory_type: 'certified', dealer_name: 'Denver Toyota', dealer_type: 'franchise',
+    city: 'Denver', state: 'CO', latitude: 39.7, longitude: -105, photo_urls: ['https://x/1.jpg'], features: ['heated_seats'], upfitters: ['rocky_ridge'],
+    price_history: [{ changed_at: day(10), price_before: 41500, price_after: 40500 }],
+  });
+  assert.equal(l.live, true);
+  assert.equal(l.condition, 'Certified');
+  assert.equal(l.status, 'In transit');
+  assert.equal(l.body, 'Truck');
+  assert.equal(l.fuel, 'Gas');
+  assert.equal(l.seller, 'Franchise');
+  assert.equal(l.upfitter.name, 'Rocky Ridge');
+  assert.deepEqual(l.history.map((h) => h.price), [41500, 40500]);
+  assert.equal(l.history[0].daysAgo, 20);
+  assert.equal(l.history[1].daysAgo, 10);
+  const sold = Live.normalize({ id: 's', vin: 'X', status: 'sold', sold_date: day(5).slice(0, 10), days_on_market: 12, price: 20000, inventory_type: 'used' });
+  assert.equal(sold.sold.daysToSell, 12);
+  assert.ok(sold.sold.daysAgo >= 4 && sold.sold.daysAgo <= 6);
+  assert.deepEqual(Live.bucketsOf([{ value: 'Toyota', count: 5 }]).map((b) => b.value), ['Toyota']);
+  assert.deepEqual(Live.bucketsOf({ Toyota: 5, Honda: 3 }).map((b) => b.count), [5, 3]);
+});
+
+test('mock Visor server rejects bad keys and filters like the real API', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const server = http.createServer(handle).listen(0);
+  const port = server.address().port;
+  const get = (path, key) => new Promise((resolve) => http.get({ port, path, headers: key ? { Authorization: `Bearer ${key}` } : {} }, (res) => {
+    let b = '';
+    res.on('data', (c) => (b += c));
+    res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(b) }));
+  }));
+  assert.equal((await get('/v1/listings?limit=1', 'nope')).status, 401);
+  const r = await get('/v1/listings?make=Toyota&model=RAV4&max_price=25000&limit=100&sort=price', KEY);
+  assert.equal(r.status, 200);
+  assert.ok(r.json.data.length > 0 && r.json.data.every((x) => x.model === 'RAV4' && x.price <= 25000));
+  assert.ok(r.json.data.every((x, i, a) => i === 0 || a[i - 1].price <= x.price));
+  server.close();
+});
