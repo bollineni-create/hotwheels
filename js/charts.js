@@ -178,7 +178,81 @@
       `</svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, niceTicks, esc, TILES };
+  /* Area chart of a count over the last N days, with optional median price line. */
+  function trend(series, opts) {
+    const W = (opts && opts.width) || 560, H = (opts && opts.height) || 170;
+    const m = { t: 14, r: 52, b: 24, l: 44 };
+    const n = series.length - 1 || 1;
+    const maxC = Math.max(1, ...series.map((s) => s.count));
+    const meds = series.filter((s) => s.median != null);
+    const mn = meds.length ? Math.min(...meds.map((s) => s.median)) * 0.97 : 0;
+    const mx = meds.length ? Math.max(...meds.map((s) => s.median)) * 1.03 : 1;
+    const sx = (i) => m.l + (i / n) * (W - m.l - m.r);
+    const sy = (c) => H - m.b - (c / (maxC * 1.1)) * (H - m.t - m.b);
+    const sp = (p) => H - m.b - ((p - mn) / (mx - mn || 1)) * (H - m.t - m.b);
+    let line = '';
+    series.forEach((s, i) => { line += `${i ? 'L' : 'M'}${sx(i).toFixed(1)},${sy(s.count).toFixed(1)}`; });
+    const area = `${line}L${sx(n)},${H - m.b}L${sx(0)},${H - m.b}Z`;
+    let g = '';
+    for (const t of niceTicks(0, maxC * 1.1, 3)) g += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${sy(t)}" y2="${sy(t)}"/><text class="tick" x="${m.l - 6}" y="${sy(t) + 4}" text-anchor="end">${kFmt(t)}</text>`;
+    let med = '';
+    if (meds.length > 1) {
+      let d = '';
+      series.forEach((s, i) => { if (s.median != null) d += `${d ? 'L' : 'M'}${sx(i).toFixed(1)},${sp(s.median).toFixed(1)}`; });
+      med = `<path class="trend-med" d="${d}"/>`;
+      for (const t of niceTicks(mn, mx, 3)) g += `<text class="tick" x="${W - m.r + 6}" y="${sp(t) + 4}">${moneyK(t)}</text>`;
+    }
+    const labels = [0, Math.round(n / 2), n].map((i) => `<text class="tick" x="${sx(i)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === n ? 'end' : 'middle'}">${series[i].daysAgo === 0 ? 'Today' : series[i].daysAgo + ' days ago'}</text>`).join('');
+    const hits = series.map((s, i) => `<rect class="hit" x="${sx(i) - (W / n) / 2}" y="${m.t}" width="${W / n}" height="${H - m.t - m.b}"><title>${s.daysAgo === 0 ? 'Today' : s.daysAgo + ' days ago'}: ${s.count.toLocaleString()} for sale${s.median != null ? ' · median $' + Math.round(s.median).toLocaleString() : ''}</title></rect>`).join('');
+    return `<svg class="chart trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Inventory over time')}">${g}<path class="trend-area" d="${area}"/><path class="trend-line" d="${line}"/>${med}${labels}${hits}</svg>`;
+  }
+
+  /* Dot map of the US. Points are grouped by city; the circle area tracks the
+     count and its color the median market position. */
+  const US_OUTLINE = [[-124.7, 48.4], [-122.8, 49], [-95.2, 49], [-95.15, 49.38], [-94.6, 48.7], [-93, 48.6], [-91.4, 48.05], [-89.6, 48], [-88.4, 48.3],
+    [-84.6, 46.5], [-82.4, 45.3], [-82.5, 43], [-83.1, 42], [-82.5, 41.7], [-79, 42.8], [-79.2, 43.4], [-76.3, 44.2], [-75, 44.9], [-71.5, 45],
+    [-70.8, 45.4], [-70, 46.7], [-69.2, 47.45], [-68.2, 47.35], [-67.8, 47.1], [-67.8, 45.7], [-67, 44.9], [-68.8, 44.4], [-70.2, 43.7],
+    [-70.7, 42.9], [-70, 41.7], [-71, 41.5], [-72, 41.3], [-73.6, 40.9], [-74, 40.6], [-74.1, 39.8], [-74.9, 38.9], [-75.5, 38.5], [-75.9, 37.2],
+    [-76, 36.9], [-75.5, 35.2], [-76.5, 34.7], [-77.9, 33.9], [-79.2, 33.2], [-80.9, 32], [-81.4, 30.7], [-80.6, 28.4], [-80.1, 26.5],
+    [-80.4, 25.2], [-81.1, 25.1], [-81.8, 26.1], [-82.7, 27.5], [-82.8, 28.9], [-83.7, 29.9], [-85.4, 29.7], [-86.5, 30.4], [-88, 30.4],
+    [-89.6, 30.2], [-89.4, 29], [-90.2, 29.1], [-91.3, 29.3], [-93.3, 29.8], [-94.7, 29.4], [-96.3, 28.4], [-97.2, 27.7], [-97.4, 26],
+    [-99.1, 26.5], [-99.5, 27.5], [-100.3, 28.3], [-101.4, 29.8], [-102.7, 29.7], [-103.2, 29], [-104.5, 29.6], [-106.5, 31.8], [-108.2, 31.8],
+    [-108.2, 31.3], [-111.1, 31.3], [-114.8, 32.5], [-117.1, 32.5], [-117.3, 33.2], [-118.4, 33.8], [-120.6, 34.6], [-121.9, 36.6],
+    [-122.5, 37.8], [-123.7, 39], [-124.4, 40.4], [-124.2, 42], [-124.6, 43], [-124, 46.3]];
+
+  function usMap(groups, opts) {
+    const W = 760, H = 430;
+    const lower = (lat, lng) => [20 + (lng + 125) * 12.1 * 0.82, 16 + (50 - lat) * 13.6];
+    const proj = (lat, lng) => {
+      if (lat > 51) return [36 + (lng + 170) * 3.1, 330 + (72 - lat) * 4.4];  // Alaska inset
+      if (lng < -150) return [205 + (lng + 160.5) * 14, 360 + (22.5 - lat) * 14]; // Hawaii inset
+      return lower(lat, lng);
+    };
+    const outline = 'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z';
+    const maxN = Math.max(1, ...groups.map((g) => g.count));
+    let ring = '';
+    if (opts && opts.center && opts.radius) {
+      const [cx, cy] = proj(opts.center[0], opts.center[1]);
+      const rx = (opts.radius / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
+      const ry = (opts.radius / 69) * 13.6;
+      ring = `<ellipse class="map-ring" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>`;
+    }
+    const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
+      const [x, y] = proj(g.lat, g.lng);
+      const r = 3 + Math.sqrt(g.count / maxN) * 16;
+      return `<g class="map-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
+        (g.count >= maxN * 0.25 || r > 9 ? `<text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${g.count}</text>` : '') +
+        `<title>${esc(g.title)}</title></g>`;
+    }).join('');
+    return `<svg class="chart usmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Map of listings')}">` +
+      `<path class="map-land" d="${outline}"/>` +
+      `<rect class="map-inset" x="14" y="318" width="150" height="100" rx="8"/><text class="map-inset-label" x="22" y="410">AK</text>` +
+      `<rect class="map-inset" x="176" y="350" width="110" height="68" rx="8"/><text class="map-inset-label" x="184" y="410">HI</text>` +
+      ring + dots + `</svg>`;
+  }
+
+  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, trend, usMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

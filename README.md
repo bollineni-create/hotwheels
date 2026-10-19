@@ -1,6 +1,8 @@
 # Gridline: see the whole car market
 
 A local, dependency-free car search and market-insights site, modeled on [visor.vin](https://visor.vin) and extended past it.
+**Use it in your browser:** https://bollineni-create.github.io/hotwheels/
+
 It runs as a desktop app (Electron) or as a plain website. The site itself is HTML, CSS and JavaScript with no build step.
 
 ## Run it as a desktop app
@@ -58,9 +60,40 @@ The baseline homepage only describes its search, filters, price history and aler
 - **Dark mode** (follows the system, with a manual toggle), a responsive layout down to 375px with a slide-in filter drawer, a skip link, labeled controls, keyboard-operable map tiles, and support for `prefers-reduced-motion`.
 - **No hotlinked dealer photos.** Every car is drawn as an SVG side profile by body style, painted in its real exterior color.
 
+## Visor Plus features, included
+
+Visor charges for these as "Visor Plus". Here they're all built in, with no account or paywall.
+
+| Visor Plus / exclusive feature | Where it is in Gridline |
+| --- | --- |
+| Filter by installed options | **Installed options** filter (factory packages on each car). Each option on a listing links to others that have it |
+| Filter by top features | **Top features** filter (heated seats, CarPlay, third row, tow package and more). Checking several means "has all of them" |
+| Exclude mode | Every filter has an **Exclude** toggle; type `without sunroof` in the filter search or the main search box |
+| Search your filters | **Search filters** box at the top of the sidebar: `brown interior`, `without sunroof`. Enter adds; ⌘/Ctrl+Enter adds and keeps searching; `/` jumps to it |
+| Sort filter values by price, days for sale or discount | **Sort filter values by** menu above the filters (also in Settings) |
+| Filter by assembly location | **Assembly location** filter; the plant is also written into each VIN's 11th character |
+| Filter by upfitter | **Upfitter** filter (Roush, Shelby American, Hennessey, RTR, Rocky Ridge, Black Widow, BraunAbility and more), with a badge on listings |
+| Search by VIN pattern | **VIN pattern** filter and the main search box: prefixes plus `*` or `?` wildcards (e.g. `1FT*`, `JTE??????N`) |
+| MSRP filtering and sorting | **Original MSRP** range filter; sort by MSRP high or low |
+| Best discount sorting | Sort by **Biggest discount from MSRP** |
+| Sold listings | Switch the results headline from **for sale today** to **sold in the last 120 days**; sort by recently sold or sold fastest |
+| Past dates / track inventory over time | The same menu rewinds the market **1 week, 1 month or 3 months**; every search shows an **Inventory over time** chart |
+| Market velocity stats | Sold in 30 days, median days to sell, days of supply and sale vs. first asking price, on model overviews and listing pages |
+| Leaderboard and comparables, with advanced filters | **Against the market** on each listing: rank by value, price, miles, newest or discount, with peers limited by trim, years, condition, distance or MSRP match. Sold comps and an MSRP-adjusted (%) view are optional |
+| Vehicle docs | **Window sticker** and **Build sheet**, reconstructed from listing data, printable |
+| Previous seller history | **Seller history**: every earlier listing of the same VIN, with dealer, dates, last price and miles |
+| Private listings | **Seller type** filter (Dealer / Private) and a Private badge |
+| Natural-language search | Main search: "4x4 trucks under 50k miles near Denver", "white Lexus GX with brown interior" |
+| Pricing breakdown | Discounts, market adjustments, conditional incentives, dealer add-ons, doc fee, estimated tax and out-the-door, with the "price gap" called out |
+| Deal Check | Price, add-ons, fees, tax, trade-in and payoff, down payment and APR, totalled and checked against market value, comparable listings and typical doc fees |
+| Map search | **Map** layout: listings grouped by city, sized by count, colored by price vs. market, with your search radius drawn |
+| Display preferences | **Settings**: home location (distances and a "Distance from home" sort), seller name vs. location, compact cards |
+
+Two Visor features are left out on purpose. NHTSA recalls and complaints would have to be made up for synthetic cars, and the API/MCP server and email alerts need a server.
+
 ## Data
 
-The site runs on `js/data.js`, a seeded generator that produces about 3,200 listings from 1,400 dealers. The same seed always gives the same market, which keeps tests stable. The listings cover 33 models with real trims and approximate MSRPs, the makes' real paint names, realistic depreciation and mileage, regional price differences, options packages, new-car pipeline status (on lot, in transit, in production) and price-cut histories. Every VIN has a valid check digit and the correct model-year code.
+The site runs on `js/data.js`, a seeded generator that produces about 3,200 cars for sale and 7,000 sales from the last 120 days. The same seed always gives the same market, which keeps tests stable. The listings cover 33 models with real trims and approximate MSRPs, the makes' real paint names, realistic depreciation and mileage, regional price differences, options packages, new-car pipeline status (on lot, in transit, in production) and price-cut histories. Every VIN has a valid check digit and the correct model-year code.
 
 To use real data, have `generateInventory()` return listings with the same shape: `{ id, vin, year, make, model, trim, body, segment, condition, status, miles, price, msrp, msrpBase, options, extColor, extHex, intColor, dealer, city, state, lat, lng, daysListed, history: [{ daysAgo, price }] }`. Nothing else needs to change.
 
@@ -73,7 +106,8 @@ assets/icons/     app icons (SVG source plus PNG sizes)
 css/styles.css    design tokens (light and dark), components, responsive rules
 js/vin.js         VIN validation and decoding (works in the browser and Node)
 js/data.js        seeded inventory generator
-js/market.js      search, facets, fair-value model, insight calculations (pure functions)
+js/market.js      search, facets, fair value, snapshots, velocity, leaderboard, Deal Check (pure functions)
+js/nlq.js         natural-language search and filter search
 js/charts.js      SVG scatter, bars, tile map, price-history and car illustrations
 js/app.js         hash router and views: home, search, car, compare, saved, VIN
 test/             node --test unit tests

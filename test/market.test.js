@@ -70,3 +70,68 @@ test('weekly insights produce content', () => {
   assert.ok(Market.retention(listings, 'Compact SUV', 2026).length >= 3);
   assert.ok(Market.rareSpecs(listings, Market.colorStats(listings), 8).length > 0);
 });
+
+const NLQ = require('../js/nlq.js');
+const data = generateInventory();
+const vocab = NLQ.build({ models: data.models, cities: data.cities, paints: [...new Set(listings.map((l) => l.extColor))], upfitters: ['Roush', 'Rocky Ridge'] });
+
+test('natural-language search understands common phrasing', () => {
+  const r = NLQ.parse('red convertibles under 40k with leather seats', vocab);
+  assert.deepEqual(r.filters.body, ['Convertible']);
+  assert.deepEqual(r.filters.colorFamily, ['Red']);
+  assert.deepEqual(r.filters.features, ['Leather Seats']);
+  assert.equal(r.filters.priceMax, 40000);
+  assert.equal(r.rest, '');
+
+  const t = NLQ.parse('4x4 trucks under 50k miles near denver', vocab);
+  assert.equal(t.filters.milesMax, 50000);
+  assert.equal(t.filters.priceMax, undefined);
+  assert.equal(t.filters.near, 'Denver, CO');
+  assert.deepEqual(t.filters.drivetrain, ['4WD']);
+
+  const x = NLQ.parse('used rav4 hybrid 2021+ without sunroof', vocab);
+  assert.deepEqual(x.filters.model, ['Toyota RAV4']);
+  assert.deepEqual(x.filters.ex.features, ['Sunroof/Moonroof']);
+  assert.ok(x.filters.year.includes('2021') && !x.filters.year.includes('2020'));
+});
+
+test('VIN patterns support prefixes and single-character wildcards', () => {
+  assert.ok(Market.vinMatches('5TFAB5DB1MX123456', '5TF'));
+  assert.ok(Market.vinMatches('5TFAB5DB1MX123456', '5TF*B5D?'));
+  assert.ok(!Market.vinMatches('5TFAB5DB1MX123456', '5TG'));
+  assert.ok(Market.vinMatches('5TFAB5DB1MX123456', ''));
+});
+
+test('exclude filters drop matching cars and multi-value filters require all values', () => {
+  const ctx = { delta: () => 0 };
+  const all = Market.search(listings, Market.emptyFilters(), ctx).results.length;
+  const f = Market.emptyFilters();
+  f.ex = { features: ['Sunroof/Moonroof'] };
+  const without = Market.search(listings, f, ctx).results;
+  assert.ok(without.length < all && without.every((l) => !l.features.includes('Sunroof/Moonroof')));
+  const g = Market.emptyFilters();
+  g.features = ['Heated Seats', 'Navigation'];
+  assert.ok(Market.search(listings, g, ctx).results.every((l) => l.features.includes('Heated Seats') && l.features.includes('Navigation')));
+});
+
+test('past-date snapshots and sold data are consistent', () => {
+  const { sold } = data;
+  assert.ok(sold.length > 0 && sold.every((l) => l.sold.daysToSell >= 1 && l.history[0].daysAgo === l.daysListed));
+  const snap = Market.snapshot(listings, sold, 30);
+  for (const l of snap) {
+    assert.ok(l.daysListed >= 0);
+    assert.equal(l.history[l.history.length - 1].price, l.price);
+  }
+  const series = Market.inventorySeries(listings, sold, Market.emptyFilters(), { delta: () => 0 }, 30).series;
+  assert.equal(series[series.length - 1].count, listings.length);
+  assert.equal(series[0].count, snap.length);
+});
+
+test('Deal Check totals a deal and flags a high doc fee', () => {
+  const r = Market.dealCheck({ price: 30000, addOns: 1000, docFee: 999, otherFees: 0, taxRate: 10, tradeIn: 5000, tradeOwed: 0, down: 0, apr: 0, term: 60, tradeTaxCredit: true },
+    { expected: 30000, compPrices: [], typicalDocFee: 300, isNew: false });
+  assert.equal(r.tax, 2600);
+  assert.equal(r.outTheDoor, 30000 + 1000 + 999 + 2600);
+  assert.equal(Math.round(r.payment), Math.round((r.outTheDoor - 5000) / 60));
+  assert.ok(r.flags.some((f) => /Doc fee/.test(f.text)));
+});

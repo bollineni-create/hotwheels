@@ -103,6 +103,110 @@
   const INDEPENDENTS = ['Auto Group', 'Motors', 'Auto Exchange', 'Car Company', 'Pre-Owned'];
   const INDIE_PREFIX = ['Summit', 'Liberty', 'Crossroads', 'Lakeside', 'Northstar', 'Redwood', 'Keystone', 'Pioneer', 'Harbor', 'Granite'];
 
+  // Final assembly plants: [plant, country, VIN plant code].
+  const PLANTS = {
+    'Toyota RAV4': [['Georgetown, KY', 'USA', 'W'], ['Woodstock, ON', 'Canada', 'C'], ['Takaoka, Japan', 'Japan', 'J']],
+    'Toyota 4Runner': [['Tahara, Japan', 'Japan', 'T']],
+    'Toyota Tacoma': [['San Antonio, TX', 'USA', 'X'], ['Guanajuato, Mexico', 'Mexico', 'M']],
+    'Toyota Camry': [['Georgetown, KY', 'USA', 'W']],
+    'Toyota Sienna': [['Princeton, IN', 'USA', 'S']],
+    'Lexus GX': [['Tahara, Japan', 'Japan', 'T']],
+    'Lexus RX': [['Cambridge, ON', 'Canada', 'C'], ['Miyata, Japan', 'Japan', 'J']],
+    'Honda CR-V': [['East Liberty, OH', 'USA', 'L'], ['Alliston, ON', 'Canada', 'H'], ['Greensburg, IN', 'USA', 'G']],
+    'Honda Civic': [['Greensburg, IN', 'USA', 'G'], ['Alliston, ON', 'Canada', 'H']],
+    'Honda Accord': [['Marysville, OH', 'USA', 'A']],
+    'Ford F-150': [['Dearborn, MI', 'USA', 'F'], ['Kansas City, MO', 'USA', 'K']],
+    'Ford Bronco': [['Wayne, MI', 'USA', 'L']],
+    'Ford Mustang': [['Flat Rock, MI', 'USA', 'R']],
+    'Chevrolet Silverado 1500': [['Fort Wayne, IN', 'USA', 'Z'], ['Silao, Mexico', 'Mexico', 'G']],
+    'Chevrolet Equinox': [['San Luis Potosí, Mexico', 'Mexico', 'S'], ['Ingersoll, ON', 'Canada', '6']],
+    'Chevrolet Corvette': [['Bowling Green, KY', 'USA', '5']],
+    'Ram 1500': [['Sterling Heights, MI', 'USA', 'S']],
+    'Jeep Wrangler': [['Toledo, OH', 'USA', 'W']],
+    'Hyundai Palisade': [['Ulsan, South Korea', 'South Korea', 'U']],
+    'Kia Telluride': [['West Point, GA', 'USA', 'G']],
+    'Subaru Forester': [['Gunma, Japan', 'Japan', 'H']],
+    'Subaru Outback': [['Lafayette, IN', 'USA', '3']],
+    'Mazda CX-5': [['Hiroshima, Japan', 'Japan', '0'], ['Hofu, Japan', 'Japan', '1']],
+    'Mazda CX-50': [['Huntsville, AL', 'USA', 'U']],
+    'Mazda MX-5 Miata': [['Hiroshima, Japan', 'Japan', '0']],
+    'BMW X5': [['Spartanburg, SC', 'USA', '9']],
+    'BMW 3 Series': [['Munich, Germany', 'Germany', 'F'], ['San Luis Potosí, Mexico', 'Mexico', 'M']],
+    'Volvo XC90': [['Torslanda, Sweden', 'Sweden', '1']],
+    'Volvo XC60': [['Torslanda, Sweden', 'Sweden', '1']],
+    'Tesla Model Y': [['Fremont, CA', 'USA', 'F'], ['Austin, TX', 'USA', 'A']],
+    'Tesla Model 3': [['Fremont, CA', 'USA', 'F']],
+    'Polestar 2': [['Luqiao, China', 'China', 'L']],
+    'Cadillac Lyriq': [['Spring Hill, TN', 'USA', 'H']],
+  };
+
+  // EPA-style figures for the window sticker: [city, highway] MPG, or { mpge, range } for EVs.
+  const ECONOMY = {
+    'Toyota RAV4': [27, 35], 'Toyota 4Runner': [16, 19], 'Toyota Tacoma': [20, 26], 'Toyota Camry': [28, 39], 'Toyota Sienna': [36, 36],
+    'Lexus GX': [15, 19], 'Lexus RX': [21, 28], 'Honda CR-V': [28, 34], 'Honda Civic': [31, 40], 'Honda Accord': [29, 37],
+    'Ford F-150': [19, 25], 'Ford Bronco': [18, 21], 'Ford Mustang': [21, 32], 'Chevrolet Silverado 1500': [17, 22],
+    'Chevrolet Equinox': [26, 31], 'Chevrolet Corvette': [16, 24], 'Ram 1500': [18, 24], 'Jeep Wrangler': [17, 25],
+    'Hyundai Palisade': [19, 26], 'Kia Telluride': [20, 26], 'Subaru Forester': [26, 33], 'Subaru Outback': [26, 32],
+    'Mazda CX-5': [26, 31], 'Mazda CX-50': [24, 30], 'Mazda MX-5 Miata': [26, 34], 'BMW X5': [21, 26], 'BMW 3 Series': [26, 36],
+    'Volvo XC90': [20, 27], 'Volvo XC60': [22, 29],
+    'Tesla Model Y': { mpge: 122, range: 310 }, 'Tesla Model 3': { mpge: 132, range: 340 },
+    'Polestar 2': { mpge: 107, range: 270 }, 'Cadillac Lyriq': { mpge: 99, range: 314 },
+  };
+  const HYBRID_BONUS = 1.35;
+
+  // Aftermarket builders (Visor calls these upfitters). [name, category, typical cost]
+  const UPFITTERS = {
+    'Ford F-150': [['Roush', 'Performance', 22000], ['Shelby American', 'Performance', 35000], ['Hennessey', 'Performance', 30000], ['Rocky Ridge', 'Lifted & off-road', 15000], ['Tuscany', 'Lifted & off-road', 20000], ['Sherrod', 'Lifted & off-road', 18000]],
+    'Chevrolet Silverado 1500': [['Rocky Ridge', 'Lifted & off-road', 15000], ['Black Widow', 'Lifted & off-road', 16000], ['Callaway', 'Performance', 18000], ['Hennessey', 'Performance', 30000]],
+    'Ram 1500': [['Rocky Ridge', 'Lifted & off-road', 15000], ['Black Widow', 'Lifted & off-road', 16000], ['Tuscany', 'Lifted & off-road', 20000]],
+    'Ford Mustang': [['Roush', 'Performance', 12000], ['RTR', 'Performance', 11000], ['Shelby American', 'Performance', 25000], ['Saleen', 'Performance', 30000]],
+    'Chevrolet Corvette': [['Callaway', 'Performance', 20000], ['Lingenfelter', 'Performance', 25000], ['Hennessey', 'Performance', 30000]],
+    'Ford Bronco': [['RTR', 'Lifted & off-road', 10000], ['Hennessey', 'Performance', 25000]],
+    'Jeep Wrangler': [['AEV', 'Lifted & off-road', 15000]],
+    'Toyota Sienna': [['BraunAbility', 'Mobility', 30000], ['VMI', 'Mobility', 30000]],
+  };
+
+  const THIRD_ROW = { 'Hyundai Palisade': 1, 'Kia Telluride': 1, 'Toyota Sienna': 1, 'Volvo XC90': 1, 'Lexus GX': 0.7, 'BMW X5': 0.15 };
+  const OPTION_FEATURES = {
+    'Moonroof': ['Sunroof/Moonroof'], 'Sunroof': ['Sunroof/Moonroof'], 'Panoramic Roof': ['Sunroof/Moonroof', 'Panoramic Roof'],
+    'Premium Audio': ['Premium Audio'], 'Bowers & Wilkins Audio': ['Premium Audio'],
+    'Tow Hitch': ['Tow Package'], 'Towing Package': ['Tow Package'], 'Max Trailer Tow': ['Tow Package'], 'Tow Package': ['Tow Package'],
+    'Head-Up Display': ['Head-Up Display'], '360 Camera': ['360° Camera'], 'Off-Road Package': ['Off-Road Package'],
+    'Air Suspension': ['Air Suspension'], 'Super Cruise': ['Hands-Free Driving'], 'Full Self-Driving': ['Hands-Free Driving'],
+    'Driver Assistance Pro': ['Adaptive Cruise Control', 'Hands-Free Driving'], 'Premium Interior': ['Leather Seats'],
+  };
+  const DOC_FEES = { CA: 85, NY: 175, TX: 150, FL: 999, GA: 799, NC: 699, IL: 358, OH: 250, PA: 464, MI: 260, CO: 699, AZ: 499, WA: 200, MN: 125, OR: 150 };
+  const DEALER_ADDONS = [['Nitrogen-filled tires', 199], ['Paint & fabric protection', 995], ['Window tint', 495], ['Wheel locks', 89], ['VIN etching', 299], ['Door edge guards', 249]];
+  const CONDITIONAL_INCENTIVES = [['Loyalty rebate', 1000], ['Military rebate', 500], ['Recent college grad', 500], ['Finance with brand lender', 1500]];
+
+  // Plain color family from a hex value, for "red convertibles"-style search.
+  function colorFamily(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const s = max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+    let h = 0;
+    if (max !== min) {
+      if (max === r) h = ((g - b) / (max - min) + 6) % 6;
+      else if (max === g) h = (b - r) / (max - min) + 2;
+      else h = (r - g) / (max - min) + 4;
+      h *= 60;
+    }
+    if (l > 0.86) return 'White';
+    if (l < 0.13) return 'Black';
+    if (s < 0.14) return l > 0.6 ? 'Silver' : 'Gray';
+    if (h >= 25 && h < 65 && s < 0.45 && l > 0.5) return 'Beige';
+    if (h >= 15 && h < 50 && l < 0.48 && s < 0.6) return 'Brown';
+    if (h < 15 || h >= 335) return 'Red';
+    if (h < 40) return 'Orange';
+    if (h < 65) return 'Yellow';
+    if (h < 176) return 'Green';
+    if (h < 255) return 'Blue';
+    return 'Purple';
+  }
+  const INTERIOR_FAMILY = { Black: 'Black', Gray: 'Gray', Charcoal: 'Gray', Beige: 'Beige', Ivory: 'Beige', Blond: 'Beige', Sepia: 'Brown', Cognac: 'Brown', Brown: 'Brown', Red: 'Red', 'Rioja Red': 'Red', Navy: 'Blue' };
+
   const VIN_CHARS = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
   const VIN_LETTERS = 'ABCDEFGHJKLMNPRSTUVWXYZ';
 
@@ -142,12 +246,12 @@
   }
 
   function generateInventory(opts) {
-    const o = Object.assign({ seed: 20261019, count: 3200, currentYear: 2026 }, opts);
+    const o = Object.assign({ seed: 20261019, count: 3200, soldCount: 7000, currentYear: 2026 }, opts);
     const rand = mulberry32(o.seed);
     const dealers = new Map();
     const listings = [];
 
-    for (let i = 0; i < o.count; i++) {
+    for (let i = 0; i < o.count + o.soldCount; i++) {
       const m = pickWeighted(rand, MODELS, (x) => x.weight);
       const [minY, maxY] = m.years;
       const nextYearModel = maxY > o.currentYear;
@@ -253,10 +357,153 @@
         history,
       });
     }
-    return { listings, dealers: [...dealers.values()], models: MODELS, cities: CITIES };
+    // A second random stream adds the richer attributes, so the base listings
+    // above stay identical however these extras change.
+    const rand2 = mulberry32(o.seed ^ 0x9e3779b9);
+    for (const l of listings) enrich(l, rand2, o.currentYear);
+
+    // Listings past the active count left the market: they sold.
+    const sold = listings.splice(o.count);
+    for (const l of sold) {
+      const soldDaysAgo = Math.floor(rand2() * 120);
+      // Every sale spends at least a few days on the market.
+      if (l.daysListed < 3) {
+        const extra = 3 + Math.floor(rand2() * 25);
+        l.daysListed += extra;
+        l.history[0].daysAgo += extra;
+      }
+      l.daysListed += soldDaysAgo;
+      for (const h of l.history) h.daysAgo += soldDaysAgo;
+      l.status = null;
+      l.sold = { daysAgo: soldDaysAgo, price: l.price, daysToSell: l.daysListed - soldDaysAgo };
+      l.id = 'S' + l.id.slice(1);
+    }
+    return { listings, sold, dealers: [...dealers.values()], models: MODELS, cities: CITIES };
   }
 
-  const api = { generateInventory, mulberry32, MODELS, CITIES };
+  function enrich(l, rand, currentYear) {
+    const key = `${l.make} ${l.model}`;
+    const m = MODELS.find((x) => `${x.make} ${x.model}` === key);
+    const trimIdx = m.trims.findIndex((t) => t[0] === l.trim);
+    const tier = m.trims.length > 1 ? trimIdx / (m.trims.length - 1) : 0.5;
+    const lux = m.opt === 'lux' || m.opt === 'ev';
+
+    // Assembly plant, written into VIN position 11 (check digit recomputed).
+    const plants = PLANTS[key];
+    const [plant, country, code] = plants[Math.floor(rand() * plants.length)];
+    l.assembly = { plant, country };
+    const draft = l.vin.slice(0, 10) + code + l.vin.slice(11);
+    l.vin = draft.slice(0, 8) + VIN.checkDigit(draft) + draft.slice(9);
+
+    // Top features: options imply some; trim level and model year drive the rest.
+    const f = new Set();
+    for (const o of l.options) for (const x of OPTION_FEATURES[o.name] || []) f.add(x);
+    const chance = (p) => rand() < Math.max(0, Math.min(1, p));
+    const modern = l.year >= 2018;
+    if (chance(modern ? 0.96 : 0.45)) f.add('Apple CarPlay');
+    if (chance(modern ? 0.93 : 0.4)) f.add('Android Auto');
+    if (chance((l.year >= 2019 ? 0.55 : 0.25) + 0.4 * tier)) f.add('Adaptive Cruise Control');
+    if (chance(0.45 + 0.5 * tier)) f.add('Blind Spot Monitor');
+    if (chance(lux ? 0.92 : 0.3 + 0.65 * tier)) f.add('Heated Seats');
+    if (chance((lux ? 0.25 : 0.02) + 0.55 * tier)) f.add('Ventilated Seats');
+    if (chance(lux ? 0.85 : 0.1 + 0.75 * tier)) f.add('Leather Seats');
+    if (chance(0.08 + 0.6 * tier)) f.add('Heated Steering Wheel');
+    if (chance(0.2 + 0.6 * tier)) f.add('Navigation');
+    if (chance(0.35 + 0.45 * tier)) f.add('Remote Start');
+    if (chance(l.year >= 2020 ? 0.2 + 0.6 * tier : 0.05)) f.add('Wireless Charging');
+    if (['SUV', 'Wagon', 'Minivan'].includes(l.body) && chance(0.3 + 0.6 * tier)) f.add('Power Liftgate');
+    if (lux && chance(0.35 + 0.4 * tier)) f.add('Sunroof/Moonroof');
+    if (lux && chance(0.08 + 0.5 * tier)) f.add('360° Camera');
+    if (THIRD_ROW[key] && (THIRD_ROW[key] >= 1 || chance(THIRD_ROW[key]))) f.add('Third-Row Seating');
+    if (l.drivetrain === 'AWD' || l.drivetrain === '4WD') f.add('All-Wheel/4-Wheel Drive');
+    l.features = [...f].sort();
+
+    // Window sticker economy figures.
+    const eco = ECONOMY[key];
+    l.economy = Array.isArray(eco)
+      ? (l.fuel === 'Hybrid' ? eco.map((v) => Math.round(v * HYBRID_BONUS)) : eco)
+      : eco;
+    l.destination = Math.round((lux ? 1395 : 1295) + rand() * 400);
+
+    // Some trucks, muscle cars and vans have been reworked by a known builder.
+    const ups = UPFITTERS[key];
+    if (ups && rand() < 0.06) {
+      const [name, category, cost] = ups[Math.floor(rand() * ups.length)];
+      const factor = 1 + (cost * (l.condition === 'New' ? 1 : 0.7)) / l.price;
+      l.upfitter = { name, category, cost };
+      l.price = Math.round(l.price * factor / 100) * 100 - 1;
+      for (const h of l.history) h.price = Math.round(h.price * factor / 100) * 100 - 1;
+      l.history[l.history.length - 1].price = l.price;
+    } else {
+      l.upfitter = null;
+    }
+
+    l.colorFamily = colorFamily(l.extHex);
+    l.interiorFamily = INTERIOR_FAMILY[l.intColor] || 'Other';
+
+    // Private sellers: some used cars, no dealer fees.
+    l.seller = l.condition === 'Used' && rand() < 0.09 ? 'Private' : 'Dealer';
+    if (l.seller === 'Private') {
+      l.dealer = 'Private seller';
+      l.dealerId = 'private';
+      l.franchise = false;
+    }
+
+    // Dealer pricing breakdown: what the advertised price leaves out.
+    const pricing = { advertised: l.price, msrp: l.msrp, discount: 0, marketAdjustment: 0, incentives: [], addOns: [], docFee: 0, notes: [] };
+    if (l.seller === 'Dealer') {
+      pricing.docFee = DOC_FEES[l.state] || 399;
+      if (l.condition === 'New') {
+        const gap = l.msrp - l.price;
+        if (gap >= 0) pricing.discount = gap;
+        else pricing.marketAdjustment = -gap;
+        if (rand() < 0.35) {
+          const [name, amount] = CONDITIONAL_INCENTIVES[Math.floor(rand() * CONDITIONAL_INCENTIVES.length)];
+          pricing.incentives.push({ name, amount, conditional: true });
+          pricing.notes.push(`Advertised price assumes the ${name.toLowerCase()} ($${amount.toLocaleString('en-US')}). If you don't qualify, the price goes up.`);
+        }
+      }
+      if (rand() < (l.franchise ? 0.4 : 0.25)) {
+        const n = 1 + Math.floor(rand() * 3);
+        // Fisher-Yates with our seeded stream; Array#sort with a random
+        // comparator calls it a different number of times per JS engine.
+        const pool = [...DEALER_ADDONS];
+        for (let k = pool.length - 1; k > 0; k--) {
+          const j = Math.floor(rand() * (k + 1));
+          [pool[k], pool[j]] = [pool[j], pool[k]];
+        }
+        const picks = pool.slice(0, n);
+        pricing.addOns = picks.map(([name, price]) => ({ name, price }));
+        pricing.notes.push('Pre-installed dealer add-ons are not included in the advertised price.');
+      }
+      if (!l.franchise && rand() < 0.2) {
+        pricing.addOns.push({ name: 'Reconditioning fee', price: 795 });
+      }
+    }
+    l.pricing = pricing;
+
+    // Seller history: earlier listings of the same VIN.
+    l.previous = [];
+    if (l.condition !== 'New' && rand() < 0.2) {
+      let endAgo = l.daysListed + 4 + Math.floor(rand() * 40);
+      let p = l.history[0].price;
+      let mi = l.miles;
+      const n = rand() < 0.25 ? 2 : 1;
+      for (let k = 0; k < n; k++) {
+        const c = CITIES[Math.floor(rand() * CITIES.length)];
+        const len = 10 + Math.floor(rand() * 70);
+        p = Math.round(p * (1.02 + rand() * 0.1) / 100) * 100 - 1;
+        mi = Math.max(0, mi - Math.floor(200 + rand() * 4000));
+        l.previous.push({
+          dealer: `${INDIE_PREFIX[Math.floor(rand() * INDIE_PREFIX.length)]} ${INDEPENDENTS[Math.floor(rand() * INDEPENDENTS.length)]}`,
+          city: c[0], state: c[1], startedDaysAgo: endAgo + len, endedDaysAgo: endAgo, lastPrice: p, miles: mi,
+        });
+        endAgo += len + 10 + Math.floor(rand() * 60);
+      }
+    }
+  }
+
+  const api = { generateInventory, mulberry32, colorFamily, MODELS, CITIES, PLANTS, UPFITTERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MarketData = api;
 })(typeof window !== 'undefined' ? window : globalThis);
