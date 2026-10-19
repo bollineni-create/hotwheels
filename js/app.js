@@ -138,6 +138,27 @@
     toast._t = setTimeout(() => t.classList.remove('show'), 2400);
   }
 
+  // In-page replacement for window.prompt(), which the desktop shell doesn't support.
+  function askText(label, value, okLabel) {
+    return new Promise((resolve) => {
+      const dlg = document.createElement('dialog');
+      dlg.className = 'ask';
+      dlg.innerHTML = `<form method="dialog">
+        <label><span>${esc(label)}</span><input name="v" required maxlength="120" value="${esc(value || '')}"></label>
+        <div class="ask-actions"><button class="btn ghost" type="button" data-cancel>Cancel</button><button class="btn primary" value="ok">${esc(okLabel || 'OK')}</button></div>
+      </form>`;
+      document.body.appendChild(dlg);
+      const input = dlg.querySelector('input');
+      dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
+      dlg.addEventListener('close', () => {
+        resolve(dlg.returnValue === 'ok' ? input.value.trim() || null : null);
+        dlg.remove();
+      });
+      dlg.showModal();
+      input.select();
+    });
+  }
+
   function updateNavCounts() {
     const s = store.get();
     const set = (id, n) => {
@@ -1031,11 +1052,13 @@
     } else if (a === 'pick-trim') {
       updateFilters((f) => { f.trim = [el.dataset.trim]; });
     } else if (a === 'save-search') {
-      const name = prompt('Name this search', describeFilters(S.f));
-      if (!name) return;
       const params = paramsFromFilters(S.f).toString();
-      store.update((s) => { s.saved.unshift({ id: 's' + Date.now(), name: name.trim(), params, count: S.results.length, createdAt: Date.now() }); });
-      toast('Search saved');
+      const count = S.results.length;
+      askText('Name this search', describeFilters(S.f), 'Save').then((name) => {
+        if (!name) return;
+        store.update((s) => { s.saved.unshift({ id: 's' + Date.now(), name, params, count, createdAt: Date.now() }); });
+        toast('Search saved');
+      });
     } else if (a === 'delete-search') {
       store.update((s) => { s.saved = s.saved.filter((x) => x.id !== id); });
       renderSaved();

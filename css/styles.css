@@ -465,6 +465,16 @@ button, input, select { font: inherit; color: inherit; }
 .footer-links a { display: block; color: var(--text-2); font-size: .86rem; padding: 3px 0; }
 .disclaimer { max-width: 1280px; margin: 0 auto; padding: 16px 20px 32px; color: var(--muted); font-size: .78rem; }
 .disclaimer code { font-size: .9em; }
+/* Desktop app: let the header act as a window drag region on macOS. */
+.is-desktop .site-header { -webkit-app-region: drag; }
+.is-desktop .site-header a, .is-desktop .site-header button, .is-desktop .site-header input { -webkit-app-region: no-drag; }
+.is-desktop.platform-darwin .header-inner { padding-left: 84px; }
+.ask { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 20px; width: min(440px, calc(100vw - 32px)); box-shadow: var(--shadow-lg); }
+.ask::backdrop { background: rgba(15, 23, 42, .45); }
+.ask label span { display: block; font-weight: 700; margin-bottom: 8px; }
+.ask input { width: 100%; border: 1px solid var(--border); background: var(--bg); border-radius: 10px; padding: 9px 12px; }
+.ask input:focus { outline: none; border-color: var(--accent); }
+.ask-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: .9rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 90; box-shadow: var(--shadow-lg); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
