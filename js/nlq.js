@@ -19,6 +19,9 @@
     [/\b(convertibles?|roadsters?|drop-?tops?)\b/, 'Convertible'], [/\bwagons?\b/, 'Wagon'], [/\b(mini-?vans?|vans?)\b/, 'Minivan'],
   ];
   const DRIVE = [[/\b(awd|all[- ]wheel drive)\b/, 'AWD'], [/\b(4wd|4x4|four[- ]wheel drive)\b/, '4WD'], [/\b(fwd|front[- ]wheel drive)\b/, 'FWD'], [/\b(rwd|rear[- ]wheel drive)\b/, 'RWD']];
+  // Transmission words. "Stick" and "three pedals" are how enthusiasts say manual.
+  const TRANS = [[/\b(manuals?( transmission| gearbox)?|stick( ?shifts?)?|(5|6|7|five|six|seven)[- ]speed manual|(3|three)[- ]pedals?|row your own)\b/, 'Manual'],
+    [/\b(cvts?|continuously variable)\b/, 'CVT'], [/\b(automatics?( transmission)?|auto transmission|autotragic)\b/, 'Automatic']];
   const FUEL = [[/\b(plug-?in( hybrid)?s?|phevs?)\b/, 'Plug-in Hybrid'], [/\bhybrids?\b/, 'Hybrid'], [/\b(electric|evs?|bevs?)\b/, 'Electric'], [/\bdiesels?\b/, 'Diesel']];
   const COLORS = { red: 'Red', blue: 'Blue', black: 'Black', white: 'White', gray: 'Gray', grey: 'Gray', silver: 'Silver', green: 'Green',
     brown: 'Brown', bronze: 'Brown', beige: 'Beige', tan: 'Beige', orange: 'Orange', yellow: 'Yellow', gold: 'Yellow', purple: 'Purple' };
@@ -95,7 +98,9 @@
       t = t.replace(m[0], ' ');
       const feat = FEATURES.find(([re]) => re.test(phrase));
       const up = vocab.upfitters.find((u) => phrase.includes(u.toLowerCase()));
-      if (feat) exclude('features', feat[1]);
+      const trans = TRANS.find(([re]) => re.test(phrase));
+      if (trans) exclude('transmission', trans[1]);
+      else if (feat) exclude('features', feat[1]);
       else if (up) exclude('upfitter', up);
       else if (/private/.test(phrase)) exclude('seller', 'Private');
       else if (/(upfit|lift|modified|aftermarket)/.test(phrase)) f.noUpfit = understood.push('no upfits');
@@ -200,6 +205,7 @@
     for (const [re, v] of BODY) if ((m = take(re))) add('body', v);
     for (const [re, v] of DRIVE) if ((m = take(re))) add('drivetrain', v);
     for (const [re, v] of FUEL) if ((m = take(re))) add('fuel', v);
+    for (const [re, v] of TRANS) if ((m = take(re))) add('transmission', v, v === 'Manual' ? 'manual transmission' : v === 'CVT' ? 'CVT' : 'automatic');
 
     for (const paint of [...vocab.paints].sort((a, b) => b.length - a.length)) {
       const re = wordRe(paint.toLowerCase());

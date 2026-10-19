@@ -15,13 +15,20 @@
   const BY_ID = new Map(ALL.map((l) => [l.id, l]));
   const BY_VIN = new Map(ALL.map((l) => [l.vin, l]));
   for (const l of LISTINGS) BY_VIN.set(l.vin, l);
-  const fairValue = Market.buildFairValue(LISTINGS, CURRENT_YEAR);
+  // Trained on cars for sale and recently sold, so rare specs have enough examples.
+  const fairValue = Market.buildFairValue(ALL, CURRENT_YEAR);
   const expectedCache = new Map();
   const expected = (l) => {
     if (l.live) return LIVE_EXPECTED.has(l.id) ? LIVE_EXPECTED.get(l.id) : null;
     if (!expectedCache.has(l.id)) expectedCache.set(l.id, fairValue(l));
     return expectedCache.get(l.id);
   };
+  // The parts of a car's expected price: base value plus any spec premiums.
+  const explainValue = (l) => (l.live ? LIVE_EXPLAIN.get(l.id) || null : fairValue.explain(l));
+  function setLiveValue(fv, l) {
+    LIVE_EXPECTED.set(l.id, fv(l));
+    if (fv.explain) LIVE_EXPLAIN.set(l.id, fv.explain(l));
+  }
   const delta = (l) => {
     const e = expected(l);
     return e ? l.price / e - 1 : 0;
@@ -54,7 +61,7 @@
   const store = (() => {
     let s = { saved: [], favs: {}, compare: [], recent: [], theme: null, prefs: {} };
     try { s = Object.assign(s, JSON.parse(localStorage.getItem(STORE_KEY)) || {}); } catch (e) { /* private mode */ }
-    s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo' }, s.prefs);
+    s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo', huntEvery: 360 }, s.prefs);
     s.liveCars = s.liveCars || {};
     if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
     // A desktop build with a built-in key starts on live data, preferring Visor (fuller data) over auto.dev.
@@ -100,6 +107,7 @@
   };
   const DEMO_MAKES = [...new Set(DATA.models.map((m) => m.make))];
   const LIVE_EXPECTED = new Map();
+  const LIVE_EXPLAIN = new Map();
   const LIVE_SEEN = new Map();
   let LIVE_VOCAB = null, LIVE_KNOWN = null;
   const liveCtx = () => ({ cityByName, zipFor: (c) => CITY_ZIP[c] || null, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
@@ -128,7 +136,7 @@
     store.update((s) => {
       s.liveCars[l.id] = slim;
       const ids = Object.keys(s.liveCars);
-      const keep = new Set([...Object.keys(s.favs), ...s.compare, ...s.recent]);
+      const keep = new Set([...Object.keys(s.favs), ...s.compare, ...s.recent, ...s.saved.flatMap(huntNewsIds)]);
       if (ids.length > 80) for (const id of ids) if (!keep.has(id) && Object.keys(s.liveCars).length > 80) delete s.liveCars[id];
     });
   }
@@ -158,7 +166,7 @@
   const pct = (v, digits) => `${(v * 100).toFixed(digits == null ? 0 : digits)}%`;
   const title = (l) => `${l.year} ${l.make} ${l.model}`;
   const days = (d) => (d === 0 ? 'Listed today' : d === 1 ? '1 day for sale' : `${d} days for sale`);
-  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
+  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : /(ch|sh|s|x)$/.test(word) ? 'es' : 's'}`;
   const ago = (d) => (d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`);
   const distanceTo = (l) => {
     const o = CTX.origin;
@@ -192,7 +200,7 @@
   const NUM_KEYS = ['priceMin', 'priceMax', 'msrpMin', 'msrpMax', 'milesMax', 'radius'];
   const BOOL_KEYS = ['dropsOnly', 'belowMarket', 'noAccidents', 'oneOwner'];
   const FACET_LABELS = {
-    condition: 'Condition', make: 'Make', model: 'Model', trim: 'Trim', year: 'Model year', body: 'Body style', drivetrain: 'Drivetrain',
+    condition: 'Condition', make: 'Make', model: 'Model', trim: 'Trim', year: 'Model year', body: 'Body style', drivetrain: 'Drivetrain', transmission: 'Transmission',
     fuel: 'Fuel', colorFamily: 'Exterior color', extColor: 'Paint name', interiorFamily: 'Interior color', features: 'Top features',
     options: 'Installed options', upfitter: 'Upfitter', assembly: 'Assembly location', seller: 'Seller type', state: 'State',
   };
@@ -251,7 +259,7 @@
     if (f.year.length) parts.push(f.year.length > 2 ? `${f.year[0]}–${f.year[f.year.length - 1]}` : f.year.join(', '));
     if (f.model.length) parts.push(f.model.join(', '));
     else if (f.make.length) parts.push(f.make.join(', '));
-    for (const k of ['trim', 'body', 'fuel', 'drivetrain', 'colorFamily', 'extColor', 'upfitter', 'assembly']) if (list(k)) parts.push(list(k));
+    for (const k of ['trim', 'body', 'fuel', 'drivetrain', 'transmission', 'colorFamily', 'extColor', 'upfitter', 'assembly']) if (list(k)) parts.push(list(k));
     if (f.interiorFamily.length) parts.push(`${f.interiorFamily.join('/')} interior`);
     if (f.features.length) parts.push(`with ${f.features.join(', ')}`);
     if (f.options.length) parts.push(`with ${f.options.join(', ')}`);
@@ -340,7 +348,10 @@
       el.hidden = !n;
       el.textContent = n;
     };
-    set('saved-count', s.saved.length + Object.keys(s.favs).length);
+    const news = s.saved.reduce((n, h) => n + huntNewCount(h), 0);
+    set('saved-count', news > 99 ? '99+' : news || s.saved.length + Object.keys(s.favs).length);
+    document.getElementById('saved-count').classList.toggle('pill-new', news > 0);
+    document.getElementById('saved-count').title = news ? `${news} new in your hunts` : '';
     set('compare-count', s.compare.length);
   }
 
@@ -357,10 +368,22 @@
     return badge(`🔧 ${l.upfitter.name}`, 'b-upfit', `${l.upfitter.name}: ${l.upfitter.category.toLowerCase()} builder. Typical upfit ≈ ${money(l.upfitter.cost)}.`);
   }
 
+  // What the spec adds to (or takes off) a car's expected price, and why.
+  function specBreakdownHtml(l) {
+    const e = explainValue(l);
+    if (!e || !e.adjustments.length) return '';
+    const name = `${l.make} ${l.model}`;
+    return `<ul class="spec-adj" aria-label="What the spec is worth">
+      <li><span>Base value for its year and miles</span><b>${money(e.base)}</b></li>
+      ${e.adjustments.map((a) => `<li><span>${esc(a.label)} <small class="muted">${a.pct > 0 ? '+' : ''}${pct(a.pct, 1)} vs. ${esc(a.vs)}, from ${plural(a.n, 'car')}</small></span><b class="${a.amount >= 0 ? 'good' : 'bad'}">${a.amount >= 0 ? '+' : '−'}${money(Math.abs(a.amount))}</b></li>`).join('')}
+    </ul><p class="muted small">Spec premiums come from ${l.live ? 'the listings loaded' : 'cars for sale and sold'} in the ${esc(name)} market, counted only when the difference is clear of normal price noise.</p>`;
+  }
+
   function deltaChip(l) {
     const m = marketText(l);
     if (!m) return '';
-    return `<span class="mkt mkt-${m.tone}" title="Compared with similar ${esc(l.make + ' ' + l.model)}s, adjusted for year, mileage and trim. Expected ≈ ${money(m.expected)}">${esc(m.label)}</span>`;
+    const specs = (explainValue(l) || { adjustments: [] }).adjustments.map((a) => a.label.toLowerCase());
+    return `<span class="mkt mkt-${m.tone}" title="Compared with similar ${esc(l.make + ' ' + l.model)}s, adjusted for year, mileage, trim${specs.length ? ' and ' + esc(specs.join(', ')) : ''}. Expected ≈ ${money(m.expected)}">${esc(m.label)}</span>`;
   }
 
   function favButton(l) {
@@ -382,7 +405,7 @@
 
   function listingCard(l, opts) {
     const cut = Market.lastChange(l);
-    const sub = [l.trim, kMiles(l.miles), l.drivetrain].filter(Boolean).join(' · ');
+    const sub = [l.trim, kMiles(l.miles), l.drivetrain, l.transmission === 'Manual' || /manual/i.test(l.transmission || '') ? 'Manual' : null].filter(Boolean).join(' · ');
     const href = `#/car/${l.id}${l.asOf ? '?asOf=' + l.asOf : ''}`;
     const meta = l.sold
       ? `${esc(whereText(l))} · <b>Sold ${ago(l.sold.daysAgo)}</b> after ${plural(l.sold.daysToSell, 'day')}`
@@ -413,7 +436,7 @@
     const q = raw.trim();
     const out = [];
     if (!q) {
-      for (const s of store.get().saved.slice(0, 4)) out.push({ icon: '★', label: s.name, sub: 'Saved search', href: '#/search?' + s.params });
+      for (const s of store.get().saved.slice(0, 4)) out.push({ icon: '🎯', label: s.name, sub: huntNewCount(s) ? `Hunt · ${huntNewCount(s)} new` : 'Hunt', href: '#/hunt/' + s.id });
       for (const p of quickFor().slice(0, 6)) out.push({ icon: '↗', label: p.label, sub: 'Try a plain-English search', href: p.href });
       return out;
     }
@@ -460,7 +483,7 @@
       }
       const cities = CITY_NAMES.filter((c) => hit(c)).slice(0, 2);
       for (const c of cities) out.push({ icon: '◎', label: `Cars near ${c}`, sub: 'Within 150 miles', href: searchHref({ near: c }) });
-      for (const s of store.get().saved.filter((s) => hit(s.name)).slice(0, 2)) out.push({ icon: '★', label: s.name, sub: 'Saved search', href: '#/search?' + s.params });
+      for (const s of store.get().saved.filter((s) => hit(s.name)).slice(0, 2)) out.push({ icon: '🎯', label: s.name, sub: 'Hunt', href: '#/hunt/' + s.id });
     }
     out.push({ icon: '↵', label: `Search all listings for “${q}”`, sub: 'Matches model, trim, color, feature, dealer, city or VIN', href: searchHref({ q }) });
     return out.slice(0, 10);
@@ -524,6 +547,7 @@
 
   const nlQuick = (text) => nlHref(NLQ.parse(text, VOCAB));
   const QUICK = [
+    { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
     { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
     { label: '4x4 trucks under 50k miles near Denver', href: nlQuick('4x4 trucks under 50k miles near denver') },
     { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
@@ -839,7 +863,7 @@
               <button type="button" data-action="layout" data-layout="table" aria-label="Table view" title="Table">☰</button>
               <button type="button" data-action="layout" data-layout="map" aria-label="Map view" title="Map">◎</button>
             </div>
-            <button class="btn primary" type="button" data-action="save-search">★ Save search</button>
+            <button class="btn primary" type="button" data-action="save-search" title="Save this search and get notified when a new match is listed or one drops its price">🎯 Hunt this</button>
           </div>
           <p class="nl-hint" id="nl-hint" hidden></p>
           <div id="results"></div>
@@ -926,7 +950,7 @@
       for (const l of r.results) LIVE_SEEN.set(l.id, l);
       // Fair value from the cars on hand, grouped by model.
       const fv = Live.fairValueFrom(S.results, CURRENT_YEAR);
-      for (const l of S.results) LIVE_EXPECTED.set(l.id, fv(l));
+      for (const l of S.results) setLiveValue(fv, l);
       if (!append && prefs().valueSort !== 'count' && can('metrics')) await addLiveMetrics(seq);
       if (seq !== liveSeq) return;
       S.shown = S.results.length;
@@ -1075,7 +1099,8 @@
         ${singleModel || f.trim.length ? facetList('trim', facets) : ''}
         ${facetList('body', facets)}
         ${facetList('fuel', facets)}
-        ${facetList('drivetrain', facets)}`)}
+        ${facetList('drivetrain', facets)}
+        ${facetList('transmission', facets, { hint: S.live ? null : 'Type “manual” or “stick” in any search box.' })}`)}
       ${group('Colors', `
         ${facetList('colorFamily', facets, { swatch: (v) => FAMILY_HEX[v] || '#999' })}
         ${S.live && !can('extColor') ? '' : facetList('extColor', facets, { limit: 6, swatch: (v) => HEX.get(v) || '#999' })}
@@ -1351,7 +1376,7 @@
       const l = await Live.listing(id);
       const comps = await Live.comparables(l, liveCtx(), { years: 1, condition: 'same' });
       const fv = Live.fairValueFrom(comps.concat([l]), CURRENT_YEAR);
-      for (const x of comps.concat([l])) LIVE_EXPECTED.set(x.id, fv(x));
+      for (const x of comps.concat([l])) setLiveValue(fv, x);
       rememberLive(l);
       if (location.hash.replace(/\?.*/, '') !== `#/car/${id}`) return;
       renderCarView(l, { live: true, comps });
@@ -1394,12 +1419,13 @@
         <div class="car-summary">
           <div class="badges">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private seller', 'b-private') : ''}${upfitBadge(l)}${r && r.extCount <= 3 ? badge(`💎 1 of ${r.extCount} in this color`, 'b-rare') : ''}${l.windowStickerVerified ? badge('✓ Window sticker verified', 'b-verified') : ''}${live ? badge('Live', 'b-live') : ''}</div>
           <h1>${esc(title(l))} <span>${esc(l.trim)}</span></h1>
-          <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
+          <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)}${l.transmission ? ` · ${esc(l.transmission)}` : ''} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
           <div class="big-price">${money(l.price)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
           ${m ? `<div class="gauge" aria-label="Price position versus market">
               <div class="gauge-bar"><span class="gauge-mark" style="left:${gaugePos}%"></span></div>
               <div class="gauge-scale"><span>15% below</span><span>Market</span><span>15% above</span></div>
               <p><b class="t-${m.tone}">${esc(m.label)}</b> expected ${money(m.expected)} for a ${l.year} ${esc(l.model)} ${esc(l.trim)} ${l.condition === 'New' ? 'at MSRP with these options' : `with ${kMiles(l.miles)}`}${l.upfitter ? ` and its ${esc(l.upfitter.name)} upfit` : ''}.</p>
+              ${specBreakdownHtml(l)}
             </div>` : ''}
           <div class="actions">${favButton(l)}${compareButton(l)}${l.vdpUrl ? `<a class="btn primary" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View listing ↗</a>` : ''}<button class="btn ghost" type="button" data-action="share" data-id="${l.id}">Copy link</button>
             <button class="btn ghost" type="button" data-action="doc" data-doc="sticker">📄 Window sticker</button><button class="btn ghost" type="button" data-action="doc" data-doc="build">🧾 Build sheet</button></div>
@@ -1473,7 +1499,7 @@
               <div><dt>Fuel</dt><dd>${esc(l.fuel)}</dd></div>
               ${l.series ? `<div><dt>Version</dt><dd>${esc(l.series)}</dd></div>` : ''}
               ${l.engine ? `<div><dt>Engine</dt><dd>${esc(l.engine)}</dd></div>` : ''}
-              ${l.transmission ? `<div><dt>Transmission</dt><dd>${esc(l.transmission)}</dd></div>` : ''}
+              ${l.transmission ? `<div><dt>Transmission</dt><dd>${live ? esc(l.transmission) : `<a href="${searchHref({ model: key, transmission: l.transmission })}">${esc(l.transmission)}</a>`}</dd></div>` : ''}
               <div><dt>Exterior</dt><dd><span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span>${r ? ` <span class="muted">1 of ${r.extCount} of ${r.total}</span>` : ''}</dd></div>
               <div><dt>Interior</dt><dd>${esc(l.intColor)}${r ? ` <span class="muted">1 of ${r.intCount}</span>` : ''}</dd></div>
               ${l.titleStatus ? `<div><dt>Title</dt><dd class="${l.titleStatus === 'clean' ? 'good' : l.titleStatus === 'unknown' ? '' : 'bad'}">${esc(Live.titleCase(l.titleStatus))}</dd></div>` : ''}
@@ -1603,7 +1629,7 @@
       }
       if (C.l !== l) return;
       const fv = Live.fairValueFrom(C.comps.concat([l]), CURRENT_YEAR);
-      for (const x of C.comps) LIVE_EXPECTED.set(x.id, fv(x));
+      for (const x of C.comps) setLiveValue(fv, x);
       const band = (x) => !compOpts.msrpBand || !x.msrp || !l.msrp || Math.abs(x.msrp / l.msrp - 1) <= compOpts.msrpBand;
       comps = C.comps.filter(band);
       soldComps = opts.includeSold ? (C.soldComps || []).filter(band) : [];
@@ -1872,6 +1898,7 @@
       ['Trim', cars.map((l) => esc(l.trim)), []],
       ['Condition', cars.map((l) => conditionBadge(l)), []],
       ['Drivetrain', cars.map((l) => esc(l.drivetrain)), []],
+      ['Transmission', cars.map((l) => esc(l.transmission || '—')), []],
       ['Fuel', cars.map((l) => esc(l.fuel)), []],
       ['Exterior', cars.map((l) => `<span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span>`), []],
       ['Interior', cars.map((l) => esc(l.intColor)), []],
@@ -1903,25 +1930,295 @@
     window.scrollTo(0, 0);
   }
 
+  /* ---------- Hunts: saved searches that keep watching the market ---------- */
+
+  // A hunt remembers the price of every car it matched at its last check, and
+  // collects what changed since you last looked: new matches, price cuts, and
+  // cars that sold or were delisted.
+  const HUNT_EVERY = [[0, 'Never (check by hand)'], [60, 'Every hour'], [360, 'Every 6 hours'], [1440, 'Once a day']];
+  // Roughly how many of auto.dev's 1,000 free monthly requests the hunts use.
+  function huntBudgetText() {
+    const every = prefs().huntEvery;
+    const n = store.get().saved.filter((h) => h.hunt && h.hunt.watch).length;
+    if (!every || !n) return '';
+    const perMonth = Math.round(n * (30 * 24 * 60) / Math.max(every, 30));
+    return ` (at most about ${num(perMonth)} a month for ${plural(n, 'watched hunt')}, of 1,000 free; fewer while Gridline is closed)`;
+  }
+  const emptyNews = () => ({ added: [], cut: [], gone: [] });
+  const newHunt = () => ({ watch: true, seen: null, source: null, checkedAt: null, lookedAt: Date.now(), news: emptyNews(), error: null });
+  const huntOf = (h) => h.hunt || (h.hunt = Object.assign(newHunt(), { watch: false }));
+  const huntNewCount = (h) => (h.hunt ? h.hunt.news.added.length + h.hunt.news.cut.length + h.hunt.news.gone.length : 0);
+  const huntNewsIds = (h) => (h.hunt ? [...h.hunt.news.added, ...h.hunt.news.cut, ...h.hunt.news.gone].map((x) => x.id) : []);
+  const huntFilters = (h) => Object.assign(filtersFromParams(new URLSearchParams(h.params)), { when: '0' });
+  const LIVE_SEEN_CAP = 1000;
+
+  // The cars a hunt matches right now. Demo: every match. Live: the newest
+  // listings, one page, in one request.
+  async function huntMatches(h) {
+    const f = huntFilters(h);
+    if (!isLive()) {
+      const results = Market.search(LISTINGS, f, CTX).results;
+      return { results, complete: true, total: results.length };
+    }
+    await ensureLiveVocab();
+    const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true });
+    for (const l of r.results) LIVE_SEEN.set(l.id, l);
+    const fv = Live.fairValueFrom(r.results, CURRENT_YEAR);
+    for (const l of r.results) if (!LIVE_EXPECTED.has(l.id)) setLiveValue(fv, l);
+    return { results: r.results, complete: r.total <= r.results.length, total: r.total };
+  }
+
+  // The demo market never changes, so a new demo hunt starts from the market as
+  // it stood a week ago: its first check shows what a week of hunting finds.
+  function demoBaseline(f) {
+    const snap = Market.snapshot(LISTINGS, SOLD, 7);
+    return Object.fromEntries(Market.search(snap, f, CTX).results.map((l) => [l.id, l.price]));
+  }
+
+  async function checkHunt(id) {
+    const h = store.get().saved.find((x) => x.id === id);
+    if (!h) return null;
+    const hunt = huntOf(h);
+    const { results, complete, total } = await huntMatches(h);
+    // Ids from a different data source mean nothing here: start over.
+    let seen = hunt.source === SOURCE() ? hunt.seen : null;
+    const first = !seen;
+    if (!seen && !isLive()) seen = demoBaseline(huntFilters(h));
+    const d = seen
+      ? Market.huntDiff(seen, results, { complete })
+      : { added: [], cut: [], gone: [], seen: Object.fromEntries(results.map((l) => [l.id, l.price])) };
+    const at = Date.now();
+    for (const x of [...d.added, ...d.cut.map((c) => c.l)]) rememberLive(x);
+    store.update((s) => {
+      const x = s.saved.find((y) => y.id === id);
+      if (!x) return;
+      const n = x.hunt.source === SOURCE() ? x.hunt.news : emptyNews();
+      const ids = Object.keys(d.seen);
+      x.hunt.seen = ids.length > LIVE_SEEN_CAP ? Object.fromEntries(ids.slice(-LIVE_SEEN_CAP).map((k) => [k, d.seen[k]])) : d.seen;
+      x.hunt.source = SOURCE();
+      x.hunt.checkedAt = at;
+      x.hunt.error = null;
+      x.count = total;
+      for (const l of d.added) {
+        if (n.added.some((y) => y.id === l.id)) continue;
+        n.gone = n.gone.filter((y) => y.id !== l.id);
+        n.added.push({ id: l.id, price: l.price, at, below: delta(l) < -0.03 });
+      }
+      for (const c of d.cut) {
+        const was = n.cut.find((y) => y.id === c.l.id);
+        if (was) Object.assign(was, { to: c.to, at });
+        else if (!n.added.some((y) => y.id === c.l.id)) n.cut.push({ id: c.l.id, from: c.from, to: c.to, at });
+        const add = n.added.find((y) => y.id === c.l.id);
+        if (add) add.price = c.to;
+      }
+      for (const gid of d.gone) {
+        n.added = n.added.filter((y) => y.id !== gid);
+        n.cut = n.cut.filter((y) => y.id !== gid);
+        n.gone.push({ id: gid, price: seen[gid], at });
+      }
+      x.hunt.news = n;
+    });
+    return Object.assign(d, { first });
+  }
+
+  let huntsRunning = null;
+  // Checks every watched hunt that's due (or all of them, or one, when forced).
+  function checkDueHunts(force, onlyId) {
+    if (huntsRunning) return huntsRunning;
+    const every = prefs().huntEvery;
+    const due = store.get().saved.filter((h) => {
+      if (onlyId) return h.id === onlyId;
+      const hunt = h.hunt;
+      if (!hunt || !hunt.watch) return false;
+      if (force || hunt.source !== SOURCE()) return true;
+      return every > 0 && (!hunt.checkedAt || Date.now() - hunt.checkedAt >= every * 60000);
+    });
+    if (!due.length) return Promise.resolve();
+    huntsRunning = (async () => {
+      for (const h of due) {
+        try {
+          const d = await checkHunt(h.id);
+          if (d && !d.first && (d.added.length || d.cut.length)) notifyHunt(h, d);
+        } catch (e) {
+          store.update((s) => { const x = s.saved.find((y) => y.id === h.id); if (x) { x.hunt.error = e.message; x.hunt.checkedAt = Date.now(); } });
+          // Out of requests, a bad key, or no route to the API: the rest would fail too.
+          if (['rate_limit', 'billing', 'auth', 'blocked', 'no_key'].includes(e.code)) break;
+        }
+      }
+    })().finally(() => {
+      huntsRunning = null;
+      updateNavCounts();
+      if (view.name === 'saved') renderSaved();
+    });
+    return huntsRunning;
+  }
+
+  function notifyHunt(h, d) {
+    const parts = [];
+    if (d.added.length) parts.push(d.added.length === 1 ? '1 new car' : `${d.added.length} new cars`);
+    if (d.cut.length) parts.push(d.cut.length === 1 ? '1 price cut' : `${d.cut.length} price cuts`);
+    const lead = [...d.added].sort((a, b) => delta(a) - delta(b))[0];
+    let body;
+    if (lead) {
+      const m = marketText(lead);
+      body = `${title(lead)} ${lead.trim} · ${money(lead.price)}${m && m.d < -0.01 ? ` · ${m.label} market` : ''} · ${lead.city}, ${lead.state}`;
+    } else {
+      const c = d.cut[0];
+      body = `${title(c.l)} ${c.l.trim} dropped ${money(c.from - c.to)} to ${money(c.to)}`;
+    }
+    notify(`${h.name}: ${parts.join(', ')}`, body, '#/hunt/' + h.id);
+  }
+
+  // Desktop apps show a native notification; a browser tab uses the Notification API.
+  function notify(titleText, body, href) {
+    const d = window.gridlineDesktop;
+    if (d && d.notify) { d.notify({ title: titleText, body, href }); return; }
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const n = new Notification(titleText, { body, tag: href, icon: 'assets/icons/icon-192.png' });
+    n.onclick = () => { window.focus(); location.hash = href; n.close(); };
+  }
+  const notifyState = () => (window.gridlineDesktop && window.gridlineDesktop.notify ? 'desktop' : !('Notification' in window) ? 'unsupported' : Notification.permission);
+  function askNotifyPermission() {
+    if (notifyState() !== 'default') return Promise.resolve(notifyState());
+    try { return Promise.resolve(Notification.requestPermission()).catch(() => 'denied'); } catch (e) { return Promise.resolve('denied'); }
+  }
+
+  const sinceText = (t) => {
+    if (!t) return 'never';
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+  };
+
+  function huntCard(x) {
+    const h = huntOf(x);
+    const n = huntNewCount(x);
+    const status = h.error ? `<span class="bad">Last check failed: ${esc(h.error)}</span>`
+      : `${x.count != null ? `${num(x.count)} for sale` : ''}${h.checkedAt ? ` · checked ${sinceText(h.checkedAt)}` : ''}`;
+    return `<li class="card hunt-row">
+      <a href="#/hunt/${esc(x.id)}"><span><b>${esc(x.name)}</b>${n ? ` <span class="pill-count pill-new">${num(n)} new</span>` : ''}</span><small class="muted">${status}</small></a>
+      <span class="hunt-actions">
+        <button class="chip-btn${h.watch ? ' on' : ''}" type="button" data-action="hunt-watch" data-id="${esc(x.id)}" aria-pressed="${h.watch}" title="${h.watch ? 'Notifications on. Click to pause.' : 'Paused. Click to watch again.'}">${h.watch ? '● Watching' : '○ Paused'}</button>
+        <a class="link-btn" href="#/search?${esc(x.params)}">Open search</a>
+        <button class="link-btn" type="button" data-action="delete-search" data-id="${esc(x.id)}">Delete</button>
+      </span></li>`;
+  }
+
+  function newsHtml(x) {
+    const n = huntOf(x).news;
+    const cars = (list) => list.map((y) => ({ y, l: carById(y.id) })).filter((c) => c.l);
+    const added = cars(n.added).sort((a, b) => delta(a.l) - delta(b.l));
+    const cut = cars(n.cut);
+    const gone = cars(n.gone);
+    if (!added.length && !cut.length && !gone.length) {
+      return `<p class="muted">Nothing new since you last looked${x.hunt.lookedAt ? ` (${sinceText(x.hunt.lookedAt)})` : ''}. ${x.hunt.watch && prefs().huntEvery ? 'Gridline keeps checking while it’s open and notifies you when something turns up.' : ''}</p>`;
+    }
+    return `${added.length ? `<h3 class="news-title">New listings <span class="muted">${num(added.length)}</span></h3>
+        <div class="listing-grid compact">${added.map(({ l }) => listingCard(l)).join('')}</div>` : ''}
+      ${cut.length ? `<h3 class="news-title">Price cuts <span class="muted">${num(cut.length)}</span></h3>
+        <ul class="rank-list">${cut.map(({ y, l }) => `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}, ${esc(l.state)}</small></span>
+          <span class="r"><b>${money(y.to)}</b><small class="drop">↓ ${money(y.from - y.to)} from ${money(y.from)}</small></span></a></li>`).join('')}</ul>` : ''}
+      ${gone.length ? `<h3 class="news-title">Gone <span class="muted">${num(gone.length)}</span></h3>
+        <ul class="rank-list">${gone.map(({ y, l }) => `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}, ${esc(l.state)}</small></span>
+          <span class="r"><b>${money(l.sold ? l.sold.price : y.price)}</b><small class="muted">${l.sold ? `sold after ${plural(l.sold.daysToSell, 'day')}` : 'sold or delisted'}</small></span></a></li>`).join('')}</ul>` : ''}
+      <p><button class="btn" type="button" data-action="hunt-seen" data-id="${esc(x.id)}">Mark all as seen</button></p>`;
+  }
+
+  function renderHunt(id) {
+    const x = store.get().saved.find((y) => y.id === id);
+    if (!x) return renderNotFound('That hunt doesn’t exist. It may have been deleted.');
+    const h = huntOf(x);
+    const f = huntFilters(x);
+    setView('hunt', `<section class="section hunt-page">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#/saved">Hunts</a><span>›</span><span aria-current="page">${esc(x.name)}</span></nav>
+      <div class="page-head"><div><p class="eyebrow">Hunt</p><h1>${esc(x.name)}</h1>${describeFilters(f) !== x.name ? `<p class="muted">${esc(describeFilters(f))}</p>` : ''}</div>
+        <div class="actions">
+          <button class="chip-btn${h.watch ? ' on' : ''}" type="button" data-action="hunt-watch" data-id="${esc(x.id)}" aria-pressed="${h.watch}">${h.watch ? '● Watching' : '○ Paused'}</button>
+          <button class="btn ghost" type="button" data-action="hunt-check" data-id="${esc(x.id)}">Check now</button>
+          <a class="btn" href="#/search?${esc(x.params)}">Open search</a>
+          <button class="link-btn" type="button" data-action="delete-search" data-id="${esc(x.id)}">Delete</button></div></div>
+      <p class="muted small">${h.error ? `<span class="bad">Last check failed: ${esc(h.error)}</span> · ` : ''}Checked ${sinceText(h.checkedAt)}${!isLive() && h.source === 'demo' ? ' · The demo market doesn’t change, so this hunt started from the market a week ago.' : ''}${isLive() ? ` · Each check looks at the newest ${Live.PAGE} matches (1 request).` : ''}</p>
+      <section class="card"><h2>Since you last looked</h2><div id="hunt-news">${newsHtml(x)}</div></section>
+      <div id="hunt-market">${isLive() ? loadingHtml('Sizing up this market…') : huntMarketHtml(Market.huntStats(LISTINGS, SOLD, f, CTX), f)}</div>
+    </section>`);
+    if (isLive()) fillHuntMarketLive(x);
+    window.scrollTo(0, 0);
+  }
+
+  /* How rare the hunted car is, how fast it goes, and the best one for sale now.
+     st: { forSale, perMonth, perMonthAtLeast, sold, sold30, medianDaysToSell, medianPrice, medianSoldPrice, rarity, best } */
+  function huntMarketHtml(st, f, trendHtml) {
+    const every = st.daysBetween || (st.perMonth ? 30 / st.perMonth : null);
+    const pace = st.perMonth == null ? 'Not enough data yet to say how often one comes up.'
+      : st.perMonth < 1 ? `Fewer than one a month comes up${every ? `, about one every ${Math.round(every)} days` : ''}.`
+      : `About ${num(st.perMonth)}${st.perMonthAtLeast ? ' or more' : ''} a month come up, one every ${every < 2 ? 'day or two' : `${Math.round(every)} days`}.`;
+    const speed = st.medianDaysToSell != null ? ` Half of them sell within ${plural(Math.round(st.medianDaysToSell), 'day')} of being listed${st.medianDaysToSell <= 21 ? ', so move quickly on a good one' : ''}.` : '';
+    const supply = !st.forSale ? ' None are for sale right now, so this is one to watch.'
+      : st.rarity === 'Common' && st.forSale >= 10 ? ' There’s plenty to choose from: you can afford to be picky.' : '';
+    const best = st.best;
+    const m = best && marketText(best);
+    return `<section class="card hunt-market">
+        <div class="overview-head"><div><p class="eyebrow">This market</p><h2>${st.rarity ? `${esc(st.rarity)}` : 'How rare is it?'}</h2></div>
+        <dl class="kpis">
+          <div><dt>For sale now</dt><dd>${num(st.forSale)}</dd></div>
+          <div><dt>New listings a month</dt><dd>${st.perMonth == null ? '—' : `${st.perMonth < 1 ? '<1' : num(st.perMonth)}${st.perMonthAtLeast ? '+' : ''}`}</dd></div>
+          ${st.sold != null ? `<div><dt>Sold, ${st.soldWindow || '120 days'}</dt><dd>${num(st.sold)}</dd></div>` : ''}
+          ${st.medianDaysToSell != null ? `<div><dt>Median days to sell</dt><dd>${Math.round(st.medianDaysToSell)}</dd></div>` : ''}
+          ${st.medianPrice != null ? `<div><dt>Median asking</dt><dd>${money(st.medianPrice)}</dd></div>` : ''}
+          ${st.medianSoldPrice != null ? `<div><dt>Median sold</dt><dd>${money(st.medianSoldPrice)}</dd></div>` : ''}
+        </dl></div>
+        <p class="hunt-verdict">${esc(pace + speed + supply)}</p>
+      </section>
+      ${best ? `<section class="card hunt-best"><h2>Best one for sale now</h2>
+        <p class="muted">${m && m.d < -0.005 ? `Priced ${money(-m.diff)} below what Gridline expects for this car (${money(m.expected)}).` : 'The closest to its expected price among these matches.'} <a href="#/car/${esc(best.id)}">See how that’s worked out →</a></p>
+        <div class="listing-grid compact">${listingCard(best)}</div></section>` : ''}
+      ${trendHtml != null ? trendHtml : (() => {
+        const inv = Market.inventorySeries(LISTINGS, SOLD, f, CTX, 90);
+        return `<section class="card viz trend-card"><div class="viz-head"><h3>For sale over the last 90 days</h3><span class="muted small">${num(inv.sold30)} sold in 30 days · ${num(inv.sold90)} in 90</span></div>
+          ${Charts.trend(inv.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
+          <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div></section>`;
+      })()}`;
+  }
+
+  // Live: the newest page of matches (usually cached from the last check) and, with Visor, sales velocity.
+  async function fillHuntMarketLive(x) {
+    const el = () => (view.name === 'hunt' ? document.getElementById('hunt-market') : null);
+    try {
+      const f = huntFilters(x);
+      const { results, complete, total } = await huntMatches(x);
+      const recent = results.filter((l) => l.daysListed <= 30).length;
+      const st = { forSale: total, perMonth: complete ? recent : recent || null, perMonthAtLeast: !complete, sold: null, medianDaysToSell: null,
+        medianPrice: complete ? Market.median(results.map((l) => l.price)) : null, medianSoldPrice: null };
+      if (can('velocity')) {
+        const v = await Live.velocity(f, liveCtx()).catch(() => null);
+        if (v) {
+          Object.assign(st, { sold: v.sold30, soldWindow: '30 days', medianDaysToSell: v.medianDaysToSell });
+          st.perMonth = Math.max(st.perMonth || 0, v.sold30);
+          st.perMonthAtLeast = false;
+        }
+      }
+      st.rarity = Market.rarityLabel(st.perMonth);
+      st.best = results.filter((l) => expected(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
+      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')} on ${esc(srcName())}${can('velocity') ? '' : '. Sales history needs a Visor key'}.</p>`;
+      if (el()) el().innerHTML = huntMarketHtml(st, f, note);
+    } catch (e) {
+      if (el()) el().innerHTML = liveErrorHtml(e);
+    }
+  }
+
   /* ----- Saved ----- */
 
   function renderSaved() {
     const s = store.get();
     const favs = Object.keys(s.favs).map(carById).filter(Boolean);
     const recent = s.recent.map(carById).filter(Boolean);
-    const searches = s.saved.map((x) => {
-      if (isLive()) return { ...x, n: x.count };
-      const f = filtersFromParams(new URLSearchParams(x.params));
-      const n = Market.search(datasetFor(f), f, CTX).results.length;
-      return { ...x, n };
-    });
+    const news = s.saved.reduce((n, h) => n + huntNewCount(h), 0);
     setView('saved', `<section class="section">
       <h1>Saved</h1>
-      <h2 class="sec-title">Searches</h2>
-      ${searches.length ? `<ul class="saved-list">${searches.map((x) => `<li class="card">
-        <a href="#/search?${esc(x.params)}"><b>${esc(x.name)}</b><small class="muted">Saved ${new Date(x.createdAt).toLocaleDateString()} · ${plural(x.n, 'match')} now${x.n !== x.count ? ` <span class="${x.n > x.count ? 'good' : 'drop'}">(${x.n > x.count ? '+' : ''}${x.n - x.count} since saved)</span>` : ''}</small></a>
-        <button class="link-btn" type="button" data-action="delete-search" data-id="${esc(x.id)}">Delete</button></li>`).join('')}</ul>`
-        : '<p class="muted">No saved searches yet. Use <b>★ Save search</b> on any results page.</p>'}
+      <div class="sec-head"><h2 class="sec-title">Hunts${news ? ` <span class="pill-count pill-new">${num(news)} new</span>` : ''}</h2>
+        ${s.saved.length ? `<button class="btn ghost" type="button" data-action="hunt-check">Check all now</button>` : ''}</div>
+      ${s.saved.length ? `<ul class="saved-list">${s.saved.map(huntCard).join('')}</ul>
+        <p class="muted small">${prefs().huntEvery ? `Watched hunts are checked ${esc(HUNT_EVERY.find(([v]) => v === prefs().huntEvery)?.[1].toLowerCase() || 'regularly')} while Gridline is open.` : 'Automatic checks are off.'} <a href="#/settings">Change in Settings</a>.</p>`
+        : '<p class="muted">No hunts yet. Search for the car you want, then press <b>🎯 Hunt this</b>. Gridline keeps checking and notifies you when a new one is listed or one drops its price.</p>'}
       <h2 class="sec-title">Favorites</h2>
       ${favs.length ? `<div class="listing-grid">${favs.map((l) => listingCard(l)).join('')}</div>` : '<p class="muted">Tap the heart on any car to keep it here.</p>'}
       ${recent.length ? `<h2 class="sec-title">Recently viewed</h2><div class="listing-grid compact">${recent.map((l) => listingCard(l)).join('')}</div>` : ''}
@@ -1973,6 +2270,13 @@
           <span class="spend"><b>$${vz.session.toFixed(3)}</b> this session<br><b>$${vz.total.toFixed(3)}</b> total on this device</span></div>
       </div>
       <p class="muted small">Live data works in the desktop app or with <code>npm start</code>. Both services only accept browser requests from their own websites, so the public web version stays on demo data. Recalls and complaints come from NHTSA and work everywhere.</p>
+      <h2 class="sec-title">Hunts</h2>
+      <div class="card settings">
+        <label class="set-row"><span><b>Check watched hunts</b><small>While Gridline is open, including in the background. ${isLive() ? `Each check uses 1 ${esc(srcName())} request per hunt${SOURCE() === 'autodev' ? huntBudgetText() : ''}.` : 'Demo checks are free.'}</small></span>
+          <select data-pref="huntEvery">${HUNT_EVERY.map(([v, t]) => `<option value="${v}" ${p.huntEvery === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <div class="set-row"><span><b>Notifications</b><small>${{ desktop: 'Native notifications from the desktop app. You can turn them off in your system’s notification settings.', granted: 'This browser will show notifications from Gridline.', denied: 'Blocked in this browser. Allow notifications for this site in its settings to get them.', unsupported: 'This browser can’t show notifications. Use the desktop app.' }[notifyState()] || 'Allow notifications to hear about new matches and price cuts.'}</small></span>
+          ${notifyState() === 'default' ? '<button class="btn ghost" type="button" data-action="notify-allow">Allow notifications</button>' : ''}</div>
+      </div>
       <h2 class="sec-title">Display</h2>
       <div class="card settings">
         <label class="set-row"><span><b>Home location</b><small>Used for distances on every listing and the “Distance from home” sort.</small></span>
@@ -1983,7 +2287,7 @@
           <input type="checkbox" data-pref="compact" ${p.compact ? 'checked' : ''}></label>
         <label class="set-row"><span><b>Sort filter values by</b><small>How options are ordered inside each filter.</small></span>
           <select data-pref="valueSort">${Object.entries(VALUE_SORTS).map(([k, v]) => `<option value="${k}" ${p.valueSort === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
-        <div class="set-row"><span><b>Saved data</b><small>${plural(store.get().saved.length, 'saved search')}, ${plural(Object.keys(store.get().favs).length, 'favorite')}, ${plural(store.get().compare.length, 'car')} in compare.</small></span>
+        <div class="set-row"><span><b>Saved data</b><small>${plural(store.get().saved.length, 'hunt')}, ${plural(Object.keys(store.get().favs).length, 'favorite')}, ${plural(store.get().compare.length, 'car')} in compare.</small></span>
           <button class="btn ghost" type="button" data-action="clear-data">Clear everything</button></div>
       </div>
     </section>`);
@@ -2119,16 +2423,34 @@
     } else if (a === 'pick-trim') {
       updateFilters((f) => { f.trim = [el.dataset.trim]; });
     } else if (a === 'save-search') {
-      const params = paramsFromFilters(S.f).toString();
+      const params = paramsFromFilters(Object.assign({}, S.f, { when: '0' })).toString();
       const count = S.live ? S.total : S.results.length;
-      askText('Name this search', describeFilters(S.f), 'Save').then((name) => {
+      askText('Name this hunt', describeFilters(S.f), 'Start hunting').then((name) => {
         if (!name) return;
-        store.update((s) => { s.saved.unshift({ id: 's' + Date.now(), name, params, count, createdAt: Date.now() }); });
-        toast('Search saved');
+        const hid = 's' + Date.now();
+        store.update((s) => { s.saved.unshift({ id: hid, name, params, count, createdAt: Date.now(), hunt: newHunt() }); });
+        askNotifyPermission();
+        checkHunt(hid).catch(() => null).then(() => {
+          updateNavCounts();
+          toast(prefs().huntEvery ? 'Hunting. You’ll get a notification when a new one is listed or drops its price.' : 'Hunt saved. Turn on checks in Settings to get notifications.');
+        });
       });
     } else if (a === 'delete-search') {
       store.update((s) => { s.saved = s.saved.filter((x) => x.id !== id); });
-      renderSaved();
+      if (view.name === 'hunt') location.hash = '#/saved';
+      else renderSaved();
+    } else if (a === 'hunt-watch') {
+      store.update((s) => { const h = s.saved.find((x) => x.id === id); if (h) h.hunt.watch = !h.hunt.watch; });
+      route();
+    } else if (a === 'hunt-seen') {
+      store.update((s) => { const h = s.saved.find((x) => x.id === id); if (h) { h.hunt.news = emptyNews(); h.hunt.lookedAt = Date.now(); } });
+      route();
+    } else if (a === 'hunt-check') {
+      el.disabled = true;
+      el.textContent = 'Checking…';
+      checkDueHunts(true, id).then(() => route());
+    } else if (a === 'notify-allow') {
+      askNotifyPermission().then(() => renderSettings());
     } else if (a === 'clear-compare') {
       store.update((s) => { s.compare = []; });
       renderCompare();
@@ -2141,7 +2463,7 @@
       renderSettings();
       toast('API key removed');
     } else if (a === 'clear-data') {
-      askText('Type CLEAR to delete saved searches, favorites, compare and history', '', 'Delete').then((v) => {
+      askText('Type CLEAR to delete hunts, favorites, compare and history', '', 'Delete').then((v) => {
         if (v !== 'CLEAR') return;
         store.update((s) => { s.saved = []; s.favs = {}; s.compare = []; s.recent = []; });
         toast('Saved data cleared');
@@ -2201,7 +2523,7 @@
     if (t.dataset.pref) {
       const k = t.dataset.pref;
       store.update((s) => {
-        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : t.value || null;
+        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : k === 'huntEvery' ? Number(t.value) : t.value || null;
         if (k === 'dataSource') s.prefs.sourceChosen = true;
       });
       if (k === 'dataSource') {
@@ -2303,6 +2625,7 @@
     if (parts[0] === 'vin') return renderVin(parts[1] || '');
     if (parts[0] === 'compare') return renderCompare();
     if (parts[0] === 'saved') return renderSaved();
+    if (parts[0] === 'hunt') return renderHunt(parts[1]);
     if (parts[0] === 'settings') return renderSettings();
     return renderNotFound();
   }
@@ -2314,7 +2637,7 @@
     document.getElementById('footer-links').innerHTML = `
       <div><h4>Popular searches</h4>${top.map(([k]) => `<a href="${searchHref({ model: k })}">${esc(k)}</a>`).join('')}</div>
       <div><h4>Used prices by segment</h4>${segs.map((s) => `<a href="${searchHref({ q: s, condition: ['Used', 'Certified'] })}">${esc(s)}</a>`).join('')}</div>
-      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Saved searches</a><a href="#/vin/${LISTINGS[0].vin}">VIN decoder</a><a href="#/settings">Settings</a></div>`;
+      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Hunts</a><a href="#/vin/${LISTINGS[0].vin}">VIN decoder</a><a href="#/settings">Settings</a></div>`;
   }
 
   applyTheme(store.get().theme);
@@ -2324,4 +2647,11 @@
   updateNavCounts();
   window.addEventListener('hashchange', route);
   route();
+
+  // Hunts: check what's due shortly after opening, then every few minutes and
+  // whenever the window comes back. The desktop apps also call gridlineHuntTick.
+  window.gridlineHuntTick = () => checkDueHunts();
+  setTimeout(() => checkDueHunts(), 4000);
+  setInterval(() => checkDueHunts(), 5 * 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDueHunts(); });
 })();

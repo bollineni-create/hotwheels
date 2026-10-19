@@ -12,13 +12,15 @@ const now = Date.now();
 const ts = (daysAgo) => new Date(now - daysAgo * 864e5).toISOString().replace('T', ' ').slice(0, 19);
 const BODY = { SUV: 'SUV', Truck: 'Pickup', Sedan: 'Sedan', Coupe: 'Coupe', Convertible: 'Convertible', Wagon: 'Wagon', Minivan: 'Minivan' };
 const FUEL = { Gas: 'Gasoline', 'Plug-in Hybrid': 'Plug-In Hybrid' };
+// auto.dev spells transmissions out, so Gridline has to match "Manual" to these.
+const TRANS = { Manual: '6-Speed Manual', Automatic: 'Automatic', CVT: 'Automatic CVT' };
 
 function record(l, removed) {
   return {
     '@id': `${BASE}/listings/${l.vin}`, vin: l.vin, location: [l.lng, l.lat], createdAt: ts(l.daysListed),
     ...(removed ? { removedAt: ts(l.sold.daysAgo) } : {}),
     vehicle: { vin: l.vin, squishVin: l.vin.slice(0, 8) + l.vin.slice(9, 11), year: l.year, make: l.make, model: l.model, trim: l.trim,
-      drivetrain: l.drivetrain, engine: null, fuel: FUEL[l.fuel] || l.fuel, transmission: 'Automatic', bodyStyle: BODY[l.body],
+      drivetrain: l.drivetrain, engine: null, fuel: FUEL[l.fuel] || l.fuel, transmission: TRANS[l.transmission], bodyStyle: BODY[l.body],
       exteriorColor: l.colorFamily, interiorColor: l.interiorFamily, doors: 4, seats: 5 },
     wholesaleListing: null,
     retailListing: { vdp: `https://dealer.example/${l.vin}`, price: l.price, miles: l.miles, used: l.condition !== 'New', cpo: l.condition === 'Certified',
@@ -37,6 +39,7 @@ const FIELDS = {
   'vehicle.make': (r) => r.vehicle.make, 'vehicle.model': (r) => r.vehicle.model, 'vehicle.trim': (r) => r.vehicle.trim,
   'vehicle.bodyStyle': (r) => r.vehicle.bodyStyle, 'vehicle.fuel': (r) => r.vehicle.fuel, 'vehicle.exteriorColor': (r) => r.vehicle.exteriorColor,
   'vehicle.interiorColor': (r) => r.vehicle.interiorColor, drivetrain: (r) => r.vehicle.drivetrain, 'retailListing.state': (r) => r.retailListing.state,
+  'vehicle.transmission': (r) => r.vehicle.transmission,
 };
 const RANGES = { 'vehicle.year': (r) => r.vehicle.year, 'retailListing.price': (r) => r.retailListing.price, 'retailListing.miles': (r) => r.retailListing.miles };
 const BOOLS = { 'retailListing.used': (r) => r.retailListing.used, 'retailListing.cpo': (r) => r.retailListing.cpo };
@@ -44,7 +47,7 @@ const OTHER = new Set(['limit', 'page', 'sort', 'includes', 'zip', 'distance', '
 const GROUPS = { years: ['vehicle.year', (r) => r.vehicle.year], makes: ['vehicle.make', (r) => r.vehicle.make], models: ['vehicle.model', (r) => r.vehicle.model],
   trims: ['vehicle.trim', (r) => r.vehicle.trim], types: ['vehicle.bodyStyle', (r) => r.vehicle.bodyStyle], exteriorColor: ['vehicle.exteriorColor', (r) => r.vehicle.exteriorColor],
   interiorColor: ['vehicle.interiorColor', (r) => r.vehicle.interiorColor], fuel: ['vehicle.fuel', (r) => r.vehicle.fuel], drivetrain: ['drivetrain', (r) => r.vehicle.drivetrain],
-  states: ['retailListing.state', (r) => r.retailListing.state] };
+  states: ['retailListing.state', (r) => r.retailListing.state], transmissions: ['vehicle.transmission', (r) => r.vehicle.transmission] };
 
 function filter(q) {
   let pool = ACTIVE;

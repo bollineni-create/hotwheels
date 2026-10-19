@@ -456,6 +456,31 @@ button, input, select { font: inherit; color: inherit; }
 .saved-list li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; }
 .saved-list a { display: flex; flex-direction: column; color: var(--text); }
 
+/* ---------- Hunts ---------- */
+.pill-count.pill-new { background: var(--warn); }
+:root:not([data-theme="dark"]) .pill-count.pill-new { color: #fff; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sec-head .sec-title { display: flex; align-items: center; gap: 8px; }
+.saved-list li.hunt-row { flex-wrap: wrap; }
+.hunt-row > a { flex: 1 1 260px; min-width: 0; }
+.hunt-row > a .pill-count { margin-left: 6px; vertical-align: 1px; }
+.hunt-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.hunt-page .page-head { align-items: flex-start; flex-wrap: wrap; }
+.hunt-page .page-head .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hunt-page > .card { margin-top: 16px; }
+.news-title { font-size: 1rem; margin: 18px 0 10px; }
+.hunt-market .overview-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+.hunt-market h2 { margin: 2px 0 0; }
+.hunt-verdict { margin: 14px 0 0; color: var(--text-2); max-width: 70ch; }
+#hunt-market > .card { margin-top: 16px; }
+.hunt-best .listing-grid { max-width: 360px; }
+.spec-adj { list-style: none; margin: 10px 0 4px; padding: 0; font-size: .88rem; }
+.spec-adj li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid var(--border); }
+.spec-adj li:first-child { border-top: 0; }
+.spec-adj small { display: block; }
+.spec-adj b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.news-title:first-child { margin-top: 4px; }
+
 /* ---------- Footer & toast ---------- */
 .site-footer { border-top: 1px solid var(--border); background: var(--surface); margin-top: 40px; }
 .footer-inner { max-width: 1280px; margin: 0 auto; padding: 40px 20px 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr); gap: 32px; }
@@ -734,7 +759,8 @@ button, input, select { font: inherit; color: inherit; }
   .header-inner > a.icon-btn { display: none; }
   .brand-name { display: none; }
   .main-nav { gap: 0; }
-  .main-nav a { padding: 6px 7px; font-size: .84rem; }
+  .main-nav a { padding: 6px 7px; font-size: .84rem; gap: 4px; }
+  .main-nav .pill-count { padding: 0 5px; }
   .section { padding: 32px 16px; }
   .insight { padding: 18px; }
   .insight header h3 { font-size: 1.15rem; }

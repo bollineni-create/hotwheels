@@ -265,3 +265,98 @@ test('mock auto.dev enforces the free plan page size and rejects unknown paramet
   assert.equal((await get('/listings?make=Toyota')).status, 400);
   server.close();
 });
+
+test('transmission is a filter, and "manual" or "stick" in a search asks for it', () => {
+  assert.ok(Market.FACETS.includes('transmission'));
+  const ctx = { delta: () => 0 };
+  const f = Object.assign(Market.emptyFilters(), { transmission: ['Manual'] });
+  const { results, facets } = Market.search(listings, f, ctx);
+  assert.ok(results.length > 0 && results.every((l) => l.transmission === 'Manual'));
+  // A facet's own pick doesn't narrow its counts.
+  assert.ok(facets.transmission.find((x) => x.value === 'Automatic').count > 0);
+  // Hybrids and EVs never come with a manual; Civic Si and Type R always do.
+  assert.ok(listings.every((l) => l.transmission !== 'Manual' || l.fuel === 'Gas'));
+  assert.ok(listings.filter((l) => l.model === 'Civic' && ['Si', 'Type R'].includes(l.trim)).every((l) => l.transmission === 'Manual'));
+
+  assert.deepEqual(NLQ.parse('manual miata under 30k', vocab).filters.transmission, ['Manual']);
+  assert.deepEqual(NLQ.parse('6-speed manual mustang gt', vocab).filters.transmission, ['Manual']);
+  const stick = NLQ.parse('stick shift wrangler', vocab);
+  assert.deepEqual(stick.filters.transmission, ['Manual']);
+  assert.deepEqual(stick.filters.model, ['Jeep Wrangler']);
+  assert.equal(stick.rest, '');
+  assert.deepEqual(NLQ.parse('subaru outback no cvt', vocab).filters.ex.transmission, ['CVT']);
+});
+
+test('live modes send the transmission filter in each API’s own terms', () => {
+  Live.setProvider('visor');
+  const f = Object.assign(Market.emptyFilters(), { transmission: ['Manual'], ex: { transmission: ['CVT'] } });
+  const p = Live.toParams(f, { makes: [], cityByName: () => null });
+  assert.equal(p.transmission, 'Manual');
+  assert.equal(p.exclude_transmission, 'CVT');
+  const ad = Live.adToParams(f, { makes: [], cityByName: () => null, known: { transmissions: ['Automatic', '6-Speed Manual', '5-Speed Manual', 'Automatic CVT'] } });
+  assert.equal(ad['vehicle.transmission'], '6-Speed Manual,5-Speed Manual');
+  Live.setProvider('autodev');
+});
+
+test('a hunt reports new matches, price cuts and cars that are gone', () => {
+  const car = (id, price) => ({ id, price });
+  const seen = { a: 30000, b: 25000, c: 20000 };
+  const d = Market.huntDiff(seen, [car('a', 30000), car('b', 23900), car('d', 27000)], { complete: true });
+  assert.deepEqual(d.added.map((l) => l.id), ['d']);
+  assert.deepEqual(d.cut.map((c) => [c.l.id, c.from, c.to]), [['b', 25000, 23900]]);
+  assert.deepEqual(d.gone, ['c']);
+  assert.deepEqual(d.seen, { a: 30000, b: 23900, d: 27000 });
+  // One page of live results: a car not on it may be on the next page, so it isn't gone.
+  const partial = Market.huntDiff(seen, [car('a', 29500)], { complete: false });
+  assert.deepEqual(partial.gone, []);
+  assert.equal(partial.cut.length, 1);
+  assert.deepEqual(Object.keys(partial.seen).sort(), ['a', 'b', 'c']);
+  // A price rise is not news.
+  assert.equal(Market.huntDiff({ a: 100 }, [car('a', 120)], { complete: true }).cut.length, 0);
+});
+
+test('a demo hunt started a week ago finds that week’s new listings and sales', () => {
+  const f = Object.assign(Market.emptyFilters(), { model: ['Mazda MX-5 Miata'] });
+  const ctx = { delta: () => 0 };
+  const weekAgo = Market.snapshot(listings, data.sold, 7);
+  const seen = Object.fromEntries(Market.search(weekAgo, f, ctx).results.map((l) => [l.id, l.price]));
+  const d = Market.huntDiff(seen, Market.search(listings, f, ctx).results, { complete: true });
+  assert.ok(d.added.length > 0 && d.added.every((l) => l.daysListed < 7));
+  assert.ok(d.gone.length > 0 && d.gone.every((id) => data.sold.find((l) => l.id === id).sold.daysAgo < 7));
+  assert.ok(d.cut.every((c) => c.to < c.from));
+});
+
+test('hunt stats say how often a car comes up and how fast it sells', () => {
+  const fv = Market.buildFairValue(listings, 2026);
+  const ctx = { delta: (l) => { const e = fv(l); return e ? l.price / e - 1 : 0; } };
+  const rare = Market.huntStats(listings, data.sold, Object.assign(Market.emptyFilters(), { model: ['Honda Civic'], trim: ['Type R'] }), ctx);
+  const common = Market.huntStats(listings, data.sold, Object.assign(Market.emptyFilters(), { model: ['Ford F-150'] }), ctx);
+  assert.ok(rare.perMonth < common.perMonth);
+  assert.ok(common.forSale > 0 && common.sold > 0 && common.medianDaysToSell > 0);
+  assert.equal(common.rarity, 'Common');
+  assert.ok(common.best && ctx.delta(common.best) < 0);
+  assert.equal(Market.rarityLabel(0.5), 'Very rare');
+});
+
+test('fair value learns what a manual is worth instead of calling it overpriced', () => {
+  const pool = listings.concat(data.sold);
+  const plain = (() => {
+    // The old model: age and mileage only.
+    const fv = Market.buildFairValue(pool, 2026);
+    return (l) => fv.explain(l) && fv.explain(l).base;
+  })();
+  const fv = Market.buildFairValue(pool, 2026);
+  const manuals = listings.filter((l) => l.condition !== 'New' && l.transmission === 'Manual' && ['Mustang', 'Tacoma'].includes(l.model));
+  const before = Market.median(manuals.map((l) => l.price / plain(l) - 1));
+  const after = Market.median(manuals.map((l) => l.price / fv(l) - 1));
+  assert.ok(before > 0.02, `manuals looked ${before} over market`);
+  assert.ok(Math.abs(after) < Math.abs(before) / 2, `still ${after} after spec premiums`);
+  const e = fv.explain(manuals[0]);
+  const adj = e.adjustments.find((a) => a.key === 'transmission');
+  assert.equal(adj.value, 'Manual');
+  assert.ok(adj.amount > 0 && adj.n >= 4);
+  assert.equal(Math.round(e.base + e.adjustments.reduce((s, a) => s + a.amount, 0)), Math.round(e.expected));
+  // Noise isn't a premium: a model with no real paint effect gets few or none.
+  const paints = new Set(pool.filter((l) => l.condition !== 'New').flatMap((l) => (fv.explain(l) || { adjustments: [] }).adjustments).filter((a) => a.key === 'extColor').map((a) => a.value));
+  assert.ok(paints.size <= 3, [...paints].join(', '));
+});
