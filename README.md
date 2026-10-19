@@ -7,12 +7,13 @@ It runs as a desktop app (Electron) or as a plain website. The site itself is HT
 
 ## Install it on a Mac (simplest)
 
-One command builds a small native Gridline app, puts it in Applications and opens it. You only need Apple's command-line tools (`xcode-select --install` once if you've never used them):
+Paste this into Terminal. It downloads Gridline to `~/hotwheels`, builds a small native app, puts it in Applications and opens it (and offers to install Apple's command-line tools first if you don't have them):
 
 ```bash
-git clone https://github.com/bollineni-create/hotwheels.git ~/hotwheels
-~/hotwheels/app/macos/build.sh
+curl -fsSL https://raw.githubusercontent.com/bollineni-create/hotwheels/main/app/macos/install.sh | zsh
 ```
+
+To build your API keys in at the same time, put them in front of `zsh`: `... | VISOR_KEY=your_visor_key AUTODEV_KEY=your_autodev_key zsh`. Running the same line again updates and reinstalls.
 
 The first time, it asks for your Visor and auto.dev keys so you get real listings (Visor is used when both are given). Press Enter to skip either; with neither, it uses the demo listings. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
 
