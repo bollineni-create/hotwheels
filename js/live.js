@@ -483,29 +483,31 @@
   const AD_PARAM_DEFAULT = { year: 'vehicle.year', make: 'vehicle.make', model: 'vehicle.model', trim: 'vehicle.trim', body: 'vehicle.bodyStyle',
     colorFamily: 'vehicle.exteriorColor', interiorFamily: 'vehicle.interiorColor', fuel: 'vehicle.fuel', drivetrain: 'vehicle.drivetrain',
     state: 'retailListing.state', transmission: 'vehicle.transmission' };
-  const AD_LEARNED = 'gridline:autodev:params';
+  const AD_LEARNED = 'gridline:autodev:params:v2';
   // auto.dev's facet links carry the real parameter names; remember them.
   const adParams = () => Object.assign({}, AD_PARAM_DEFAULT, safe(() => JSON.parse(localStorage.getItem(AD_LEARNED)), {}) || {});
   const AD_UNSUPPORTED = 'gridline:autodev:unsupported';
   const adUnsupported = () => new Set(safe(() => JSON.parse(localStorage.getItem(AD_UNSUPPORTED)), []) || []);
-  const AD_FUEL_OUT = { Gas: 'Gasoline', 'Plug-in Hybrid': 'Plug-In Hybrid' };
+  const AD_FUEL_OUT = { Gas: 'Gasoline' };
   const AD_FUEL_IN = { Gasoline: 'Gas', 'Plug-In Hybrid': 'Plug-in Hybrid' };
+  // Body styles auto.dev files under vehicle.type rather than vehicle.bodyStyle.
+  const AD_TYPE_BODIES = ['Convertible', 'Wagon'];
   const AD_SORT = { 'price-asc': 'price.asc', 'price-desc': 'price.desc', 'miles-asc': 'miles.asc', 'miles-desc': 'miles.desc', 'year-desc': 'year.desc', newest: 'createdAt.desc', oldest: 'createdAt.asc' };
 
-  function learnParams(facets, sent) {
+  // A bucket's link adds the parameter whose value is the bucket's own label,
+  // e.g. "AWD (26079)" -> ...&vehicle.drivetrain=AWD. Match on that value.
+  function learnParams(facets) {
     const learned = safe(() => JSON.parse(localStorage.getItem(AD_LEARNED)), {}) || {};
     for (const [group, buckets] of Object.entries(facets || {})) {
       const key = AD_GROUP[group];
       if (!key || !buckets || typeof buckets !== 'object') continue;
-      const url = Object.values(buckets)[0];
-      if (typeof url !== 'string') continue;
-      try {
-        const q = new URL(url).searchParams;
-        for (const [name, val] of q) {
-          if (name === 'includes' || name === 'page' || name === 'limit' || name === 'sort') continue;
-          if (sent[name] === undefined || sent[name] !== val) { learned[key] = name; break; }
-        }
-      } catch (e) { /* not a URL */ }
+      for (const [label, url] of Object.entries(buckets).slice(0, 3)) {
+        const value = label.replace(/ \(\d+\)$/, '').toLowerCase();
+        try {
+          const hit = [...new URL(url).searchParams].find(([name, val]) => !['includes', 'page', 'limit', 'sort'].includes(name) && val.toLowerCase() === value);
+          if (hit) { learned[key] = hit[0]; break; }
+        } catch (e) { /* not a URL */ }
+      }
     }
     safe(() => localStorage.setItem(AD_LEARNED, JSON.stringify(learned)));
   }
@@ -540,7 +542,11 @@
     put('trim', f.trim || []);
     const years = (f.year || []).map(Number).sort((a, b) => a - b);
     if (years.length) p[P.year] = years.length > 1 && years[years.length - 1] - years[0] === years.length - 1 ? `${years[0]}-${years[years.length - 1]}` : years.join(',');
-    put('body', [...new Set((f.body || []).flatMap((v) => matchAll(v, ctx.known && ctx.known.bodies)))]);
+    const bodies = f.body || [];
+    if (bodies.length && bodies.every((b) => AD_TYPE_BODIES.includes(b))) p['vehicle.type'] = bodies.join(',');
+    else put('body', [...new Set(bodies.filter((b) => !AD_TYPE_BODIES.includes(b)).flatMap((v) => matchAll(v, ctx.known && ctx.known.bodies)))]);
+    if (f.noAccidents) p['history.accidentCount'] = '0';
+    if (f.oneOwner) p['history.ownerCount'] = '1';
     put('fuel', (f.fuel || []).map((v) => AD_FUEL_OUT[v] || v));
     put('drivetrain', f.drivetrain || []);
     put('colorFamily', f.colorFamily || []);
@@ -571,18 +577,23 @@
     const rl = r.retailListing || {};
     const loc = Array.isArray(r.location) ? r.location : [];
     const fam = familyOf(v.exteriorColor) || 'Gray';
+    const h = r.history || {};
+    const typeBody = AD_TYPE_BODIES.includes(v.type) ? v.type : null;
     const dom = daysSince(r.createdAt) || 0;
     const price = rl.price || 0;
     const removed = r.removedAt ? daysSince(r.removedAt) : null;
     return {
       live: true, provider: 'autodev',
       id: r.vin || v.vin, vin: r.vin || v.vin,
-      year: v.year, make: v.make || '', model: v.model || '', trim: v.trim || '',
-      body: bodyShape(v.bodyStyle || v.type || v.vehicleType || ''), bodyLabel: v.bodyStyle || v.type || '', segment: v.bodyStyle || '',
+      year: v.year, make: v.make || '', model: v.model || '',
+      trim: v.trim || (v.series ? (v.series.match(/^(.*?)\s+\d+dr\b/) || [])[1] || '' : ''),
+      body: bodyShape(typeBody || v.bodyStyle || v.type || ''), bodyLabel: [v.style || v.bodyStyle, v.type].filter(Boolean).join(' · '), segment: v.type || v.bodyStyle || '',
+      series: v.series || null,
       drivetrain: v.drivetrain || '—', fuel: AD_FUEL_IN[v.fuel] || v.fuel || '—', engine: v.engine || null, transmission: v.transmission || null,
       seats: v.seats || null, doors: v.doors || null,
       condition: rl.cpo ? 'Certified' : rl.used === false ? 'New' : 'Used', status: null,
-      miles: rl.miles || 0, price, msrp: null, msrpBase: null, discount: null,
+      miles: rl.miles || 0, price, msrp: v.baseMsrp || null, msrpBase: v.baseMsrp || null,
+      discount: v.baseMsrp && price && rl.used === false ? 1 - price / v.baseMsrp : null,
       options: [], features: [],
       extColor: v.exteriorColor || '—', extHex: FAMILY_HEX[fam] || '#888', intColor: v.interiorColor || '—',
       colorFamily: v.exteriorColor || fam, interiorFamily: v.interiorColor || '—',
@@ -594,7 +605,8 @@
       upfitter: null, assembly: { plant: 'Unknown', country: '' }, windowStickerVerified: false, titleStatus: null, certification: null,
       photos: rl.primaryImage ? [rl.primaryImage] : [], photoCount: rl.photoCount || 0,
       vdpUrl: rl.vdp || null, vhrUrl: rl.carfaxUrl || null,
-      accidents: r.history ? r.history.accidents : null, ownerCount: r.history ? r.history.ownerCount : null,
+      accidents: r.history ? h.accidents : null, accidentCount: h.accidentCount != null ? h.accidentCount : null,
+      ownerCount: r.history ? h.ownerCount : null, oneOwner: h.oneOwner != null ? h.oneOwner : null, usageType: h.usageType || null,
       livePricing: null, previous: [],
       pricing: { advertised: price, msrp: null, discount: 0, marketAdjustment: 0, incentives: [], addOns: [], docFee: 0, notes: [] },
     };
@@ -626,7 +638,7 @@
     const results = (r.data || []).map(adNormalize);
     let facets = null;
     if (r.facets) {
-      learnParams(r.facets, params);
+      learnParams(r.facets);
       facets = { condition: ['New', 'Used', 'Certified'].map((value) => ({ value, count: null })) };
       for (const [group, buckets] of Object.entries(r.facets)) {
         const key = AD_GROUP[group];
@@ -675,7 +687,7 @@
     const cached = safe(() => JSON.parse(localStorage.getItem('gridline:autodev:vocab')), null);
     if (cached && Date.now() - cached.t < 7 * 864e5) return cached.v;
     const r = await adGet('/listings', { limit: 1, includes: 'facets' });
-    learnParams(r.facets || {}, { limit: '1', includes: 'facets' });
+    learnParams(r.facets || {});
     const fx = r.facets || {};
     const v = {
       makes: adBuckets(fx.makes).map((b) => b.value), models: adBuckets(fx.models).map((b) => b.value),
@@ -707,7 +719,7 @@
     },
     autodev: {
       caps: { exclude: false, sold: false, snapshots: false, velocity: false, metrics: false, trend: false, features: false, options: false, upfitter: false,
-        assembly: false, msrp: false, vinPattern: false, sellerType: false, pricing: false, facetCounts: true, extColor: false, photosApi: true, history: true },
+        assembly: false, msrp: false, vinPattern: false, sellerType: false, pricing: false, facetCounts: true, extColor: false, photosApi: true, history: true, historyFilters: true },
       search: adSearch, facetMetrics: unsupported('Per-value price stats'), count: adCount, inventoryTrend: unsupported('Inventory history'),
       velocity: unsupported('Sales velocity'), listing: adListing, vin: adListing, comparables: adComparables, vocabulary: adVocabulary,
       photos: adPhotos, overview: adOverview, toParams: adToParams, SORT: AD_SORT, PAGE: AD_PAGE,

@@ -187,7 +187,7 @@
 
   const ARRAY_KEYS = Market.FACETS;
   const NUM_KEYS = ['priceMin', 'priceMax', 'msrpMin', 'msrpMax', 'milesMax', 'radius'];
-  const BOOL_KEYS = ['dropsOnly', 'belowMarket'];
+  const BOOL_KEYS = ['dropsOnly', 'belowMarket', 'noAccidents', 'oneOwner'];
   const FACET_LABELS = {
     condition: 'Condition', make: 'Make', model: 'Model', trim: 'Trim', year: 'Model year', body: 'Body style', drivetrain: 'Drivetrain',
     fuel: 'Fuel', colorFamily: 'Exterior color', extColor: 'Paint name', interiorFamily: 'Interior color', features: 'Top features',
@@ -265,6 +265,8 @@
     if (f.state.length) parts.push(`in ${f.state.join(', ')}`);
     if (f.dropsOnly) parts.push('with price cuts');
     if (f.belowMarket) parts.push('below market');
+    if (f.noAccidents) parts.push('no accidents');
+    if (f.oneOwner) parts.push('one owner');
     return parts.join(' · ') || 'All cars';
   }
 
@@ -997,7 +999,7 @@
       return `<label class="opt${it.count === 0 && !checked ? ' zero' : ''}${exMode ? ' ex' : ''}">
         <input type="checkbox" data-facet="${key}" data-mode="${exMode ? 'ex' : 'in'}" value="${esc(it.value)}" data-focus-key="${esc(fk)}" ${checked ? 'checked' : ''}>
         ${o.swatch ? `<i class="sw" style="background:${esc(o.swatch(it.value))}"></i>` : ''}
-        <span class="opt-label">${esc(o.fmt ? o.fmt(it.value) : it.value)}</span>${stat ? `<span class="opt-stat">${stat}</span>` : ''}<span class="opt-count">${num(it.count)}</span></label>`;
+        <span class="opt-label">${esc(o.fmt ? o.fmt(it.value) : it.value)}</span>${stat ? `<span class="opt-stat">${stat}</span>` : ''}<span class="opt-count">${it.count == null ? '' : num(it.count)}</span></label>`;
     }).join('');
     const more = items.length > limit ? `<button type="button" class="link-btn" data-action="more" data-key="${key}">${expanded ? 'Show less' : `Show all ${items.length}`}</button>` : '';
     const hint = o.hint ? `<p class="facet-hint">${o.hint}</p>` : '';
@@ -1026,6 +1028,10 @@
         <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
         <ul class="finder-list" id="finder-list" role="listbox" hidden></ul>
       </div>
+      ${S.live && can('historyFilters') ? `<div class="toggle-row">
+        <label class="switch"><input type="checkbox" data-bool="noAccidents" data-focus-key="noAccidents" ${f.noAccidents ? 'checked' : ''}><span></span>No accidents reported</label>
+        <label class="switch"><input type="checkbox" data-bool="oneOwner" data-focus-key="oneOwner" ${f.oneOwner ? 'checked' : ''}><span></span>One owner</label>
+      </div>` : ''}
       ${S.live ? '' : `<div class="toggle-row">
         <label class="switch"><input type="checkbox" data-bool="belowMarket" data-focus-key="belowMarket" ${f.belowMarket ? 'checked' : ''}><span></span>Below market only</label>
         <label class="switch"><input type="checkbox" data-bool="dropsOnly" data-focus-key="dropsOnly" ${f.dropsOnly ? 'checked' : ''}><span></span>Has price cuts</label>
@@ -1128,6 +1134,8 @@
     if (f.near) chips.push({ label: `${f.radius} mi of ${f.near}`, k: 'near' });
     if (f.dropsOnly) chips.push({ label: 'Has price cuts', k: 'dropsOnly' });
     if (f.belowMarket) chips.push({ label: 'Below market', k: 'belowMarket' });
+    if (f.noAccidents) chips.push({ label: 'No accidents', k: 'noAccidents' });
+    if (f.oneOwner) chips.push({ label: 'One owner', k: 'oneOwner' });
     if (!chips.length) return '';
     return `<div class="active-chips">${chips.map((c) => `<button type="button" class="chip${c.ex ? ' chip-ex' : ''}" data-action="remove-chip" data-k="${esc(c.k)}" data-v="${esc(c.v || '')}">${esc(c.label)} <span aria-hidden="true">✕</span><span class="sr-only">Remove filter</span></button>`).join('')}</div>`;
   }
@@ -1375,8 +1383,8 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="#/search">Search</a><span>›</span><a href="${searchHref({ model: key })}">${esc(key)}</a><span>›</span><span aria-current="page">${l.year} ${esc(l.trim)}</span></nav>
       <div class="banners">${soldBanner}${asOfBanner}</div>
       <section class="car-hero">
-        ${photos.length ? `<div class="car-gallery"><img class="gallery-main" id="gallery-main" src="${esc(photos[0])}" alt="${esc(title(l))}" referrerpolicy="no-referrer">
-          ${photos.length > 1 ? `<div class="gallery-thumbs">${photos.slice(0, 12).map((src, i) => `<button type="button" class="thumb${i === 0 ? ' on' : ''}" data-action="photo" data-src="${esc(src)}" aria-label="Photo ${i + 1}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>` : ''}
+        ${photos.length ? `<div class="car-gallery"><img class="gallery-main" id="gallery-main" src="${esc(photos[0])}" alt="${esc(title(l))}" referrerpolicy="no-referrer" onerror="this.closest('.car-gallery').classList.add('no-photo')">
+          ${photos.length > 1 ? `<div class="gallery-thumbs">${photos.slice(0, 12).map((src, i) => `<button type="button" class="thumb${i === 0 ? ' on' : ''}" data-action="photo" data-src="${esc(src)}" aria-label="Photo ${i + 1}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></button>`).join('')}</div>` : ''}
           <div class="stage-note">Photos from the dealer · ${esc(l.extColor)} · ${esc(l.intColor)} interior</div></div>`
         : `<div class="car-stage" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { cls: 'big', label: `${l.extColor} ${title(l)}` })}
           <div class="stage-note">Illustration in ${esc(l.extColor)} · ${esc(l.intColor)} interior</div></div>`}
@@ -1390,7 +1398,7 @@
               <div class="gauge-scale"><span>15% below</span><span>Market</span><span>15% above</span></div>
               <p><b class="t-${m.tone}">${esc(m.label)}</b> expected ${money(m.expected)} for a ${l.year} ${esc(l.model)} ${esc(l.trim)} ${l.condition === 'New' ? 'at MSRP with these options' : `with ${kMiles(l.miles)}`}${l.upfitter ? ` and its ${esc(l.upfitter.name)} upfit` : ''}.</p>
             </div>` : ''}
-          <div class="actions">${favButton(l)}${compareButton(l)}${l.vdpUrl ? `<a class="btn primary" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View at dealer ↗</a>` : ''}<button class="btn ghost" type="button" data-action="share" data-id="${l.id}">Copy link</button>
+          <div class="actions">${favButton(l)}${compareButton(l)}${l.vdpUrl ? `<a class="btn primary" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View listing ↗</a>` : ''}<button class="btn ghost" type="button" data-action="share" data-id="${l.id}">Copy link</button>
             <button class="btn ghost" type="button" data-action="doc" data-doc="sticker">📄 Window sticker</button><button class="btn ghost" type="button" data-action="doc" data-doc="build">🧾 Build sheet</button></div>
         </div>
       </section>
@@ -1431,8 +1439,9 @@
           ${pricingHtml(l)}
           ${dealCheckHtml(l)}
           ${l.accidents != null || l.ownerCount != null ? `<section class="card"><h2>History</h2><dl class="spec">
-            ${l.accidents != null ? `<div><dt>Accidents reported</dt><dd class="${l.accidents ? 'bad' : 'good'}">${l.accidents ? 'Yes' : 'None reported'}</dd></div>` : ''}
-            ${l.ownerCount != null ? `<div><dt>Previous owners</dt><dd>${num(l.ownerCount)}</dd></div>` : ''}</dl>
+            ${l.accidents != null ? `<div><dt>Accidents reported</dt><dd class="${l.accidents ? 'bad' : 'good'}">${l.accidents ? (l.accidentCount ? plural(l.accidentCount, 'accident') : 'Yes') : 'None reported'}</dd></div>` : ''}
+            ${l.ownerCount != null ? `<div><dt>Owners</dt><dd>${num(l.ownerCount)}${l.oneOwner ? ' <span class="good">· one owner</span>' : ''}</dd></div>` : ''}
+            ${l.usageType ? `<div><dt>Use</dt><dd>${esc(l.usageType)}</dd></div>` : ''}</dl>
             ${l.vhrUrl ? `<a class="link-btn" href="${esc(l.vhrUrl)}" target="_blank" rel="noopener noreferrer">Full history report ↗</a>` : ''}</section>` : ''}
           <section class="card" id="recalls"><h2>Recalls & complaints</h2><div id="recalls-body" class="muted small">Checking NHTSA…</div></section>
           ${live && !can('velocity') ? '' : `<section class="card">
@@ -1459,13 +1468,14 @@
               <div><dt>Body</dt><dd>${esc(live ? l.bodyLabel || l.body : `${l.body} · ${l.segment}`)}</dd></div>
               <div><dt>Drivetrain</dt><dd>${esc(l.drivetrain)}</dd></div>
               <div><dt>Fuel</dt><dd>${esc(l.fuel)}</dd></div>
+              ${l.series ? `<div><dt>Version</dt><dd>${esc(l.series)}</dd></div>` : ''}
               ${l.engine ? `<div><dt>Engine</dt><dd>${esc(l.engine)}</dd></div>` : ''}
               ${l.transmission ? `<div><dt>Transmission</dt><dd>${esc(l.transmission)}</dd></div>` : ''}
               <div><dt>Exterior</dt><dd><span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span>${r ? ` <span class="muted">1 of ${r.extCount} of ${r.total}</span>` : ''}</dd></div>
               <div><dt>Interior</dt><dd>${esc(l.intColor)}${r ? ` <span class="muted">1 of ${r.intCount}</span>` : ''}</dd></div>
               ${l.titleStatus ? `<div><dt>Title</dt><dd class="${l.titleStatus === 'clean' ? 'good' : l.titleStatus === 'unknown' ? '' : 'bad'}">${esc(Live.titleCase(l.titleStatus))}</dd></div>` : ''}
               ${l.certification && l.certification.program ? `<div><dt>Certified program</dt><dd>${esc(l.certification.program.name)}</dd></div>` : ''}
-              <div><dt>Assembled in</dt><dd><a href="${searchHref({ model: key, assembly: l.assembly.plant })}">${esc(l.assembly.plant)}</a> <span class="muted">${esc(l.assembly.country)}</span></dd></div>
+              ${l.assembly.plant && l.assembly.plant !== 'Unknown' ? `<div><dt>Assembled in</dt><dd><a href="${searchHref({ model: key, assembly: l.assembly.plant })}">${esc(l.assembly.plant)}</a> <span class="muted">${esc(l.assembly.country)}</span></dd></div>` : ''}
               ${l.upfitter ? `<div><dt>Upfitter</dt><dd>${esc(l.upfitter.name)} <span class="muted">${esc(l.upfitter.category)}</span></dd></div>` : ''}
               <div><dt>Original MSRP</dt><dd>${money(l.msrp)}</dd></div>
             </dl>
@@ -1478,7 +1488,7 @@
           <section class="card">
             <h2>Seller</h2>
             <p><b>${esc(l.dealer)}</b><br><span class="muted">${l.seller === 'Private' ? 'Private party' : l.franchise ? 'Franchise dealer' : 'Independent dealer'} · ${esc(l.city)}, ${esc(l.state)}</span>${l.dealerPhone ? `<br><a href="tel:${esc(l.dealerPhone)}">${esc(l.dealerPhone)}</a>` : ''}</p>
-            ${l.vdpUrl ? `<a class="btn primary block" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View this car on the dealer’s site ↗</a>` : ''}
+            ${l.vdpUrl ? `<a class="btn primary block" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View the full listing ↗</a>` : ''}
             ${l.vhrUrl ? `<a class="btn ghost block" href="${esc(l.vhrUrl)}" target="_blank" rel="noopener noreferrer">Vehicle history report ↗</a>` : ''}
             ${l.seller === 'Dealer' && !live ? `<a class="btn ghost block" href="${searchHref({ q: l.dealer, state: l.state })}">More from this dealer</a>` : ''}
             <p class="muted small">We never pass your details to a seller. Contact them directly when you’re ready.</p>
@@ -1522,7 +1532,7 @@
       const gal = document.querySelector('.car-gallery');
       if (!gal) return;
       gal.querySelector('.gallery-thumbs')?.remove();
-      gal.querySelector('.stage-note').insertAdjacentHTML('beforebegin', `<div class="gallery-thumbs">${photos.slice(0, 16).map((src, i) => `<button type="button" class="thumb${i === 0 ? ' on' : ''}" data-action="photo" data-src="${esc(src)}" aria-label="Photo ${i + 1}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>`);
+      gal.querySelector('.stage-note').insertAdjacentHTML('beforebegin', `<div class="gallery-thumbs">${photos.slice(0, 16).map((src, i) => `<button type="button" class="thumb${i === 0 ? ' on' : ''}" data-action="photo" data-src="${esc(src)}" aria-label="Photo ${i + 1}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></button>`).join('')}</div>`);
     } catch (e) { /* the primary photo is enough */ }
   }
 
