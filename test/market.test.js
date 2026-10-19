@@ -146,6 +146,7 @@ test('live mode maps Gridline filters to Visor API parameters', () => {
     assembly: ['Georgetown, KY', 'Woodstock, ON'], upfitter: ['Rocky Ridge'], priceMax: 30000, milesMax: 50000, msrpMin: 20000,
     vin: '5TF*B5D', near: 'Denver, CO', radius: 900, sort: 'discount', when: 'sold', ex: { features: ['Sunroof/Moonroof'], colorFamily: ['Red'] },
   });
+  Live.setProvider('visor');
   const p = Live.toParams(f, ctx);
   assert.equal(p.inventory_type, 'used,certified');
   assert.equal(p.make, 'Toyota');
@@ -209,5 +210,58 @@ test('mock Visor server rejects bad keys and filters like the real API', async (
   assert.equal(r.status, 200);
   assert.ok(r.json.data.length > 0 && r.json.data.every((x) => x.model === 'RAV4' && x.price <= 25000));
   assert.ok(r.json.data.every((x, i, a) => i === 0 || a[i - 1].price <= x.price));
+  server.close();
+});
+
+test('free auto.dev mode maps filters and records', () => {
+  const ctx = { cityByName: () => ['Denver', 'CO', 39.7, -105], zipFor: () => '80202', makes: ['Toyota'], known: { bodies: ['SUV', 'Pickup', 'Sedan'] } };
+  const p = Live.adToParams(Object.assign(Market.emptyFilters(), {
+    model: ['Toyota RAV4'], body: ['Truck'], condition: ['Certified'], year: ['2020', '2021', '2022'], fuel: ['Gas'],
+    priceMin: 10000, priceMax: 30000, milesMax: 60000, near: 'Denver, CO', radius: 900, sort: 'price-asc',
+  }), ctx);
+  assert.equal(p['vehicle.make'], 'Toyota');
+  assert.equal(p['vehicle.model'], 'RAV4');
+  assert.equal(p['vehicle.bodyStyle'], 'Pickup');
+  assert.equal(p['retailListing.cpo'], 'true');
+  assert.equal(p['vehicle.year'], '2020-2022');
+  assert.equal(p['vehicle.fuel'], 'Gasoline');
+  assert.equal(p['retailListing.price'], '10000-30000');
+  assert.equal(p['retailListing.miles'], '0-60000');
+  assert.equal(p.zip, '80202');
+  assert.equal(p.distance, 500);
+  assert.equal(p.sort, 'price.asc');
+  assert.equal(Live.adToParams(Object.assign(Market.emptyFilters(), { condition: ['New'] }), ctx)['retailListing.used'], 'false');
+
+  const l = Live.adNormalize({
+    vin: '5TFAB5DB1MX123456', location: [-105, 39.7], createdAt: new Date(Date.now() - 5 * 864e5).toISOString().replace('T', ' ').slice(0, 19),
+    vehicle: { year: 2021, make: 'Toyota', model: 'Tundra', trim: 'SR5', drivetrain: '4WD', fuel: 'Gasoline', bodyStyle: 'Pickup', exteriorColor: 'Super White' },
+    retailListing: { price: 40500, miles: 30000, used: true, cpo: false, dealer: 'Denver Toyota', city: 'Denver', state: 'CO', zip: '80202',
+      primaryImage: 'https://retail.photos.vin/x-1.jpg', photoCount: 12, vdp: 'https://dealer/x', carfaxUrl: 'https://carfax/x' },
+    history: { accidents: false, ownerCount: 1 },
+  });
+  assert.equal(l.condition, 'Used');
+  assert.equal(l.body, 'Truck');
+  assert.equal(l.fuel, 'Gas');
+  assert.equal(l.daysListed, 5);
+  assert.equal(l.lat, 39.7);
+  assert.equal(l.accidents, false);
+  assert.equal(l.photoCount, 12);
+  assert.deepEqual(Live.adBuckets({ 'Toyota (12)': 'u', 'Honda (3)': 'u' }), [{ value: 'Toyota', count: 12 }, { value: 'Honda', count: 3 }]);
+});
+
+test('mock auto.dev enforces the free plan page size and rejects unknown parameters', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-autodev.js');
+  const server = http.createServer(handle).listen(0);
+  const port = server.address().port;
+  const get = (path) => new Promise((resolve) => http.get({ port, path, headers: { Authorization: `Bearer ${KEY}` } }, (res) => {
+    let b = '';
+    res.on('data', (c) => (b += c));
+    res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(b) }));
+  }));
+  const r = await get('/listings?vehicle.make=Toyota&limit=100&includes=total,facets');
+  assert.equal(r.json.data.length, 20);
+  assert.ok(r.json.total > 20 && r.json.facets.makes['Toyota (' + r.json.total + ')']);
+  assert.equal((await get('/listings?make=Toyota')).status, 400);
   server.close();
 });

@@ -56,6 +56,7 @@
     try { s = Object.assign(s, JSON.parse(localStorage.getItem(STORE_KEY)) || {}); } catch (e) { /* private mode */ }
     s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo' }, s.prefs);
     s.liveCars = s.liveCars || {};
+    if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
     return {
       get: () => s,
       update(fn) {
@@ -71,14 +72,34 @@
     get origin() { return prefs().homeCity ? cityByName(prefs().homeCity) : null; },
   };
 
-  /* ---------- Live data (Visor API) ---------- */
+  /* ---------- Live data (auto.dev or Visor API) ---------- */
 
-  const isLive = () => prefs().dataSource === 'live' && !!Live.getKey();
+  const SOURCE = () => prefs().dataSource || 'demo';
+  const syncProvider = () => { if (SOURCE() !== 'demo') Live.setProvider(SOURCE()); };
+  syncProvider();
+  const isLive = () => SOURCE() !== 'demo' && !!Live.getKey(SOURCE());
+  const srcName = () => Live.info().name;
+  const srcLink = () => `<a href="${Live.info().site}" target="_blank" rel="noopener">${esc(srcName())}</a>`;
+  // What the active live source can do (null in demo mode = everything).
+  const liveCaps = () => (isLive() ? Live.caps() : null);
+  const can = (cap) => { const c = liveCaps(); return !c || !!c[cap]; };
+  const CITY_ZIP = {
+    'Haverhill, MA': '01830', 'Boston, MA': '02108', 'Elmsford, NY': '10523', 'Albany, NY': '12207', 'Pawtucket, RI': '02860', 'Hartford, CT': '06103',
+    'Newark, NJ': '07102', 'Philadelphia, PA': '19107', 'Pittsburgh, PA': '15222', 'Baltimore, MD': '21202', 'Hampton, VA': '23669', 'Richmond, VA': '23219',
+    'Raleigh, NC': '27601', 'Charlotte, NC': '28202', 'Charleston, SC': '29401', 'Buford, GA': '30518', 'Atlanta, GA': '30303', 'Orlando, FL': '32801',
+    'Tampa, FL': '33602', 'Miami, FL': '33130', 'Nashville, TN': '37203', 'Birmingham, AL': '35203', 'Columbus, OH': '43215', 'Cleveland, OH': '44113',
+    'Detroit, MI': '48226', 'Indianapolis, IN': '46204', 'Louisville, KY': '40202', 'Schaumburg, IL': '60173', 'Chicago, IL': '60601', 'Milwaukee, WI': '53202',
+    'Minneapolis, MN': '55401', 'Des Moines, IA': '50309', 'St. Louis, MO': '63101', 'Kansas City, MO': '64106', 'Omaha, NE': '68102', 'Dallas, TX': '75201',
+    'Houston, TX': '77002', 'Austin, TX': '78701', 'Amarillo, TX': '79101', 'Oklahoma City, OK': '73102', 'New Orleans, LA': '70112', 'Little Rock, AR': '72201',
+    'Denver, CO': '80202', 'Salt Lake City, UT': '84101', 'Albuquerque, NM': '87102', 'Phoenix, AZ': '85004', 'Las Vegas, NV': '89101', 'Boise, ID': '83702',
+    'Seattle, WA': '98101', 'Portland, OR': '97204', 'Sacramento, CA': '95814', 'San Jose, CA': '95113', 'Los Altos, CA': '94022', 'Thousand Oaks, CA': '91360',
+    'San Diego, CA': '92101', 'Anchorage, AK': '99501', 'Honolulu, HI': '96813', 'Burlington, VT': '05401', 'Portland, ME': '04101', 'Billings, MT': '59101',
+  };
   const DEMO_MAKES = [...new Set(DATA.models.map((m) => m.make))];
   const LIVE_EXPECTED = new Map();
   const LIVE_SEEN = new Map();
   let LIVE_VOCAB = null, LIVE_KNOWN = null;
-  const liveCtx = () => ({ cityByName, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
+  const liveCtx = () => ({ cityByName, zipFor: (c) => CITY_ZIP[c] || null, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
   const vocab = () => (isLive() && LIVE_VOCAB) || VOCAB;
 
   async function ensureLiveVocab() {
@@ -112,11 +133,12 @@
 
   function liveErrorHtml(e) {
     const tips = {
-      no_key: 'Open <a href="#/settings">Settings</a> and paste your Visor API key.',
-      auth: 'Visor rejected the API key. Check it in <a href="#/settings">Settings</a>.',
+      no_key: `Open <a href="#/settings">Settings</a> and paste your ${esc(srcName())} API key.`,
+      auth: `${esc(srcName())} rejected the API key. Check it in <a href="#/settings">Settings</a>.`,
       billing: 'Your Visor API balance or spending cap is used up. Top up at <a href="https://visor.vin/account/api" target="_blank" rel="noopener">visor.vin/account/api</a>.',
-      rate_limit: 'Too many requests in a short time. Wait a few seconds and try again.',
+      rate_limit: SOURCE() === 'autodev' ? 'Either this month’s 1,000 free auto.dev calls are used up (they reset on the 1st), or too many requests went out at once. Wait a few seconds and try again.' : 'Too many requests in a short time. Wait a few seconds and try again.',
       blocked: 'Live data works in the Gridline desktop app, or when you run <code>npm start</code> and open <a href="http://localhost:8080">localhost:8080</a>.',
+      unsupported: `That needs data ${esc(srcName())} doesn’t provide.`,
     };
     return `<div class="card live-error"><h3>Couldn’t load live listings</h3><p>${esc(e.message || String(e))}</p><p class="muted">${tips[e.code] || ''}</p>
       <p><button class="btn" type="button" data-action="use-demo">Switch to demo data</button></p></div>`;
@@ -387,7 +409,7 @@
     const out = [];
     if (!q) {
       for (const s of store.get().saved.slice(0, 4)) out.push({ icon: '★', label: s.name, sub: 'Saved search', href: '#/search?' + s.params });
-      for (const p of QUICK.slice(0, 6)) out.push({ icon: '↗', label: p.label, sub: 'Try a plain-English search', href: p.href });
+      for (const p of quickFor().slice(0, 6)) out.push({ icon: '↗', label: p.label, sub: 'Try a plain-English search', href: p.href });
       return out;
     }
     const compact = q.toUpperCase().replace(/[\s-]/g, '');
@@ -501,10 +523,12 @@
     { label: '4x4 trucks under 50k miles near Denver', href: nlQuick('4x4 trucks under 50k miles near denver') },
     { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
     { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
-    { label: 'EVs with price drops', href: nlQuick('electric with price drops') },
-    { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }) },
-    { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }) },
+    { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
+    { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
+    { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
   ];
+  // Example searches the current data source can actually answer.
+  const quickFor = () => QUICK.filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
 
   /* ---------- Views ---------- */
 
@@ -656,13 +680,32 @@
   }
 
   function liveInsightsShell() {
-    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from Visor · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))}</p></div></div>
+    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))}</p></div></div>
       <div class="insight-grid" id="live-insights">${loadingHtml('Loading the live market…')}</div>`;
   }
 
   async function fillLiveInsights() {
     const grid = document.getElementById('live-insights');
     const ctx = liveCtx();
+    if (SOURCE() === 'autodev') {
+      try {
+        const o = await Live.overview();
+        if (!document.getElementById('live-insights')) return;
+        const maxP = Math.max(1, ...o.prices.map((b) => b.count || 0));
+        grid.innerHTML = `
+          <article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(o.total)} cars for sale nationwide</h3>
+            <p class="muted">Dealer listings tracked by auto.dev right now</p></header>
+            <ul class="rank-list">${o.makes.map((b) => `<li><a href="${searchHref({ make: b.value })}"><span><b>${esc(b.value)}</b></span><span class="r"><b>${b.count != null ? num(b.count) : ''}</b><small>for sale</small></span></a></li>`).join('')}</ul></article>
+          <article class="card insight"><header><h3>What cars cost right now</h3><p class="muted">Every listing nationwide, by asking price</p></header>
+            <ul class="price-bars">${o.prices.map((b) => { const [lo, hi] = String(b.value).split('-').map(Number); return `<li><a href="${searchHref({ priceMin: lo, priceMax: hi })}"><span>${moneyK(lo)}–${moneyK(hi)}</span><i style="width:${Math.round(((b.count || 0) / maxP) * 100)}%"></i><b>${b.count != null ? num(b.count) : ''}</b></a></li>`; }).join('')}</ul></article>
+          <article class="card insight wide"><header><h3>Most listed body styles</h3><p class="muted">Tap one to browse live listings</p></header>
+            <div class="quick">${o.bodies.map((b) => `<a class="chip-link" href="${searchHref({ body: b.value })}">${esc(b.value)} <span class="muted">${b.count != null ? num(b.count) : ''}</span></a>`).join('')}</div>
+            <p class="muted small">Sold-car trends, price drops and inventory history need a source with sales history (Visor). The free auto.dev plan covers cars for sale now.</p></article>`;
+      } catch (e) {
+        if (document.getElementById('live-insights')) grid.innerHTML = liveErrorHtml(e);
+      }
+      return;
+    }
     try {
       const [active, sold30, fast, deals, makes] = await Promise.all([
         Live.count({ ex: {} }, ctx),
@@ -708,10 +751,10 @@
       <section class="hero">
         <div class="hero-grid" aria-hidden="true"></div>
         <div class="hero-inner">
-          <p class="eyebrow">${isLive() ? 'Live listings from Visor · every US dealer it tracks' : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
+          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
           <h1>See the whole market.<span>Not just pages of listings.</span></h1>
           <div id="hero-search"></div>
-          <div class="quick"><span class="muted">Try</span>${QUICK.slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
+          <div class="quick"><span class="muted">Try</span>${quickFor().slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
         </div>
         ${isLive() ? `<div class="hero-feature" aria-hidden="true">${Charts.car('Coupe', '#2367b2', { cls: 'hero-car' })}</div>` : `<a class="hero-feature" href="#/car/${featured.id}" style="--paint:${esc(featured.extHex)}">
           ${Charts.car(featured.body, featured.extHex, { cls: 'hero-car' })}
@@ -858,7 +901,7 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     } else {
       resultsEl.classList.add('is-loading');
-      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml('Searching live listings from Visor…');
+      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml(`Searching live listings from ${srcName()}…`);
     }
     try {
       await ensureLiveVocab();
@@ -872,13 +915,14 @@
         S.total = r.total;
         S.liveStats = r.stats;
         S.liveTrend = null;
+        S.dropped = r.dropped || null;
       }
       S.liveNext = r.nextOffset;
       for (const l of r.results) LIVE_SEEN.set(l.id, l);
       // Fair value from the cars on hand, grouped by model.
       const fv = Live.fairValueFrom(S.results, CURRENT_YEAR);
       for (const l of S.results) LIVE_EXPECTED.set(l.id, fv(l));
-      if (!append && prefs().valueSort !== 'count') await addLiveMetrics(seq);
+      if (!append && prefs().valueSort !== 'count' && can('metrics')) await addLiveMetrics(seq);
       if (seq !== liveSeq) return;
       S.shown = S.results.length;
       renderSearchParts();
@@ -913,7 +957,7 @@
     document.getElementById('filters').innerHTML = filtersHtml(facets);
     document.getElementById('filters').classList.toggle('open', S.filtersOpen);
     document.getElementById('results').innerHTML = resultsHtml(results);
-    if (S.live && S.f.model.length === 1) fillLiveOverview();
+    if (S.live && S.f.model.length === 1 && can('velocity')) fillLiveOverview();
     document.querySelectorAll('[data-action="layout"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.layout === S.layout)));
     if (S.finder) renderFinder();
     if (focusKey) {
@@ -959,7 +1003,7 @@
     const hint = o.hint ? `<p class="facet-hint">${o.hint}</p>` : '';
     return `<fieldset class="facet" id="facet-${key}"><legend><span>${esc(FACET_LABELS[key])}</span>
       <span class="legend-actions">${sel.length || ex.length ? `<button type="button" class="link-btn" data-action="clear-facet" data-key="${key}">Clear</button>` : ''}
-      <button type="button" class="mode-btn${exMode ? ' on' : ''}" data-action="ex-mode" data-key="${key}" aria-pressed="${exMode}" title="Exclude mode: checked values are left out">${exMode ? 'Excluding' : 'Exclude'}</button></span></legend>${hint}${body}${more}</fieldset>`;
+      ${S.live && !can('exclude') ? '' : `<button type="button" class="mode-btn${exMode ? ' on' : ''}" data-action="ex-mode" data-key="${key}" aria-pressed="${exMode}" title="Exclude mode: checked values are left out">${exMode ? 'Excluding' : 'Exclude'}</button>`}</span></legend>${hint}${body}${more}</fieldset>`;
   }
 
   const HEX = (() => {
@@ -986,8 +1030,8 @@
         <label class="switch"><input type="checkbox" data-bool="belowMarket" data-focus-key="belowMarket" ${f.belowMarket ? 'checked' : ''}><span></span>Below market only</label>
         <label class="switch"><input type="checkbox" data-bool="dropsOnly" data-focus-key="dropsOnly" ${f.dropsOnly ? 'checked' : ''}><span></span>Has price cuts</label>
       </div>`}
-      <label class="value-sort"><span>Sort filter values by</span>
-        <select id="value-sort">${Object.entries(VALUE_SORTS).map(([k, v]) => `<option value="${k}" ${prefs().valueSort === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
+      ${S.live && !can('metrics') ? '' : `<label class="value-sort"><span>Sort filter values by</span>
+        <select id="value-sort">${Object.entries(VALUE_SORTS).map(([k, v]) => `<option value="${k}" ${prefs().valueSort === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>`}
       ${group('Condition & price', `
         ${facetList('condition', facets, { sort: (a, b) => ['New', 'Certified', 'Used'].indexOf(a.value) - ['New', 'Certified', 'Used'].indexOf(b.value) })}
         <fieldset class="facet"><legend><span>Price</span></legend>
@@ -996,12 +1040,12 @@
             <label><span>Max</span><input type="number" inputmode="numeric" step="1000" min="0" id="price-max" data-num="priceMax" placeholder="No max" value="${f.priceMax ?? ''}"></label>
           </div>
         </fieldset>
-        <fieldset class="facet"><legend><span>Original MSRP</span></legend>
+        ${S.live && !can('msrp') ? '' : `<fieldset class="facet"><legend><span>Original MSRP</span></legend>
           <div class="range">
             <label><span>Min</span><input type="number" inputmode="numeric" step="1000" min="0" id="msrp-min" data-num="msrpMin" placeholder="No min" value="${f.msrpMin ?? ''}"></label>
             <label><span>Max</span><input type="number" inputmode="numeric" step="1000" min="0" id="msrp-max" data-num="msrpMax" placeholder="No max" value="${f.msrpMax ?? ''}"></label>
           </div>
-        </fieldset>
+        </fieldset>`}
         <fieldset class="facet"><legend><span>Mileage</span></legend>
           <select id="miles-max" data-num="milesMax">
             <option value="">Any mileage</option>
@@ -1025,20 +1069,20 @@
         ${facetList('drivetrain', facets)}`)}
       ${group('Colors', `
         ${facetList('colorFamily', facets, { swatch: (v) => FAMILY_HEX[v] || '#999' })}
-        ${facetList('extColor', facets, { limit: 6, swatch: (v) => HEX.get(v) || '#999' })}
+        ${S.live && !can('extColor') ? '' : facetList('extColor', facets, { limit: 6, swatch: (v) => HEX.get(v) || '#999' })}
         ${facetList('interiorFamily', facets, { swatch: (v) => FAMILY_HEX[v] || '#999' })}`)}
-      ${group('Equipment', `
+      ${S.live && !can('features') && !can('options') && !can('upfitter') ? '' : group('Equipment', `
         ${facetList('features', facets, { limit: 8, hint: 'Cars must have every feature you check.', fmt: S.live ? Live.titleCase : null })}
         ${facetList('options', facets, { limit: 8, hint: S.live ? 'Manufacturer option and package codes.' : 'Factory options and packages installed on the car.' })}
         ${facetList('upfitter', facets, { limit: 8, hint: 'Aftermarket builders like Roush, Rocky Ridge or BraunAbility.', fmt: S.live ? Live.titleCase : null })}`)}
       ${group('Origin & seller', `
         ${facetList('assembly', facets, { limit: 6 })}
-        ${facetList('seller', facets, { hint: S.live ? 'Franchise or independent dealer. Visor covers dealer listings only.' : null })}
+        ${facetList('seller', facets, { hint: S.live ? `Franchise or independent dealer. ${esc(srcName())} covers dealer listings only.` : null })}
         ${facetList('state', facets, { limit: 6 })}
-        <fieldset class="facet"><legend><span>VIN pattern</span></legend>
+        ${S.live && !can('vinPattern') ? '' : `<fieldset class="facet"><legend><span>VIN pattern</span></legend>
           <input type="text" id="vin-pattern" data-text="vin" class="mono-input" maxlength="17" placeholder="e.g. 5TF*B5D or JTE??????N" value="${esc(f.vin)}" spellcheck="false" autocapitalize="characters">
           <p class="facet-hint">Prefix, with <code>?</code> for any single character${S.live ? '' : ' (or <code>*</code>)'}. Position 10 is the model year; 11 is the plant.</p>
-        </fieldset>`)}`;
+        </fieldset>`}`)}`;
   }
 
   function renderFinder() {
@@ -1096,9 +1140,11 @@
     const f = S.f;
     if (f.model.length !== 1) return '';
     if (S.live) {
+      const vel = can('velocity');
+      const yrs = (S.facets.year || []).filter((y) => y.count).sort((a, b) => a.value - b.value);
       return `<section class="card overview"><div class="overview-head"><div><p class="eyebrow">Market overview · live</p><h2>${esc(f.model[0])}</h2></div>
-        <dl class="kpis" id="live-kpis"><div><dt>For sale</dt><dd>${num(S.total)}</dd></div><div><dt>Sold, 30 days</dt><dd class="muted">…</dd></div><div><dt>Median days to sell</dt><dd class="muted">…</dd></div><div><dt>Days of supply</dt><dd class="muted">…</dd></div></dl></div>
-        <div class="overview-grid"><div><h4>Median price by model year</h4><div id="live-years" class="muted small">Loading…</div></div>
+        <dl class="kpis" id="live-kpis"><div><dt>For sale</dt><dd>${num(S.total)}</dd></div>${vel ? '<div><dt>Sold, 30 days</dt><dd class="muted">…</dd></div><div><dt>Median days to sell</dt><dd class="muted">…</dd></div><div><dt>Days of supply</dt><dd class="muted">…</dd></div>' : ''}</dl></div>
+        <div class="overview-grid"><div><h4>${vel ? 'Median price by model year' : 'Listings by model year'}</h4><div id="live-years" class="muted small">${vel ? 'Loading…' : yrs.length ? Charts.columns(yrs.map((y) => ({ label: String(y.value).slice(2).padStart(3, "'"), value: y.count, display: num(y.count), title: `${y.value}: ${plural(y.count, 'car')}` })), { aria: 'Listings by model year' }) : ''}</div></div>
         <div><h4>Trims</h4><ul class="trim-list">${(S.facets.trim || []).slice(0, 8).map((t) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t.value)}"><span>${esc(t.value)}</span><span class="muted">${num(t.count)}</span><span></span></button></li>`).join('')}</ul></div></div></section>`;
     }
     const key = f.model[0];
@@ -1138,7 +1184,7 @@
   function sentenceHtml(count) {
     const f = S.f;
     return `<h1 class="sentence"><b>${num(count)}</b>
-      <label class="inline-select"><span class="sr-only">When</span><select id="when-select">${WHEN.map(([v, t]) => `<option value="${v}" ${f.when === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="inline-select"><span class="sr-only">When</span><select id="when-select">${WHEN.filter(([v]) => !S.live || v === '0' || (v === 'sold' ? can('sold') : can('snapshots'))).map(([v, t]) => `<option value="${v}" ${f.when === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="inline-select"><span class="sr-only">Where</span><select id="where-select"><option value="">nationwide</option>${CITY_NAMES.map((c) => `<option value="${esc(c)}" ${f.near === c ? 'selected' : ''}>near ${esc(c)}</option>`).join('')}</select></label>
     </h1>`;
   }
@@ -1150,12 +1196,13 @@
     const sold = S.f.when === 'sold';
     const when = Number(S.f.when) || 0;
     const liveNotes = live ? [
-      S.f.q ? `Visor doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
+      S.f.q ? `${esc(srcName())} doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
+      S.dropped ? `${esc(srcName())} doesn’t support one of these filters (<code>${esc(S.dropped)}</code>), so it was skipped.` : '',
       S.f.belowMarket || S.f.dropsOnly ? '“Below market only” and “Has price cuts” apply to demo data only.' : '',
     ].filter(Boolean) : [];
     const head = `${activeChips()}
       <div class="results-summary" aria-live="polite">${sentenceHtml(sum.count)}
-        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ' · <span class="live-src">Live listings from <a href="https://visor.vin" target="_blank" rel="noopener">Visor</a></span>' : ''}</p>
+        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings from ${srcLink()}</span>` : ''}</p>
         ${liveNotes.map((n) => `<p class="live-note">${n}</p>`).join('')}
       </div>`;
     if (!results.length) {
@@ -1193,6 +1240,8 @@
           <span class="muted small">${num(inv.sold30)} sold in 30 days · ${num(inv.sold90)} in 90</span></div>
         ${Charts.trend(inv.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
         <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span><span class="muted">Hover for any day · use the “for sale today” menu to rewind</span></div></div>`;
+    } else if (!can('trend')) {
+      trendCard = '';
     } else if (S.liveTrend) {
       trendCard = `<div class="card viz trend-card"><div class="viz-head"><h3>Inventory over time</h3><span class="muted small">${num(S.liveTrend.sold30)} sold in the last 30 days</span></div>
         ${Charts.trend(S.liveTrend.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
@@ -1277,7 +1326,7 @@
   function renderCar(id, params) {
     const base = BY_ID.get(id);
     if (!base) {
-      if (Live.getKey()) return loadLiveCar(id);
+      if (isLive()) return loadLiveCar(id);
       return renderNotFound('That listing is no longer available.');
     }
     const asOf = Number(params.get('asOf')) || 0;
@@ -1286,7 +1335,7 @@
   }
 
   async function loadLiveCar(id) {
-    setView('car', `<section class="narrow">${loadingHtml('Loading listing from Visor…')}</section>`);
+    setView('car', `<section class="narrow">${loadingHtml(`Loading listing from ${srcName()}…`)}</section>`);
     try {
       const l = await Live.listing(id);
       const comps = await Live.comparables(l, liveCtx(), { years: 1, condition: 'same' });
@@ -1365,10 +1414,10 @@
               <label><span>Years</span><select data-copt="years"><option value="0">${l.year} only</option><option value="1" selected>±1 year</option><option value="2">±2 years</option></select></label>
               <label><span>Condition</span><select data-copt="condition"><option value="same" selected>${l.condition === 'New' ? 'New only' : 'Used & certified'}</option><option value="any">Any</option></select></label>
               <label><span>Distance</span><select data-copt="radius"><option value="">Nationwide</option><option value="250">Within 250 mi</option><option value="500">Within 500 mi</option><option value="1000">Within 1,000 mi</option></select></label>
-              <label><span>MSRP match</span><select data-copt="msrpBand"><option value="">Any MSRP</option><option value="0.05">Within 5%</option><option value="0.1">Within 10%</option></select></label>
-              <label><span>Rank by</span><select data-copt="rankBy"><option value="value">Price vs. market</option><option value="price">Price</option><option value="miles">Mileage</option><option value="days">Newest listing</option><option value="discount">Discount from MSRP</option></select></label>
-              <label class="check"><input type="checkbox" data-copt="includeSold"> Show sold cars on chart${live ? ' <span class="muted">(1 request)</span>' : ''}</label>
-              <label class="check"><input type="checkbox" data-copt="msrpAdjusted"> Plot as % of MSRP</label>
+              ${can('msrp') ? `<label><span>MSRP match</span><select data-copt="msrpBand"><option value="">Any MSRP</option><option value="0.05">Within 5%</option><option value="0.1">Within 10%</option></select></label>` : ''}
+              <label><span>Rank by</span><select data-copt="rankBy"><option value="value">Price vs. market</option><option value="price">Price</option><option value="miles">Mileage</option><option value="days">Newest listing</option>${can('msrp') ? '<option value="discount">Discount from MSRP</option>' : ''}</select></label>
+              ${can('sold') ? `<label class="check"><input type="checkbox" data-copt="includeSold"> Show sold cars on chart${live ? ' <span class="muted">(1 request)</span>' : ''}</label>` : ''}
+              ${can('msrp') ? '<label class="check"><input type="checkbox" data-copt="msrpAdjusted"> Plot as % of MSRP</label>' : ''}
             </div>
             <div id="mc-body"></div>
           </section>
@@ -1381,7 +1430,12 @@
         <aside class="col side">
           ${pricingHtml(l)}
           ${dealCheckHtml(l)}
-          <section class="card">
+          ${l.accidents != null || l.ownerCount != null ? `<section class="card"><h2>History</h2><dl class="spec">
+            ${l.accidents != null ? `<div><dt>Accidents reported</dt><dd class="${l.accidents ? 'bad' : 'good'}">${l.accidents ? 'Yes' : 'None reported'}</dd></div>` : ''}
+            ${l.ownerCount != null ? `<div><dt>Previous owners</dt><dd>${num(l.ownerCount)}</dd></div>` : ''}</dl>
+            ${l.vhrUrl ? `<a class="link-btn" href="${esc(l.vhrUrl)}" target="_blank" rel="noopener noreferrer">Full history report ↗</a>` : ''}</section>` : ''}
+          <section class="card" id="recalls"><h2>Recalls & complaints</h2><div id="recalls-body" class="muted small">Checking NHTSA…</div></section>
+          ${live && !can('velocity') ? '' : `<section class="card">
             <h2>Market velocity</h2>
             <p class="muted small">${l.year - 1}–${l.year + 1} ${esc(key)}, nationwide</p>
             ${live ? '<div id="live-velocity" class="muted small">Loading…</div>' : `<dl class="spec">
@@ -1392,7 +1446,7 @@
               <div><dt>Sold vs. first ask</dt><dd>${v.saleToList ? pct(v.saleToList, 1) : '—'}</dd></div>
             </dl>
             ${!l.sold && v.medianDaysToSell ? `<p class="muted small">This car has been listed ${plural(l.daysListed, 'day')}${l.daysListed > v.medianDaysToSell * 1.5 ? ' — well past the typical time to sell, which can mean room to negotiate.' : '.'}</p>` : ''}`}
-          </section>
+          </section>`}
           <section class="card">
             <h2>Top features</h2>
             ${l.features.length ? `<ul class="feature-chips">${l.features.map((x) => `<li><a href="${searchHref({ model: key, features: x })}">${esc(live ? Live.titleCase(x) : x)}</a></li>`).join('')}</ul>` : '<p class="muted">None listed.</p>'}
@@ -1454,8 +1508,47 @@
       </div>`);
     bindDealCheck(l);
     renderMarketCompare();
-    if (live) fillLiveVelocity(l);
+    if (live && can('velocity')) fillLiveVelocity(l);
+    if (live && can('photosApi') && l.photoCount > 1 && (l.photos || []).length < 2) fillLivePhotos(l);
+    fillRecalls(l);
     window.scrollTo(0, 0);
+  }
+
+  async function fillLivePhotos(l) {
+    try {
+      const photos = await Live.photos(l.vin);
+      if (C.l !== l || photos.length < 2) return;
+      l.photos = photos;
+      const gal = document.querySelector('.car-gallery');
+      if (!gal) return;
+      gal.querySelector('.gallery-thumbs')?.remove();
+      gal.querySelector('.stage-note').insertAdjacentHTML('beforebegin', `<div class="gallery-thumbs">${photos.slice(0, 16).map((src, i) => `<button type="button" class="thumb${i === 0 ? ' on' : ''}" data-action="photo" data-src="${esc(src)}" aria-label="Photo ${i + 1}"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>`);
+    } catch (e) { /* the primary photo is enough */ }
+  }
+
+  // Recalls and owner complaints from NHTSA: free, public, and allowed from any site.
+  const nhtsaCache = new Map();
+  function nhtsa(kind, l) {
+    const model = l.model.replace(/ 1500$/, '');
+    const url = `https://api.nhtsa.gov/${kind}/${kind === 'recalls' ? 'recallsByVehicle' : 'complaintsByVehicle'}?make=${encodeURIComponent(l.make)}&model=${encodeURIComponent(model)}&modelYear=${l.year}`;
+    if (!nhtsaCache.has(url)) nhtsaCache.set(url, fetch(url).then((r) => (r.ok ? r.json() : { results: [] })).catch(() => null));
+    return nhtsaCache.get(url);
+  }
+  async function fillRecalls(l) {
+    const [rec, comp] = await Promise.all([nhtsa('recalls', l), nhtsa('complaints', l)]);
+    const el = document.getElementById('recalls-body');
+    if (!el || C.l !== l) return;
+    if (!rec && !comp) { el.textContent = 'Couldn’t reach NHTSA right now.'; return; }
+    const recalls = (rec && (rec.results || [])) || [];
+    const complaints = (comp && (comp.results || [])) || [];
+    const byComp = new Map();
+    for (const c of complaints) for (const part of String(c.components || 'Other').split(',')) byComp.set(part.trim(), (byComp.get(part.trim()) || 0) + 1);
+    const topComp = [...byComp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    el.classList.remove('muted', 'small');
+    el.innerHTML = `<p class="small"><b>${plural(recalls.length, 'recall')}</b> and <b>${plural(complaints.length, 'owner complaint')}</b> on file for the ${l.year} ${esc(l.make)} ${esc(l.model)}.</p>
+      ${recalls.length ? `<ul class="recall-list">${recalls.slice(0, 5).map((r) => `<li><b>${esc(Live.titleCase(String(r.Component || '').toLowerCase()))}</b><span class="muted small">${esc(r.ReportReceivedDate || '')} · ${esc(r.NHTSACampaignNumber || '')}${r.parkIt ? ' · <span class="bad">Do not drive</span>' : ''}</span><p class="small">${esc(String(r.Summary || '').slice(0, 220))}${String(r.Summary || '').length > 220 ? '…' : ''}</p></li>`).join('')}</ul>` : ''}
+      ${topComp.length ? `<p class="muted small">Most complaints: ${topComp.map(([k, n]) => `${esc(Live.titleCase(k.toLowerCase()))} (${n})`).join(', ')}.</p>` : ''}
+      <p class="small">${l.live ? `<a href="https://www.nhtsa.gov/recalls?vin=${esc(l.vin)}" target="_blank" rel="noopener">Check open recalls for this exact VIN at NHTSA ↗</a>` : `Model-year data from <a href="https://www.nhtsa.gov/recalls" target="_blank" rel="noopener">NHTSA</a>.`}</p>`;
   }
 
   async function fillLiveVelocity(l) {
@@ -1563,7 +1656,7 @@
         <dl class="spec pricing"><div class="sub"><dt>Advertised price</dt><dd>${money(l.price)}</dd></div>
         <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(l.price * taxRate / 100)}</dd></div>
         <div class="total"><dt>Est. before fees</dt><dd>${money(l.price * (1 + taxRate / 100))}</dd></div></dl>`}
-      <p class="muted small">Dealer pricing data from <a href="https://visor.vin" target="_blank" rel="noopener">Visor</a>.</p>
+      <p class="muted small">Listing data from ${srcLink()}.</p>
     </section>`;
   }
 
@@ -1685,11 +1778,11 @@
         </section>
         <section><h3>Origin</h3>
           <p>Final assembly point: <b>${esc(l.assembly.plant)}</b>${l.assembly.country ? `<br>Country of assembly: ${esc(l.assembly.country)}` : ''}</p>
-          ${l.windowStickerVerified ? '<p class="st-note">Visor verified this VIN against its original window sticker.</p>' : ''}
+          ${l.windowStickerVerified ? `<p class="st-note">${esc(srcName())} verified this VIN against its original window sticker.</p>` : ''}
           ${l.upfitter ? `<p class="st-note">Upfitted after delivery by <b>${esc(l.upfitter.name)}</b> (${esc(l.upfitter.category.toLowerCase())}). Upfit content is not part of the factory MSRP.</p>` : ''}
         </section>
       </div>
-      <p class="st-foot">Reconstructed from listing data${l.live ? ' (Visor)' : ''} for reference. Confirm with the original Monroney label from the seller.</p>
+      <p class="st-foot">Reconstructed from listing data${l.live ? ` (${esc(srcName())})` : ''} for reference. Confirm with the original Monroney label from the seller.</p>
     </article>`;
   }
 
@@ -1704,7 +1797,7 @@
       <table class="st-price"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join('')}</tbody></table>
       <h3>Factory options</h3>
       <table class="st-price"><tbody>${l.options.map((x, i) => `<tr><td><span class="mono">${esc(x.code || l.make.slice(0, 2).toUpperCase() + String(100 + i * 7))}</span> ${esc(x.name)}</td><td>${x.price ? money(x.price) : '—'}</td></tr>`).join('') || '<tr><td>None</td><td></td></tr>'}</tbody></table>
-      <p class="st-foot">${l.live ? 'Option codes from Visor.' : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
+      <p class="st-foot">${l.live && l.options.length ? `Option codes from ${esc(srcName())}.` : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
     </article>`;
   }
 
@@ -1717,10 +1810,10 @@
       Live.vin(d.vin).then((l) => {
         const el = document.getElementById('vin-live');
         if (!el) return;
-        if (!l) { el.innerHTML = '<p class="muted">Visor has no listing for this VIN.</p>'; return; }
+        if (!l) { el.innerHTML = `<p class="muted">${esc(srcName())} has no listing for this VIN.</p>`; return; }
         rememberLive(l);
         el.innerHTML = `<h2 class="sec-title">${l.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(l)}</div>`;
-      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? '<p class="muted">Visor hasn’t seen this VIN.</p>' : liveErrorHtml(e); });
+      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? `<p class="muted">${esc(srcName())} hasn’t seen this VIN.</p>` : liveErrorHtml(e); });
     }
     setView('vin', `<section class="narrow">
       <h1>VIN <span class="mono">${esc(d.vin)}</span></h1>
@@ -1736,7 +1829,7 @@
         </dl>
         ${d.errors.length ? `<ul class="errors">${d.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
       </div>
-      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml('Looking up this VIN on Visor…')}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
+      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml(`Looking up this VIN on ${srcName()}…`)}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
       ${d.wellFormed ? `<p><a href="${searchHref({ vin: d.vin.slice(0, 8) })}">Find other cars with the same first 8 characters →</a></p>` : ''}
     </section>`);
     window.scrollTo(0, 0);
@@ -1828,25 +1921,43 @@
 
   function renderSettings() {
     const p = prefs();
-    const key = Live.getKey();
-    const c = Live.costs();
+    const src = SOURCE();
+    const ad = Live.usage('autodev');
+    const vz = Live.usage('visor');
+    const keyRow = (prov, label, help) => {
+      const key = Live.getKey(prov);
+      return `<div class="set-row key-row"><span><b>${label}</b><small>${help}</small></span>
+        <form class="key-form" data-provider="${prov}"><input type="password" id="api-key-${prov}" placeholder="Paste API key" autocomplete="off" spellcheck="false" value="${esc(key)}">
+          <button class="btn primary" type="submit">Save</button>${key ? `<button class="btn ghost" type="button" data-action="clear-key" data-provider="${prov}">Remove</button>` : ''}</form></div>`;
+    };
     setView('settings', `<section class="narrow">
       <h1>Settings</h1>
       <h2 class="sec-title">Listing data</h2>
       <div class="card settings">
-        <div class="set-row"><span><b>Data source</b><small>Demo data is a built-in sample. Live data searches real listings through the Visor API, using your own key.</small></span>
+        <div class="set-row"><span><b>Data source</b><small>Demo is a built-in sample. auto.dev and Visor search real cars for sale, using your own API key.</small></span>
           <div class="seg-choice" role="radiogroup" aria-label="Data source">
-            <label><input type="radio" name="ds" data-pref="dataSource" value="demo" ${p.dataSource !== 'live' ? 'checked' : ''}> Demo</label>
-            <label><input type="radio" name="ds" data-pref="dataSource" value="live" ${p.dataSource === 'live' ? 'checked' : ''}> Live</label>
+            <label><input type="radio" name="ds" data-pref="dataSource" value="demo" ${src === 'demo' ? 'checked' : ''}> Demo</label>
+            <label><input type="radio" name="ds" data-pref="dataSource" value="autodev" ${src === 'autodev' ? 'checked' : ''}> auto.dev <span class="tag free">Free</span></label>
+            <label><input type="radio" name="ds" data-pref="dataSource" value="visor" ${src === 'visor' ? 'checked' : ''}> Visor</label>
           </div></div>
-        <div class="set-row key-row"><span><b>Visor API key</b><small>Create one at <a href="https://visor.vin/account/api" target="_blank" rel="noopener">visor.vin/account/api</a>. Stored only on this device; never uploaded to GitHub.</small></span>
-          <form class="key-form" id="key-form"><input type="password" id="api-key" placeholder="vis_live_…" autocomplete="off" spellcheck="false" value="${esc(key)}">
-            <button class="btn primary" type="submit">Save</button>${key ? '<button class="btn ghost" type="button" data-action="clear-key">Remove</button>' : ''}</form></div>
-        <div class="set-row"><span><b>Connection</b><small id="conn-status">${key ? 'Not tested yet.' : 'Add a key to connect.'}</small></span>
-          <button class="btn ghost" type="button" data-action="test-key" ${key ? '' : 'disabled'}>Test connection</button></div>
-        <div class="set-row"><span><b>Spending</b><small>Visor charges per request, typically $0.002–$0.003 (about $0.04 for a full listing page). Repeat requests within 30 minutes are free.</small></span>
-          <span class="spend"><b>$${c.session.toFixed(3)}</b> this session<br><b>$${c.total.toFixed(3)}</b> total on this device</span></div>
+        <div class="set-row"><span><b>Connection</b><small id="conn-status">${isLive() ? 'Not tested yet.' : src === 'demo' ? 'Using demo data.' : `Add your ${esc(Live.info(src).name)} key below.`}</small></span>
+          <button class="btn ghost" type="button" data-action="test-key" ${isLive() ? '' : 'disabled'}>Test connection</button></div>
       </div>
+      <div class="card settings provider-card${src === 'autodev' ? ' active' : ''}">
+        <div class="set-row"><span><b>auto.dev</b> <span class="tag free">Free plan</span><small>1,000 free requests a month, no credit card. It stops at the limit, so you are never charged. Covers cars for sale now with photos; no sold history, options or dealer fees.</small></span>
+          <a class="btn ghost" href="https://auto.dev/pricing" target="_blank" rel="noopener">Get a free key ↗</a></div>
+        ${keyRow('autodev', 'auto.dev API key', 'Sign up free at auto.dev, then copy the key from your dashboard. Stored only on this device.')}
+        <div class="set-row"><span><b>Free requests used</b><small>On this device, this month. A search uses 1; opening a car uses 2–3. Repeats within 30 minutes are free.</small></span>
+          <span class="spend"><b>${num(ad.calls)}</b> of 1,000<br><span class="meter"><i style="width:${Math.min(100, ad.calls / 10)}%"></i></span></span></div>
+      </div>
+      <div class="card settings provider-card${src === 'visor' ? ' active' : ''}">
+        <div class="set-row"><span><b>Visor</b> <span class="tag">Pay per use</span><small>Everything: sold cars, past dates, installed options, upfitters, dealer fees and velocity. About $0.002–$0.04 per request after starter credit.</small></span>
+          <a class="btn ghost" href="https://visor.vin/account/api" target="_blank" rel="noopener">Get a key ↗</a></div>
+        ${keyRow('visor', 'Visor API key', 'Stored only on this device; never uploaded.')}
+        <div class="set-row"><span><b>Spending</b><small>Visor bills per request; repeats within 30 minutes are free.</small></span>
+          <span class="spend"><b>$${vz.session.toFixed(3)}</b> this session<br><b>$${vz.total.toFixed(3)}</b> total on this device</span></div>
+      </div>
+      <p class="muted small">Live data works in the desktop app or with <code>npm start</code>. Both services only accept browser requests from their own websites, so the public web version stays on demo data. Recalls and complaints come from NHTSA and work everywhere.</p>
       <h2 class="sec-title">Display</h2>
       <div class="card settings">
         <label class="set-row"><span><b>Home location</b><small>Used for distances on every listing and the “Distance from home” sort.</small></span>
@@ -1870,7 +1981,7 @@
     const route = await Live.transport();
     try {
       const n = await Live.count({ ex: {} }, liveCtx());
-      out.innerHTML = `<span class="good">✓ Connected</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
+      out.innerHTML = `<span class="good">✓ Connected to ${esc(srcName())}</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
     } catch (e) {
       out.innerHTML = `<span class="bad">✕ ${esc(e.message)}</span>`;
     }
@@ -1882,12 +1993,12 @@
     const pill = document.getElementById('mode-pill');
     if (pill) {
       pill.textContent = live ? 'Live' : 'Demo';
-      pill.title = live ? 'Searching live listings from Visor' : 'Showing sample data. Switch to live data in Settings.';
+      pill.title = live ? `Searching live listings from ${srcName()}` : 'Showing sample data. Switch to live data in Settings.';
     }
     const att = document.getElementById('data-attribution');
     if (att) att.innerHTML = live
-      ? 'Live listing data from <a href="https://visor.vin" target="_blank" rel="noopener">Visor</a>, provided “as is” without warranty. Confirm details and availability with the seller.'
-      : 'This build is showing a synthetic, deterministic sample of the national market. Prices, dealers and VINs are generated for demonstration. Add a Visor API key in <a href="#/settings">Settings</a> to search real listings.';
+      ? `Live listing data from ${srcLink()}, provided “as is” without warranty. Confirm details and availability with the seller. Recalls from NHTSA.`
+      : 'This build is showing a synthetic, deterministic sample of the national market. Prices, dealers and VINs are generated for demonstration. Add a free auto.dev key in <a href="#/settings">Settings</a> to search real listings.';
   }
 
   function renderNotFound(msg) {
@@ -2009,8 +2120,8 @@
     } else if (a === 'test-key') {
       testLiveConnection();
     } else if (a === 'clear-key') {
-      Live.setKey('');
-      store.update((s) => { s.prefs.dataSource = 'demo'; });
+      Live.setKey('', el.dataset.provider);
+      if (SOURCE() === el.dataset.provider) store.update((s) => { s.prefs.dataSource = 'demo'; });
       applyModeUi();
       renderSettings();
       toast('API key removed');
@@ -2025,15 +2136,17 @@
   });
 
   app.addEventListener('submit', (e) => {
-    if (e.target.id !== 'key-form') return;
+    const prov = e.target.dataset && e.target.dataset.provider;
+    if (!prov) return;
     e.preventDefault();
-    const k = document.getElementById('api-key').value.trim();
-    Live.setKey(k);
+    const k = document.getElementById('api-key-' + prov).value.trim();
+    Live.setKey(k, prov);
     LIVE_KNOWN = null;
-    if (k) store.update((s) => { s.prefs.dataSource = 'live'; });
+    if (k) store.update((s) => { s.prefs.dataSource = prov; });
+    syncProvider();
     applyModeUi();
     renderSettings();
-    toast(k ? 'Key saved · live data on' : 'Key removed');
+    toast(k ? `${Live.info(prov).name} key saved · live data on` : 'Key removed');
     if (k) testLiveConnection();
   });
 
@@ -2076,8 +2189,11 @@
         s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : t.value || null;
       });
       if (k === 'dataSource') {
+        syncProvider();
+        LIVE_KNOWN = null;
         applyModeUi();
-        toast(t.value === 'live' ? (Live.getKey() ? 'Live data on' : 'Add your Visor API key to use live data') : 'Using demo data');
+        renderSettings();
+        toast(t.value === 'demo' ? 'Using demo data' : isLive() ? `Live data from ${srcName()}` : `Add your ${Live.info(t.value).name} API key to use live data`);
       } else toast('Saved');
       return;
     }

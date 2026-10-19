@@ -79,16 +79,26 @@ function createWindow() {
   win.loadFile(path.join(ROOT, 'index.html'));
 }
 
-// Visor API requests from the page. Only GET /v1/* on api.visor.vin is allowed.
-const VISOR_BASE = process.env.VISOR_API_BASE || 'https://api.visor.vin';
-ipcMain.handle('visor:fetch', async (event, req) => {
-  const { path: apiPath, query, key } = req || {};
-  if (typeof apiPath !== 'string' || !/^\/v1\/[A-Za-z0-9_\-/.%]+$/.test(apiPath)) return { status: 400, body: '{"error":{"message":"Bad path"}}', cost: 0 };
+// Listing-data API requests from the page. Visor and auto.dev only accept
+// browser requests from their own sites, so the app makes them from here.
+const API_BASES = {
+  visor: process.env.VISOR_API_BASE || 'https://api.visor.vin',
+  autodev: process.env.AUTODEV_API_BASE || 'https://api.auto.dev',
+};
+const API_PATHS = {
+  visor: /^\/v1\/[A-Za-z0-9_\-/.%]+$/,
+  autodev: /^\/(listings|photos)(\/[A-Za-z0-9]{1,17})?$/,
+};
+ipcMain.handle('api:fetch', async (event, req) => {
+  const { provider, path: apiPath, query, key } = req || {};
+  if (!API_BASES[provider] || typeof apiPath !== 'string' || !API_PATHS[provider].test(apiPath)) {
+    return { status: 400, body: '{"error":{"message":"Request not allowed"}}', cost: 0 };
+  }
   try {
-    const res = await net.fetch(`${VISOR_BASE}${apiPath}${query ? '?' + query : ''}`, { headers: { Authorization: `Bearer ${key || ''}` } });
+    const res = await net.fetch(`${API_BASES[provider]}${apiPath}${query ? '?' + query : ''}`, { headers: { Authorization: `Bearer ${key || ''}` } });
     return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0 };
   } catch (e) {
-    return { status: 502, body: JSON.stringify({ error: { message: `Could not reach the Visor API: ${e.message}` } }), cost: 0 };
+    return { status: 502, body: JSON.stringify({ error: { message: `Could not reach the listings API: ${e.message}` } }), cost: 0 };
   }
 });
 

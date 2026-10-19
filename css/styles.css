@@ -691,6 +691,23 @@ button, input, select { font: inherit; color: inherit; }
   .mode-pill { display: none; }
 }
 
+/* ---------- Data sources ---------- */
+.tag.free { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.provider-card { margin-top: 12px; }
+.provider-card.active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), var(--shadow); }
+.meter { display: inline-block; width: 120px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; vertical-align: middle; }
+.meter i { display: block; height: 100%; background: var(--accent); }
+.seg-choice { flex-wrap: wrap; }
+.price-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.price-bars a { display: grid; grid-template-columns: 110px 1fr 70px; gap: 10px; align-items: center; color: var(--text); font-size: .86rem; padding: 3px 0; }
+.price-bars a:hover { text-decoration: none; background: var(--surface-2); }
+.price-bars i { display: block; height: 12px; border-radius: 4px; background: var(--ret-3); }
+.price-bars b { text-align: right; font-variant-numeric: tabular-nums; }
+.recall-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 10px; }
+.recall-list li { border-left: 3px solid var(--warn); padding-left: 10px; }
+.recall-list b { display: block; font-size: .88rem; }
+.recall-list p { margin: 2px 0 0; color: var(--text-2); }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1080px) {
   .insight-grid, .viz-row, .pitch-grid, .overview-grid { grid-template-columns: minmax(0, 1fr); }
