@@ -38,7 +38,7 @@ To build an installer you can double-click, run this on the OS you're targeting:
 
 The builds are unsigned. The first time you open the app, macOS asks you to confirm it (right-click → Open) and Windows SmartScreen asks you to choose "Run anyway".
 
-The desktop app adds a native menu with shortcuts: `⌘/Ctrl+F` or `⌘/Ctrl+K` to search, `⌘/Ctrl+N` for a new search, `⌘/Ctrl+1`–`5` to switch between Home, Search, Insights, Saved & Hunts and Compare, and Back/Forward. It remembers the window's size and position, and external links open in your browser. Hunts, favorites and the compare list persist between launches, and hunts show native notifications (see **Hunts** below).
+The desktop app adds a native menu with shortcuts: `⌘/Ctrl+F` or `⌘/Ctrl+K` to search, `⌘/Ctrl+N` for a new search, `⌘/Ctrl+1`–`5` to switch between Home, Search, Insights, Saved & Hunts and Compare, and Back/Forward. On a Mac, the red close button hides the window rather than quitting, so hunts keep watching; click the Dock icon to bring it back, or quit with `⌘Q`. It remembers the window's size and position, and external links open in your browser. Hunts, favorites and the compare list persist between launches, and hunts show native notifications (see **Hunts** below).
 
 ## Run it as a website
 
