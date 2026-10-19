@@ -158,7 +158,7 @@
   const pct = (v, digits) => `${(v * 100).toFixed(digits == null ? 0 : digits)}%`;
   const title = (l) => `${l.year} ${l.make} ${l.model}`;
   const days = (d) => (d === 0 ? 'Listed today' : d === 1 ? '1 day for sale' : `${d} days for sale`);
-  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
+  const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : /(ch|sh|s|x)$/.test(word) ? 'es' : 's'}`;
   const ago = (d) => (d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`);
   const distanceTo = (l) => {
     const o = CTX.origin;
@@ -341,7 +341,7 @@
       el.textContent = n;
     };
     const news = s.saved.reduce((n, h) => n + huntNewCount(h), 0);
-    set('saved-count', news || s.saved.length + Object.keys(s.favs).length);
+    set('saved-count', news > 99 ? '99+' : news || s.saved.length + Object.keys(s.favs).length);
     document.getElementById('saved-count').classList.toggle('pill-new', news > 0);
     document.getElementById('saved-count').title = news ? `${news} new in your hunts` : '';
     set('compare-count', s.compare.length);
@@ -2117,9 +2117,71 @@
           <button class="link-btn" type="button" data-action="delete-search" data-id="${esc(x.id)}">Delete</button></div></div>
       <p class="muted small">${h.error ? `<span class="bad">Last check failed: ${esc(h.error)}</span> · ` : ''}Checked ${sinceText(h.checkedAt)}${!isLive() && h.source === 'demo' ? ' · The demo market doesn’t change, so this hunt started from the market a week ago.' : ''}${isLive() ? ` · Each check looks at the newest ${Live.PAGE} matches (1 request).` : ''}</p>
       <section class="card"><h2>Since you last looked</h2><div id="hunt-news">${newsHtml(x)}</div></section>
-      <div id="hunt-market"></div>
+      <div id="hunt-market">${isLive() ? loadingHtml('Sizing up this market…') : huntMarketHtml(Market.huntStats(LISTINGS, SOLD, f, CTX), f)}</div>
     </section>`);
+    if (isLive()) fillHuntMarketLive(x);
     window.scrollTo(0, 0);
+  }
+
+  /* How rare the hunted car is, how fast it goes, and the best one for sale now.
+     st: { forSale, perMonth, perMonthAtLeast, sold, sold30, medianDaysToSell, medianPrice, medianSoldPrice, rarity, best } */
+  function huntMarketHtml(st, f, trendHtml) {
+    const every = st.daysBetween || (st.perMonth ? 30 / st.perMonth : null);
+    const pace = st.perMonth == null ? 'Not enough data yet to say how often one comes up.'
+      : st.perMonth < 1 ? `Fewer than one a month comes up${every ? `, about one every ${Math.round(every)} days` : ''}.`
+      : `About ${num(st.perMonth)}${st.perMonthAtLeast ? ' or more' : ''} a month come up, one every ${every < 2 ? 'day or two' : `${Math.round(every)} days`}.`;
+    const speed = st.medianDaysToSell != null ? ` Half of them sell within ${plural(Math.round(st.medianDaysToSell), 'day')} of being listed${st.medianDaysToSell <= 21 ? ', so move quickly on a good one' : ''}.` : '';
+    const supply = !st.forSale ? ' None are for sale right now, so this is one to watch.'
+      : st.rarity === 'Common' && st.forSale >= 10 ? ' There’s plenty to choose from: you can afford to be picky.' : '';
+    const best = st.best;
+    const m = best && marketText(best);
+    return `<section class="card hunt-market">
+        <div class="overview-head"><div><p class="eyebrow">This market</p><h2>${st.rarity ? `${esc(st.rarity)}` : 'How rare is it?'}</h2></div>
+        <dl class="kpis">
+          <div><dt>For sale now</dt><dd>${num(st.forSale)}</dd></div>
+          <div><dt>New listings a month</dt><dd>${st.perMonth == null ? '—' : `${st.perMonth < 1 ? '<1' : num(st.perMonth)}${st.perMonthAtLeast ? '+' : ''}`}</dd></div>
+          ${st.sold != null ? `<div><dt>Sold, ${st.soldWindow || '120 days'}</dt><dd>${num(st.sold)}</dd></div>` : ''}
+          ${st.medianDaysToSell != null ? `<div><dt>Median days to sell</dt><dd>${Math.round(st.medianDaysToSell)}</dd></div>` : ''}
+          ${st.medianPrice != null ? `<div><dt>Median asking</dt><dd>${money(st.medianPrice)}</dd></div>` : ''}
+          ${st.medianSoldPrice != null ? `<div><dt>Median sold</dt><dd>${money(st.medianSoldPrice)}</dd></div>` : ''}
+        </dl></div>
+        <p class="hunt-verdict">${esc(pace + speed + supply)}</p>
+      </section>
+      ${best ? `<section class="card hunt-best"><h2>Best one for sale now</h2>
+        <p class="muted">${m && m.d < -0.005 ? `Priced ${money(-m.diff)} below what Gridline expects for this car (${money(m.expected)}).` : 'The closest to its expected price among these matches.'} <a href="#/car/${esc(best.id)}">See how that’s worked out →</a></p>
+        <div class="listing-grid compact">${listingCard(best)}</div></section>` : ''}
+      ${trendHtml != null ? trendHtml : (() => {
+        const inv = Market.inventorySeries(LISTINGS, SOLD, f, CTX, 90);
+        return `<section class="card viz trend-card"><div class="viz-head"><h3>For sale over the last 90 days</h3><span class="muted small">${num(inv.sold30)} sold in 30 days · ${num(inv.sold90)} in 90</span></div>
+          ${Charts.trend(inv.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
+          <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div></section>`;
+      })()}`;
+  }
+
+  // Live: the newest page of matches (usually cached from the last check) and, with Visor, sales velocity.
+  async function fillHuntMarketLive(x) {
+    const el = () => (view.name === 'hunt' ? document.getElementById('hunt-market') : null);
+    try {
+      const f = huntFilters(x);
+      const { results, complete, total } = await huntMatches(x);
+      const recent = results.filter((l) => l.daysListed <= 30).length;
+      const st = { forSale: total, perMonth: complete ? recent : recent || null, perMonthAtLeast: !complete, sold: null, medianDaysToSell: null,
+        medianPrice: complete ? Market.median(results.map((l) => l.price)) : null, medianSoldPrice: null };
+      if (can('velocity')) {
+        const v = await Live.velocity(f, liveCtx()).catch(() => null);
+        if (v) {
+          Object.assign(st, { sold: v.sold30, soldWindow: '30 days', medianDaysToSell: v.medianDaysToSell });
+          st.perMonth = Math.max(st.perMonth || 0, v.sold30);
+          st.perMonthAtLeast = false;
+        }
+      }
+      st.rarity = Market.rarityLabel(st.perMonth);
+      st.best = results.filter((l) => expected(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
+      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')} on ${esc(srcName())}${can('velocity') ? '' : '. Sales history needs a Visor key'}.</p>`;
+      if (el()) el().innerHTML = huntMarketHtml(st, f, note);
+    } catch (e) {
+      if (el()) el().innerHTML = liveErrorHtml(e);
+    }
   }
 
   /* ----- Saved ----- */

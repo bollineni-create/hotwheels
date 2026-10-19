@@ -469,6 +469,11 @@ button, input, select { font: inherit; color: inherit; }
 .hunt-page .page-head .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .hunt-page > .card { margin-top: 16px; }
 .news-title { font-size: 1rem; margin: 18px 0 10px; }
+.hunt-market .overview-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+.hunt-market h2 { margin: 2px 0 0; }
+.hunt-verdict { margin: 14px 0 0; color: var(--text-2); max-width: 70ch; }
+#hunt-market > .card { margin-top: 16px; }
+.hunt-best .listing-grid { max-width: 360px; }
 .news-title:first-child { margin-top: 4px; }
 
 /* ---------- Footer & toast ---------- */
@@ -749,7 +754,8 @@ button, input, select { font: inherit; color: inherit; }
   .header-inner > a.icon-btn { display: none; }
   .brand-name { display: none; }
   .main-nav { gap: 0; }
-  .main-nav a { padding: 6px 7px; font-size: .84rem; }
+  .main-nav a { padding: 6px 7px; font-size: .84rem; gap: 4px; }
+  .main-nav .pill-count { padding: 0 5px; }
   .section { padding: 32px 16px; }
   .insight { padding: 18px; }
   .insight header h3 { font-size: 1.15rem; }
