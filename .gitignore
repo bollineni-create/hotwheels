@@ -2,3 +2,4 @@ node_modules/
 release/
 # Built into your own desktop app only; never commit API keys.
 electron/keys.local.json
+build/

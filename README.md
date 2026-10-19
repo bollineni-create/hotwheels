@@ -5,7 +5,20 @@ A local, dependency-free car search and market-insights site, modeled on [visor.
 
 It runs as a desktop app (Electron) or as a plain website. The site itself is HTML, CSS and JavaScript with no build step.
 
-## Run it as a desktop app
+## Install it on a Mac (simplest)
+
+One command builds a small native Gridline app, puts it in Applications and opens it. You only need Apple's command-line tools (`xcode-select --install` once if you've never used them):
+
+```bash
+git clone https://github.com/bollineni-create/hotwheels.git ~/hotwheels
+~/hotwheels/app/macos/build.sh
+```
+
+The first time, it asks for your free auto.dev key so you get real listings. Press Enter to skip, and it uses the demo listings instead. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
+
+After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It reads its pages live from the `~/hotwheels` folder: after a `git pull`, or any edit to the HTML, CSS or JS, the open window reloads within a second, with no rebuild. If the folder moves, the app falls back to the copy built into it. Run `build.sh` again only after changing something in `app/macos/`.
+
+## Run it as an Electron app
 
 Requires [Node.js](https://nodejs.org) 18 or newer.
 
@@ -128,7 +141,8 @@ To use real data, have `generateInventory()` return listings with the same shape
 
 ```
 index.html        shell: header, footer, script tags
-electron/         desktop app: window, menu, link handling (main.js, preload.js)
+app/macos/        native Mac app: build.sh, Swift window that loads the site live and relays API requests
+electron/         Electron desktop app: window, menu, link handling (main.js, preload.js)
 assets/icons/     app icons (SVG source plus PNG sizes)
 css/styles.css    design tokens (light and dark), components, responsive rules
 js/vin.js         VIN validation and decoding (works in the browser and Node)
