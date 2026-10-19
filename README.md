@@ -48,6 +48,8 @@ open http://localhost:8080
 npm test           # node's built-in test runner
 ```
 
+The public site at https://bollineni-create.github.io/hotwheels/ is served by GitHub Pages from the root of `main`, so it updates on its own within a minute or two of every merge. Before committing changes to the JS or CSS, run `./tools/stamp-version.sh`: it stamps a fresh `?v=` on the page's script and stylesheet links, so visitors get the new files instead of a cached mix of old and new.
+
 ## What carried over from the baseline
 
 | visor.vin homepage | Here |
@@ -170,4 +172,5 @@ test/mock-*.js    stand-in auto.dev and Visor APIs for tests and development
 js/charts.js      SVG scatter, bars, tile map, price-history and car illustrations
 js/app.js         hash router and views: home, search, car, compare, saved, hunts, VIN; hunt checks and notifications
 test/             node --test unit tests
+tools/stamp-version.sh  stamps ?v= on script and stylesheet links so browsers pick up updates
 ```
