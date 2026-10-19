@@ -297,3 +297,43 @@ test('live modes send the transmission filter in each API’s own terms', () => 
   assert.equal(ad['vehicle.transmission'], '6-Speed Manual,5-Speed Manual');
   Live.setProvider('autodev');
 });
+
+test('a hunt reports new matches, price cuts and cars that are gone', () => {
+  const car = (id, price) => ({ id, price });
+  const seen = { a: 30000, b: 25000, c: 20000 };
+  const d = Market.huntDiff(seen, [car('a', 30000), car('b', 23900), car('d', 27000)], { complete: true });
+  assert.deepEqual(d.added.map((l) => l.id), ['d']);
+  assert.deepEqual(d.cut.map((c) => [c.l.id, c.from, c.to]), [['b', 25000, 23900]]);
+  assert.deepEqual(d.gone, ['c']);
+  assert.deepEqual(d.seen, { a: 30000, b: 23900, d: 27000 });
+  // One page of live results: a car not on it may be on the next page, so it isn't gone.
+  const partial = Market.huntDiff(seen, [car('a', 29500)], { complete: false });
+  assert.deepEqual(partial.gone, []);
+  assert.equal(partial.cut.length, 1);
+  assert.deepEqual(Object.keys(partial.seen).sort(), ['a', 'b', 'c']);
+  // A price rise is not news.
+  assert.equal(Market.huntDiff({ a: 100 }, [car('a', 120)], { complete: true }).cut.length, 0);
+});
+
+test('a demo hunt started a week ago finds that week’s new listings and sales', () => {
+  const f = Object.assign(Market.emptyFilters(), { model: ['Mazda MX-5 Miata'] });
+  const ctx = { delta: () => 0 };
+  const weekAgo = Market.snapshot(listings, data.sold, 7);
+  const seen = Object.fromEntries(Market.search(weekAgo, f, ctx).results.map((l) => [l.id, l.price]));
+  const d = Market.huntDiff(seen, Market.search(listings, f, ctx).results, { complete: true });
+  assert.ok(d.added.length > 0 && d.added.every((l) => l.daysListed < 7));
+  assert.ok(d.gone.length > 0 && d.gone.every((id) => data.sold.find((l) => l.id === id).sold.daysAgo < 7));
+  assert.ok(d.cut.every((c) => c.to < c.from));
+});
+
+test('hunt stats say how often a car comes up and how fast it sells', () => {
+  const fv = Market.buildFairValue(listings, 2026);
+  const ctx = { delta: (l) => { const e = fv(l); return e ? l.price / e - 1 : 0; } };
+  const rare = Market.huntStats(listings, data.sold, Object.assign(Market.emptyFilters(), { model: ['Honda Civic'], trim: ['Type R'] }), ctx);
+  const common = Market.huntStats(listings, data.sold, Object.assign(Market.emptyFilters(), { model: ['Ford F-150'] }), ctx);
+  assert.ok(rare.perMonth < common.perMonth);
+  assert.ok(common.forSale > 0 && common.sold > 0 && common.medianDaysToSell > 0);
+  assert.equal(common.rarity, 'Common');
+  assert.ok(common.best && ctx.delta(common.best) < 0);
+  assert.equal(Market.rarityLabel(0.5), 'Very rare');
+});

@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 import WebKit
 
 // Gridline: a native window around the car search site.
@@ -8,6 +9,8 @@ import WebKit
 // It also pulls the latest version from GitHub when opened and every 15 minutes.
 // Listing APIs (auto.dev, Visor) refuse requests from web pages, so the page hands them to the app,
 // which sends them itself and replies by id: the same bridge the Electron build provides (window.gridlineDesktop).
+// Hunts (saved searches that keep watching) post native notifications through the same bridge, and the app
+// asks the page to check them every few minutes, since a web view's own timers can stall while it's hidden.
 
 let apiBases = [
     "autodev": ProcessInfo.processInfo.environment["AUTODEV_API_BASE"] ?? "https://api.auto.dev",
@@ -47,7 +50,7 @@ func apiFetch(_ req: [String: Any], completion: @escaping ([String: Any]) -> Voi
     }.resume()
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var lastSignature = ""
@@ -67,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let content = config.userContentController
         content.add(self, name: "api")
         content.add(self, name: "print")
+        content.add(self, name: "notify")
+        UNUserNotificationCenter.current().delegate = self
         content.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
         webView = WKWebView(frame: .zero, configuration: config)
@@ -93,6 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         lastSignature = signature()
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.checkForChanges() }
         Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in self?.pullUpdates() }
+        Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
+            self?.webView.evaluateJavaScript("window.gridlineHuntTick && window.gridlineHuntTick()", completionHandler: nil)
+        }
         pullUpdates()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -124,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
               pending[id] = resolve;
               window.webkit.messageHandlers.api.postMessage({ id, req });
             }),
+            notify: (n) => window.webkit.messageHandlers.notify.postMessage(n),
             defaultKeys: Object.freeze(\(keys)),
           });
           window.print = () => window.webkit.messageHandlers.print.postMessage(null);
@@ -134,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "print" { printPage(nil) }
+        if message.name == "notify", let body = message.body as? [String: Any] { showNotification(body) }
         if message.name == "api", let body = message.body as? [String: Any], let id = body["id"] as? String, Int(id) != nil {
             apiFetch(body["req"] as? [String: Any] ?? [:]) { [weak self] reply in
                 guard let data = try? JSONSerialization.data(withJSONObject: reply),
@@ -141,6 +151,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self?.webView.evaluateJavaScript("window.__gridlineReply('\(id)', \(json))", completionHandler: nil)
             }
         }
+    }
+
+    // MARK: Notifications
+
+    /// Only in-app links like "#/hunt/s123" are opened from a notification.
+    private func safeHash(_ value: Any?) -> String? {
+        guard let href = value as? String, href.range(of: "^#/[A-Za-z0-9/_?=&.%-]*$", options: .regularExpression) != nil else { return nil }
+        return href
+    }
+
+    /// Shows a hunt notification. macOS asks for permission the first time.
+    func showNotification(_ n: [String: Any]) {
+        guard let title = n["title"] as? String else { return }
+        let content = UNMutableNotificationContent()
+        content.title = String(title.prefix(200))
+        content.body = String((n["body"] as? String ?? "").prefix(400))
+        content.sound = .default
+        if let href = safeHash(n["href"]) { content.userInfo = ["href": href] }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+    }
+
+    // Show notifications even while Gridline is the frontmost app.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    // Clicking a notification brings the window forward on that hunt.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let href = safeHash(response.notification.request.content.userInfo["href"])
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.window.makeKeyAndOrderFront(nil)
+            if let href = href { self.webView.evaluateJavaScript("location.hash = '\(href)'", completionHandler: nil) }
+        }
+        completionHandler()
     }
 
     // MARK: Live loading
@@ -352,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
         let goItem = NSMenuItem(); main.addItem(goItem)
         let goMenu = NSMenu(title: "Go")
-        for (i, (title, hash)) in [("Home", "#/"), ("Search", "#/search"), ("Insights", "#/insights"), ("Saved", "#/saved"), ("Compare", "#/compare")].enumerated() {
+        for (i, (title, hash)) in [("Home", "#/"), ("Search", "#/search"), ("Insights", "#/insights"), ("Saved & Hunts", "#/saved"), ("Compare", "#/compare")].enumerated() {
             let item = NSMenuItem(title: title, action: #selector(go(_:)), keyEquivalent: "\(i + 1)")
             item.representedObject = hash
             goMenu.addItem(item)

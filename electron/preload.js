@@ -1,5 +1,6 @@
 // Tags the page for desktop styling and exposes a narrow bridge for listing-data
-// API requests, which run in the main process (the APIs block browser requests).
+// API requests, which run in the main process (the APIs block browser requests),
+// and for native notifications.
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Keys built into this copy of the app (see electron/keys.local.json).
@@ -11,6 +12,8 @@ try {
 
 contextBridge.exposeInMainWorld('gridlineDesktop', {
   apiFetch: (req) => ipcRenderer.invoke('api:fetch', req),
+  // Native notifications for hunts; clicking one opens its page.
+  notify: (n) => ipcRenderer.send('notify', n),
   defaultKeys,
 });
 

@@ -495,11 +495,65 @@
       .sort((a, b) => a.c.delta - b.c.delta);
   }
 
+  /* ---------- Hunts ---------- */
+
+  // What changed for a hunt since its last check. `seen` maps listing id -> the
+  // price it had then. `complete` says `current` is every match (demo data, or a
+  // live result that fit on one page); without it a car missing from `current`
+  // may only be on a later page, so it isn't reported gone and stays in `seen`.
+  function huntDiff(seen, current, opts) {
+    const o = opts || {};
+    const prev = seen || {};
+    const next = o.complete ? {} : Object.assign({}, prev);
+    const added = [];
+    const cut = [];
+    for (const l of current) {
+      next[l.id] = l.price;
+      if (!(l.id in prev)) added.push(l);
+      else if (l.price < prev[l.id]) cut.push({ l, from: prev[l.id], to: l.price });
+    }
+    const gone = o.complete ? Object.keys(prev).filter((id) => !(id in next)) : [];
+    return { added, cut, gone, seen: next };
+  }
+
+  // How often a hunted car comes up and how fast it goes, from the cars for sale
+  // now and the ones sold in the last ~120 days (each listing's daysListed counts
+  // from its first day on the market, sold or not).
+  function huntStats(active, sold, f, ctx) {
+    const g = Object.assign({}, f, { when: '0' });
+    const now = active.filter((l) => matches(l, g, null, ctx));
+    const gone = sold.filter((l) => matches(l, g, null, ctx));
+    const arrived90 = now.concat(gone).filter((l) => l.daysListed <= 90).length;
+    const perMonth = arrived90 / 3;
+    const best = ctx && ctx.delta ? [...now].filter((l) => ctx.delta(l) !== 0).sort((a, b) => ctx.delta(a) - ctx.delta(b))[0] || null : null;
+    return {
+      forSale: now.length,
+      sold: gone.length,
+      sold30: gone.filter((l) => l.sold.daysAgo < 30).length,
+      medianPrice: median(now.map((l) => l.price)),
+      medianSoldPrice: median(gone.map((l) => l.sold.price)),
+      medianDaysToSell: median(gone.map((l) => l.sold.daysToSell)),
+      perMonth,
+      daysBetween: perMonth ? 30 / perMonth : null,
+      rarity: rarityLabel(perMonth),
+      best,
+    };
+  }
+
+  function rarityLabel(perMonth) {
+    if (perMonth == null) return null;
+    if (perMonth < 1) return 'Very rare';
+    if (perMonth < 4) return 'Rare';
+    if (perMonth < 15) return 'Uncommon';
+    return 'Common';
+  }
+
   const api = {
     median, mean, groupBy, linearFit, fit2, buildFairValue, priceOn, lastChange, haversineMiles,
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
     arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops,
+    huntDiff, huntStats, rarityLabel,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Market = api;

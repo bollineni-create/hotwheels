@@ -346,7 +346,7 @@
     if (SORT[f.sort]) listParams.sort = SORT[f.sort];
     if (listParams.sort === 'distance' && listParams.latitude == null) delete listParams.sort;
     const facetParams = Object.assign({}, base, { facets: FACET_NAMES.concat(['price', 'miles', 'days_on_market']).join(','), facet_value_limit: 60 });
-    const [list, fac] = await Promise.all([vreq('/v1/listings', listParams), o.offset ? Promise.resolve(null) : vreq('/v1/facets', facetParams)]);
+    const [list, fac] = await Promise.all([vreq('/v1/listings', listParams), o.offset || o.lite ? Promise.resolve(null) : vreq('/v1/facets', facetParams)]);
     const results = (list.data || []).map(normalize);
     let facets = null, stats = null, total = list.pagination ? list.pagination.total : results.length;
     if (fac) {
@@ -637,7 +637,8 @@
   async function adSearch(f, ctx, opts) {
     const o = opts || {};
     const params = Object.assign(adToParams(f, ctx), { limit: AD_PAGE, page: Math.floor((o.offset || 0) / AD_PAGE) + 1 });
-    if (!o.offset) params.includes = 'total,facets';
+    // opts.lite (hunt checks): just the cars and the total, no filter counts.
+    if (!o.offset) params.includes = o.lite ? 'total' : 'total,facets';
     const r = await adGet('/listings', params);
     const results = (r.data || []).map(adNormalize);
     let facets = null;

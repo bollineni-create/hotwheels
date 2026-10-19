@@ -456,6 +456,21 @@ button, input, select { font: inherit; color: inherit; }
 .saved-list li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; }
 .saved-list a { display: flex; flex-direction: column; color: var(--text); }
 
+/* ---------- Hunts ---------- */
+.pill-count.pill-new { background: var(--warn); }
+:root:not([data-theme="dark"]) .pill-count.pill-new { color: #fff; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sec-head .sec-title { display: flex; align-items: center; gap: 8px; }
+.saved-list li.hunt-row { flex-wrap: wrap; }
+.hunt-row > a { flex: 1 1 260px; min-width: 0; }
+.hunt-row > a .pill-count { margin-left: 6px; vertical-align: 1px; }
+.hunt-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.hunt-page .page-head { align-items: flex-start; flex-wrap: wrap; }
+.hunt-page .page-head .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hunt-page > .card { margin-top: 16px; }
+.news-title { font-size: 1rem; margin: 18px 0 10px; }
+.news-title:first-child { margin-top: 4px; }
+
 /* ---------- Footer & toast ---------- */
 .site-footer { border-top: 1px solid var(--border); background: var(--surface); margin-top: 40px; }
 .footer-inner { max-width: 1280px; margin: 0 auto; padding: 40px 20px 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr); gap: 32px; }

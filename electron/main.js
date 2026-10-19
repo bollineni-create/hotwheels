@@ -1,5 +1,5 @@
 // Desktop shell: loads the same static site in a native window.
-const { app, BrowserWindow, Menu, shell, nativeTheme, ipcMain, net } = require('electron');
+const { app, BrowserWindow, Menu, shell, nativeTheme, ipcMain, net, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -113,6 +113,20 @@ ipcMain.handle('api:fetch', async (event, req) => {
   }
 });
 
+// Hunt notifications from the page. Clicking one brings the window back on that hunt.
+ipcMain.on('notify', (event, n) => {
+  const { title, body, href } = n || {};
+  if (typeof title !== 'string' || !Notification.isSupported()) return;
+  const note = new Notification({ title: title.slice(0, 200), body: String(body || '').slice(0, 400) });
+  note.on('click', () => {
+    if (!win) createWindow();
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (typeof href === 'string' && /^#\/[\w\/?=&.%-]*$/.test(href)) go(href);
+  });
+  note.show();
+});
+
 function buildMenu() {
   const template = [
     ...(isMac ? [{ role: 'appMenu' }] : []),
@@ -133,7 +147,7 @@ function buildMenu() {
         { label: 'Home', accelerator: 'CmdOrCtrl+1', click: () => go('#/') },
         { label: 'Search', accelerator: 'CmdOrCtrl+2', click: () => go('#/search') },
         { label: 'Insights', accelerator: 'CmdOrCtrl+3', click: () => go('#/insights') },
-        { label: 'Saved', accelerator: 'CmdOrCtrl+4', click: () => go('#/saved') },
+        { label: 'Saved & Hunts', accelerator: 'CmdOrCtrl+4', click: () => go('#/saved') },
         { label: 'Compare', accelerator: 'CmdOrCtrl+5', click: () => go('#/compare') },
         { type: 'separator' },
         { label: 'Back', accelerator: isMac ? 'Cmd+[' : 'Alt+Left', click: () => win && win.webContents.navigationHistory.goBack() },
@@ -162,6 +176,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.setName('Gridline');
+  if (process.platform === 'win32') app.setAppUserModelId('app.gridline.desktop');
   app.on('second-instance', () => {
     if (!win) return;
     if (win.isMinimized()) win.restore();
