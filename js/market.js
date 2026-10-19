@@ -65,25 +65,100 @@
     return x;
   }
 
+  /* Spec premiums. Within one model, what a transmission or a paint is worth
+     compared with the model's most common one: the difference in median
+     log(price / base expected price). Kept only when it's clear of the noise
+     (2 standard errors for transmissions, 3 for paints, since a model has many
+     paints to test) and shrunk toward zero by n / (n + 10), so a handful of cars
+     can't swing a price. That's how a manual Miata or a rare paint stops looking
+     "overpriced" next to the automatics. */
+  const SPECS = [['transmission', (v) => `${v} transmission`, 2], ['extColor', (v) => `${v} paint`, 3]];
+  const SPEC_SHRINK = 10;
+
+  function specModel(group, base) {
+    const rows = group.map((l) => [l, Math.log(l.price / base(l))]).filter(([, r]) => isFinite(r));
+    const lifts = new Map();
+    if (rows.length < 12) return lifts;
+    const center = median(rows.map((r) => r[1]));
+    const spread = 1.4826 * median(rows.map((r) => Math.abs(r[1] - center))); // robust standard deviation
+    for (const [key, label, z] of SPECS) {
+      const groups = [...groupBy(rows, ([l]) => l[key])].filter(([v]) => v != null && v !== '—');
+      if (groups.length < 2) continue;
+      const [refValue, ref] = groups.sort((x, y) => y[1].length - x[1].length)[0];
+      const refMedian = median(ref.map((r) => r[1]));
+      for (const [v, g] of groups) {
+        if (v === refValue || g.length < 4) continue;
+        const raw = median(g.map((r) => r[1])) - refMedian;
+        const se = 1.2533 * spread * Math.sqrt(1 / g.length + 1 / ref.length);
+        if (Math.abs(raw) < z * se || Math.abs(raw) < 0.01) continue;
+        lifts.set(key + '|' + v, { key, value: v, label: label(v), vs: refValue, lift: raw * (g.length / (g.length + SPEC_SHRINK)), n: g.length });
+      }
+    }
+    return lifts;
+  }
+  const liftOf = (l, lifts) => SPECS.reduce((t, [key]) => t + ((lifts && lifts.get(key + '|' + l[key])) || { lift: 0 }).lift, 0);
+
+  // The adjustments that apply to one car, and its value with them.
+  function applySpecs(l, lifts, baseValue) {
+    const adj = [];
+    let total = 0;
+    for (const [key] of SPECS) {
+      const s = lifts && lifts.get(key + '|' + l[key]);
+      if (!s) continue;
+      total += s.lift;
+      adj.push(Object.assign({}, s, { pct: Math.exp(s.lift) - 1 }));
+    }
+    const value = baseValue * Math.exp(total);
+    let running = baseValue;
+    for (const a of adj) {
+      const next = running * Math.exp(a.lift);
+      a.amount = next - running;
+      running = next;
+    }
+    return { value, adjustments: adj };
+  }
+
   /* Fair value: for each make/model, regress log retained value (price / base MSRP)
      on age and mileage across all used listings. That separates "cheap because
-     it has 90k miles" from "cheap for what it is". */
+     it has 90k miles" from "cheap for what it is". Spec premiums (above) then
+     adjust for the transmission and paint. expected.explain(l) shows the parts. */
   function buildFairValue(listings, currentYear) {
     const coef = new Map();
+    const specs = new Map();
     const used = listings.filter((l) => l.condition !== 'New' && !l.upfitter);
+    const baseOf = (c, l) => l.msrpBase * Math.exp(c[0] + c[1] * (currentYear - l.year + 0.5) + c[2] * (l.miles / 1000));
     for (const [key, group] of groupBy(used, (l) => l.make + '|' + l.model)) {
       if (group.length < 8) continue;
-      const c = fit2(group.map((l) => [currentYear - l.year + 0.5, l.miles / 1000, Math.log(l.price / l.msrpBase)]));
-      if (c) coef.set(key, c);
+      // Fit age and mileage, then spec premiums on what's left, then refit with
+      // those taken out, so a model's many manuals don't skew its base curve.
+      let c = null;
+      let lifts = new Map();
+      for (let pass = 0; pass < 3; pass++) {
+        const next = fit2(group.map((l) => [currentYear - l.year + 0.5, l.miles / 1000, Math.log(l.price / l.msrpBase) - liftOf(l, lifts)]));
+        if (!next) break;
+        c = next;
+        lifts = specModel(group, (l) => baseOf(c, l));
+      }
+      if (!c) continue;
+      coef.set(key, c);
+      specs.set(key, lifts);
     }
-    return function expected(l) {
+    function explain(l) {
       const upfit = l.upfitter ? l.upfitter.cost * (l.condition === 'New' ? 1 : 0.7) : 0;
-      if (l.condition === 'New') return l.msrp + upfit;
-      const c = coef.get(l.make + '|' + l.model);
+      if (l.condition === 'New') return { base: l.msrp, adjustments: [], upfit, expected: l.msrp + upfit };
+      const key = l.make + '|' + l.model;
+      const c = coef.get(key);
       if (!c) return null;
-      const ratio = Math.exp(c[0] + c[1] * (currentYear - l.year + 0.5) + c[2] * (l.miles / 1000));
-      return Math.max(3000, l.msrpBase * ratio * (l.condition === 'Certified' ? 1.02 : 1)) + upfit;
-    };
+      const base = Math.max(3000, baseOf(c, l) * (l.condition === 'Certified' ? 1.02 : 1));
+      const s = applySpecs(l, specs.get(key), base);
+      return { base, adjustments: s.adjustments, upfit, expected: s.value + upfit };
+    }
+    function expected(l) {
+      const e = explain(l);
+      return e ? e.expected : null;
+    }
+    expected.explain = explain;
+    return expected;
   }
 
   function priceOn(l, daysAgo) {
@@ -549,7 +624,7 @@
   }
 
   const api = {
-    median, mean, groupBy, linearFit, fit2, buildFairValue, priceOn, lastChange, haversineMiles,
+    median, mean, groupBy, linearFit, fit2, buildFairValue, specModel, applySpecs, liftOf, priceOn, lastChange, haversineMiles,
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
     arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops,

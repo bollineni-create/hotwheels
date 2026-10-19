@@ -474,6 +474,11 @@ button, input, select { font: inherit; color: inherit; }
 .hunt-verdict { margin: 14px 0 0; color: var(--text-2); max-width: 70ch; }
 #hunt-market > .card { margin-top: 16px; }
 .hunt-best .listing-grid { max-width: 360px; }
+.spec-adj { list-style: none; margin: 10px 0 4px; padding: 0; font-size: .88rem; }
+.spec-adj li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid var(--border); }
+.spec-adj li:first-child { border-top: 0; }
+.spec-adj small { display: block; }
+.spec-adj b { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .news-title:first-child { margin-top: 4px; }
 
 /* ---------- Footer & toast ---------- */

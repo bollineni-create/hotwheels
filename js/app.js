@@ -15,13 +15,20 @@
   const BY_ID = new Map(ALL.map((l) => [l.id, l]));
   const BY_VIN = new Map(ALL.map((l) => [l.vin, l]));
   for (const l of LISTINGS) BY_VIN.set(l.vin, l);
-  const fairValue = Market.buildFairValue(LISTINGS, CURRENT_YEAR);
+  // Trained on cars for sale and recently sold, so rare specs have enough examples.
+  const fairValue = Market.buildFairValue(ALL, CURRENT_YEAR);
   const expectedCache = new Map();
   const expected = (l) => {
     if (l.live) return LIVE_EXPECTED.has(l.id) ? LIVE_EXPECTED.get(l.id) : null;
     if (!expectedCache.has(l.id)) expectedCache.set(l.id, fairValue(l));
     return expectedCache.get(l.id);
   };
+  // The parts of a car's expected price: base value plus any spec premiums.
+  const explainValue = (l) => (l.live ? LIVE_EXPLAIN.get(l.id) || null : fairValue.explain(l));
+  function setLiveValue(fv, l) {
+    LIVE_EXPECTED.set(l.id, fv(l));
+    if (fv.explain) LIVE_EXPLAIN.set(l.id, fv.explain(l));
+  }
   const delta = (l) => {
     const e = expected(l);
     return e ? l.price / e - 1 : 0;
@@ -100,6 +107,7 @@
   };
   const DEMO_MAKES = [...new Set(DATA.models.map((m) => m.make))];
   const LIVE_EXPECTED = new Map();
+  const LIVE_EXPLAIN = new Map();
   const LIVE_SEEN = new Map();
   let LIVE_VOCAB = null, LIVE_KNOWN = null;
   const liveCtx = () => ({ cityByName, zipFor: (c) => CITY_ZIP[c] || null, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
@@ -360,10 +368,22 @@
     return badge(`🔧 ${l.upfitter.name}`, 'b-upfit', `${l.upfitter.name}: ${l.upfitter.category.toLowerCase()} builder. Typical upfit ≈ ${money(l.upfitter.cost)}.`);
   }
 
+  // What the spec adds to (or takes off) a car's expected price, and why.
+  function specBreakdownHtml(l) {
+    const e = explainValue(l);
+    if (!e || !e.adjustments.length) return '';
+    const name = `${l.make} ${l.model}`;
+    return `<ul class="spec-adj" aria-label="What the spec is worth">
+      <li><span>Base value for its year and miles</span><b>${money(e.base)}</b></li>
+      ${e.adjustments.map((a) => `<li><span>${esc(a.label)} <small class="muted">${a.pct > 0 ? '+' : ''}${pct(a.pct, 1)} vs. ${esc(a.vs)}, from ${plural(a.n, 'car')}</small></span><b class="${a.amount >= 0 ? 'good' : 'bad'}">${a.amount >= 0 ? '+' : '−'}${money(Math.abs(a.amount))}</b></li>`).join('')}
+    </ul><p class="muted small">Spec premiums come from ${l.live ? 'the listings loaded' : 'cars for sale and sold'} in the ${esc(name)} market, counted only when the difference is clear of normal price noise.</p>`;
+  }
+
   function deltaChip(l) {
     const m = marketText(l);
     if (!m) return '';
-    return `<span class="mkt mkt-${m.tone}" title="Compared with similar ${esc(l.make + ' ' + l.model)}s, adjusted for year, mileage and trim. Expected ≈ ${money(m.expected)}">${esc(m.label)}</span>`;
+    const specs = (explainValue(l) || { adjustments: [] }).adjustments.map((a) => a.label.toLowerCase());
+    return `<span class="mkt mkt-${m.tone}" title="Compared with similar ${esc(l.make + ' ' + l.model)}s, adjusted for year, mileage, trim${specs.length ? ' and ' + esc(specs.join(', ')) : ''}. Expected ≈ ${money(m.expected)}">${esc(m.label)}</span>`;
   }
 
   function favButton(l) {
@@ -930,7 +950,7 @@
       for (const l of r.results) LIVE_SEEN.set(l.id, l);
       // Fair value from the cars on hand, grouped by model.
       const fv = Live.fairValueFrom(S.results, CURRENT_YEAR);
-      for (const l of S.results) LIVE_EXPECTED.set(l.id, fv(l));
+      for (const l of S.results) setLiveValue(fv, l);
       if (!append && prefs().valueSort !== 'count' && can('metrics')) await addLiveMetrics(seq);
       if (seq !== liveSeq) return;
       S.shown = S.results.length;
@@ -1356,7 +1376,7 @@
       const l = await Live.listing(id);
       const comps = await Live.comparables(l, liveCtx(), { years: 1, condition: 'same' });
       const fv = Live.fairValueFrom(comps.concat([l]), CURRENT_YEAR);
-      for (const x of comps.concat([l])) LIVE_EXPECTED.set(x.id, fv(x));
+      for (const x of comps.concat([l])) setLiveValue(fv, x);
       rememberLive(l);
       if (location.hash.replace(/\?.*/, '') !== `#/car/${id}`) return;
       renderCarView(l, { live: true, comps });
@@ -1399,12 +1419,13 @@
         <div class="car-summary">
           <div class="badges">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private seller', 'b-private') : ''}${upfitBadge(l)}${r && r.extCount <= 3 ? badge(`💎 1 of ${r.extCount} in this color`, 'b-rare') : ''}${l.windowStickerVerified ? badge('✓ Window sticker verified', 'b-verified') : ''}${live ? badge('Live', 'b-live') : ''}</div>
           <h1>${esc(title(l))} <span>${esc(l.trim)}</span></h1>
-          <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
+          <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)}${l.transmission ? ` · ${esc(l.transmission)}` : ''} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
           <div class="big-price">${money(l.price)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
           ${m ? `<div class="gauge" aria-label="Price position versus market">
               <div class="gauge-bar"><span class="gauge-mark" style="left:${gaugePos}%"></span></div>
               <div class="gauge-scale"><span>15% below</span><span>Market</span><span>15% above</span></div>
               <p><b class="t-${m.tone}">${esc(m.label)}</b> expected ${money(m.expected)} for a ${l.year} ${esc(l.model)} ${esc(l.trim)} ${l.condition === 'New' ? 'at MSRP with these options' : `with ${kMiles(l.miles)}`}${l.upfitter ? ` and its ${esc(l.upfitter.name)} upfit` : ''}.</p>
+              ${specBreakdownHtml(l)}
             </div>` : ''}
           <div class="actions">${favButton(l)}${compareButton(l)}${l.vdpUrl ? `<a class="btn primary" href="${esc(l.vdpUrl)}" target="_blank" rel="noopener noreferrer">View listing ↗</a>` : ''}<button class="btn ghost" type="button" data-action="share" data-id="${l.id}">Copy link</button>
             <button class="btn ghost" type="button" data-action="doc" data-doc="sticker">📄 Window sticker</button><button class="btn ghost" type="button" data-action="doc" data-doc="build">🧾 Build sheet</button></div>
@@ -1608,7 +1629,7 @@
       }
       if (C.l !== l) return;
       const fv = Live.fairValueFrom(C.comps.concat([l]), CURRENT_YEAR);
-      for (const x of C.comps) LIVE_EXPECTED.set(x.id, fv(x));
+      for (const x of C.comps) setLiveValue(fv, x);
       const band = (x) => !compOpts.msrpBand || !x.msrp || !l.msrp || Math.abs(x.msrp / l.msrp - 1) <= compOpts.msrpBand;
       comps = C.comps.filter(band);
       soldComps = opts.includeSold ? (C.soldComps || []).filter(band) : [];
@@ -1943,7 +1964,7 @@
     const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true });
     for (const l of r.results) LIVE_SEEN.set(l.id, l);
     const fv = Live.fairValueFrom(r.results, CURRENT_YEAR);
-    for (const l of r.results) if (!LIVE_EXPECTED.has(l.id)) LIVE_EXPECTED.set(l.id, fv(l));
+    for (const l of r.results) if (!LIVE_EXPECTED.has(l.id)) setLiveValue(fv, l);
     return { results: r.results, complete: r.total <= r.results.length, total: r.total };
   }
 

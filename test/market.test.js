@@ -337,3 +337,26 @@ test('hunt stats say how often a car comes up and how fast it sells', () => {
   assert.ok(common.best && ctx.delta(common.best) < 0);
   assert.equal(Market.rarityLabel(0.5), 'Very rare');
 });
+
+test('fair value learns what a manual is worth instead of calling it overpriced', () => {
+  const pool = listings.concat(data.sold);
+  const plain = (() => {
+    // The old model: age and mileage only.
+    const fv = Market.buildFairValue(pool, 2026);
+    return (l) => fv.explain(l) && fv.explain(l).base;
+  })();
+  const fv = Market.buildFairValue(pool, 2026);
+  const manuals = listings.filter((l) => l.condition !== 'New' && l.transmission === 'Manual' && ['Mustang', 'Tacoma'].includes(l.model));
+  const before = Market.median(manuals.map((l) => l.price / plain(l) - 1));
+  const after = Market.median(manuals.map((l) => l.price / fv(l) - 1));
+  assert.ok(before > 0.02, `manuals looked ${before} over market`);
+  assert.ok(Math.abs(after) < Math.abs(before) / 2, `still ${after} after spec premiums`);
+  const e = fv.explain(manuals[0]);
+  const adj = e.adjustments.find((a) => a.key === 'transmission');
+  assert.equal(adj.value, 'Manual');
+  assert.ok(adj.amount > 0 && adj.n >= 4);
+  assert.equal(Math.round(e.base + e.adjustments.reduce((s, a) => s + a.amount, 0)), Math.round(e.expected));
+  // Noise isn't a premium: a model with no real paint effect gets few or none.
+  const paints = new Set(pool.filter((l) => l.condition !== 'New').flatMap((l) => (fv.explain(l) || { adjustments: [] }).adjustments).filter((a) => a.key === 'extColor').map((a) => a.value));
+  assert.ok(paints.size <= 3, [...paints].join(', '));
+});

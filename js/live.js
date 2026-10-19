@@ -463,16 +463,34 @@
       by.get(k).push(x);
     }
     const coef = new Map();
+    const specs = new Map();
+    const baseOf = (c, l) => Math.exp(c[0] + c[1] * (currentYear - l.year + 0.5) + c[2] * (l.miles / 1000));
     for (const [k, g] of by) {
       if (g.length < 10) continue;
-      const c = root.Market.fit2(g.map((x) => [currentYear - x.year + 0.5, x.miles / 1000, Math.log(x.price)]));
-      if (c && isFinite(c[0])) coef.set(k, c);
+      let c = null;
+      let lifts = new Map();
+      for (let pass = 0; pass < 3; pass++) {
+        const next = root.Market.fit2(g.map((x) => [currentYear - x.year + 0.5, x.miles / 1000, Math.log(x.price) - root.Market.liftOf(x, lifts)]));
+        if (!next || !isFinite(next[0])) break;
+        c = next;
+        lifts = root.Market.specModel(g, (x) => baseOf(c, x));
+      }
+      if (!c) continue;
+      coef.set(k, c);
+      specs.set(k, lifts);
     }
-    return (l) => {
-      if (l.condition === 'New') return l.msrp || null;
-      const c = coef.get(l.make + '|' + l.model);
-      return c ? Math.exp(c[0] + c[1] * (currentYear - l.year + 0.5) + c[2] * (l.miles / 1000)) : null;
+    const explain = (l) => {
+      if (l.condition === 'New') return l.msrp ? { base: l.msrp, adjustments: [], upfit: 0, expected: l.msrp } : null;
+      const k = l.make + '|' + l.model;
+      const c = coef.get(k);
+      if (!c) return null;
+      const base = baseOf(c, l);
+      const s = root.Market.applySpecs(l, specs.get(k), base);
+      return { base, adjustments: s.adjustments, upfit: 0, expected: s.value };
     };
+    const expected = (l) => { const e = explain(l); return e ? e.expected : null; };
+    expected.explain = explain;
+    return expected;
   }
 
   /* ---------- auto.dev (free plan: 1,000 calls/month, 20 cars per call) ---------- */
