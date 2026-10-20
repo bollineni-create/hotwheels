@@ -55,3 +55,19 @@ test('the car strip draws four views, painted in the car\'s colors', () => {
   const sedan = Charts.carStrip({ body: 'Spaceship', extHex: '#fff', extColor: 'White', intColor: 'Rioja Red' });
   assert.equal((sedan.match(/<svg /g) || []).length, 4, 'unknown bodies draw as a sedan');
 });
+
+test('counties: a point lands in its county, and a state draws county by county', () => {
+  globalThis.USCounties = require('../js/uscounties.js');
+  assert.equal(Charts.countyAt('TX', 30.27, -97.74).name, 'Travis', 'Austin');
+  assert.equal(Charts.countyAt('TX', 29.76, -95.37).name, 'Harris', 'Houston');
+  assert.equal(Charts.countyAt('CA', 34.05, -118.24).name, 'Los Angeles');
+  assert.equal(Charts.countyAt('NY', 40.71, -74.01).name, 'New York', 'Manhattan');
+  assert.equal(Charts.countyAt('TX', 34.05, -118.24), null, 'Los Angeles is not in Texas');
+  assert.ok(Charts.countiesLoaded('TX') && !Charts.countiesLoaded('ZZ'));
+  const svg = Charts.countyMap('TX', (c) => (c.name === 'Harris' ? { cls: 'd-great', title: 'Harris County: 3 sales' } : null));
+  assert.equal((svg.match(/class="county/g) || []).length, USCounties.byState.TX.length + 1, 'every county plus the state outline');
+  assert.ok(svg.includes('county d-great') && svg.includes('<title>Harris County: 3 sales</title>'));
+  assert.equal(Charts.countyMap('ZZ', () => null), null);
+  for (const [st, list] of Object.entries(USCounties.byState)) for (const c of list) assert.ok(/^(M[-\d.,L]+Z)+$/.test(c.d), `${st} ${c.name} path`);
+  delete globalThis.USCounties;
+});

@@ -335,6 +335,59 @@
     return `<svg class="chart geomap${o.focus ? ' focused' : ''}" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || 'Map of the United States by state')}">${out}${labels}${dots}</svg>`;
   }
 
+  /* ----- One state county by county (js/uscounties.js, loaded only when a card needs it) ----- */
+
+  const usCounties = () => (typeof USCounties !== 'undefined' ? USCounties : root.USCounties) || null;
+  const countyRings = new Map();
+  // A county's rings as point arrays, parsed from its path once.
+  function ringsOf(c) {
+    if (!countyRings.has(c.id)) countyRings.set(c.id, c.d.split('Z').filter(Boolean).map((r) => r.slice(1).split('L').map((p) => p.split(',').map(Number))));
+    return countyRings.get(c.id);
+  }
+  const inRing = (pts, x, y) => {
+    let on = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) on = !on;
+    }
+    return on;
+  };
+  // The county of a state that a point falls in, or null (also null until the counties are loaded).
+  function countyAt(st, lat, lng) {
+    const C = usCounties();
+    const list = C && C.byState[st];
+    if (!list || !usGeo()) return null;
+    const [x, y] = usGeo().project(lat, lng);
+    for (const c of list) {
+      let hits = 0;
+      for (const r of ringsOf(c)) if (inRing(r, x, y)) hits++;
+      if (hits % 2 === 1) return c;
+    }
+    return null;
+  }
+  const countiesLoaded = (st) => { const C = usCounties(); return !!(C && C.byState[st]); };
+
+  /* One state drawn county by county, like Visor's "in Texas" map. cell(county) -> { cls, title, href } or null;
+     counties with nothing to say stay white. opts: { aria, dots } */
+  function countyMap(st, cell, opts) {
+    const o = opts || {};
+    const U = usGeo(), C = usCounties();
+    if (!U || !C || !C.byState[st] || !U.paths[st]) return null;
+    const b = geoShape(st).box;
+    const w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.06;
+    const vb = [b[0] - pad, b[1] - pad, w + pad * 2, h + pad * 2];
+    const scale = vb[2] / U.W;
+    let out = '';
+    for (const c of C.byState[st]) {
+      const v = cell(c);
+      const act = v && v.href ? ` data-state="${st}" data-href="${esc(v.href)}" role="button" tabindex="0" aria-label="${esc(v.title || c.name)}"` : '';
+      out += `<path class="county${v ? ' ' + (v.cls || '') : ' county-empty'}" d="${c.d}"${act}>${v && v.title ? `<title>${esc(v.title)}</title>` : ''}</path>`;
+    }
+    out += `<path class="county-state" d="${U.paths[st]}"/>`;
+    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale: scale * 2.6 }) : '';
+    return `<svg class="chart geomap focused counties" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || `Map of ${st} by county`)}">${out}${dots}</svg>`;
+  }
+
   /* Dot map of the US. Points are grouped by city; the circle area tracks the
      count and its color the median market position. */
   const US_OUTLINE = [[-124.7, 48.4], [-122.8, 49], [-95.2, 49], [-95.15, 49.38], [-94.6, 48.7], [-93, 48.6], [-91.4, 48.05], [-89.6, 48], [-88.4, 48.3],
@@ -429,7 +482,7 @@
       `<text class="lm-you" x="${cx - 13}" y="${cy - 10}" text-anchor="end">You</text></svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, geoMap, priceHistory, columns, car, carStrip, trend, usMap, localMap, niceTicks, esc, TILES };
+  const api = { scatter, retentionBars, tileMap, geoMap, countyMap, countyAt, countiesLoaded, priceHistory, columns, car, carStrip, trend, usMap, localMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

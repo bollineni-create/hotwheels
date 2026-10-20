@@ -727,6 +727,7 @@
     head.innerHTML = marketHeadHtml();
     body.innerHTML = marketPanelHtml();
     fillPanelLive();
+    fillTrimMapIfShown();
     syncCatNav();
     startPanelCycle();
   }
@@ -771,6 +772,8 @@
   /* ----- What the market's doing: this week's four cards ----- */
 
   const RET_YEARS = 3; // residual value is followed over this many years
+  let TRIM_MAP = null; // the state-scoped trim card's map, to redraw county by county once the counties load
+  const fillTrimMapIfShown = () => { if (TRIM_MAP && document.getElementById('trim-map')) fillTrimMap(TRIM_MAP.st, TRIM_MAP.key, TRIM_MAP.paceClass); };
   const milesText = (n) => (n < 1000 ? `${num(n)} miles` : `${Math.round(n / 1000)}k miles`);
 
   // One track per model: the value lost in each year is a segment from the left (year 1 darkest), so
@@ -787,6 +790,59 @@
             <span class="ret-fill">${segs}</span>
             <b>${Math.round(r.byAge[r.byAge.length - 1] * 100)}%</b>
           </div>`;
+  }
+
+  // One state with its cities as dots, sized by sales and colored by pace.
+  function stateDotMap(st, key, paceClass) {
+    const where = stateName(st.state);
+    return Charts.geoMap((s) => (s === st.state ? { cls: 'geo-state', title: `${where}: ${plural(st.n, 'sale')}, median ${plural(Math.round(st.days), 'day')} to sell` } : null), {
+      focus: st.state, aria: `${where}, with each city's ${key} sales colored by how fast they sold`,
+      dots: st.cities.map((c) => ({ city: c.city, lat: c.lat, lng: c.lng, count: c.n, cls: paceClass(c.days / st.days - 1), title: `${c.city}: ${plural(c.n, 'sale')}, median ${plural(Math.round(c.days), 'day')} to sell` })),
+    });
+  }
+  // The same state county by county, like Visor's: each county with sales colored by its pace against
+  // the state's. Null until js/uscounties.js has loaded.
+  function stateCountyMap(st, key, paceClass) {
+    if (!Charts.countiesLoaded(st.state)) return null;
+    const by = new Map();
+    for (const c of st.cities) {
+      const county = Charts.countyAt(st.state, c.lat, c.lng);
+      if (!county) continue;
+      const v = by.get(county.id) || { n: 0, sum: 0 };
+      v.n += c.n; v.sum += c.days * c.n;
+      by.set(county.id, v);
+    }
+    const where = stateName(st.state);
+    return Charts.countyMap(st.state, (c) => {
+      const v = by.get(c.id);
+      if (!v) return null;
+      const days = v.sum / v.n;
+      return { cls: paceClass(days / st.days - 1), title: `${c.name} County: ${plural(v.n, 'sale')}, ${plural(Math.round(days), 'day')} to sell`, href: searchHref({ model: key, state: st.state, when: 'sold', sort: 'sold-fastest' }) };
+    }, { aria: `${where} county by county, colored by how fast ${key}s sold there` });
+  }
+  // Loads the county outlines once (a separate script, since the file is large and only this card needs it).
+  let countiesLoading = null;
+  function loadCounties() {
+    if (!countiesLoading) countiesLoading = new Promise((resolve) => {
+      if (typeof USCounties !== 'undefined') return resolve(true);
+      const app = document.querySelector('script[src*="js/app.js"]');
+      const v = app && /\?v=([^&"]+)/.exec(app.getAttribute('src'));
+      const el = document.createElement('script');
+      el.src = `js/uscounties.js${v ? `?v=${v[1]}` : ''}`;
+      el.onload = () => resolve(true);
+      el.onerror = () => resolve(false);
+      document.head.appendChild(el);
+    });
+    return countiesLoading;
+  }
+  // Once the counties are in, redraw the trim card's map county by county (if the card is still up).
+  function fillTrimMap(st, key, paceClass) {
+    loadCounties().then((ok) => {
+      const box = document.getElementById('trim-map');
+      if (!ok || !box || !box.isConnected) return;
+      const map = stateCountyMap(st, key, paceClass);
+      if (map) box.innerHTML = map;
+    });
   }
 
   function weeklyGridHtml() {
@@ -838,13 +894,12 @@
         ? `Nationwide: ${esc(tv.fast.trim)} ${Math.round(tv.fast.days)}d · ${esc(tv.slow.trim)} ${Math.round(tv.slow.days)}d`
         : others.length ? others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ') : '';
       const scopeF = st ? { state: st.state } : {};
-      // The map: with a state, that state alone with its cities sized by sales and colored by pace;
-      // else every state shaded by how fast the model sells there.
+      // The map: with a state, that state county by county, each colored by how fast the model sold
+      // there (the counties load on first use; until then, and without them, the state's outline
+      // with its cities as dots); else every state shaded by how fast the model sells there.
+      TRIM_MAP = st ? { st, key, paceClass } : null;
       const map = st
-        ? Charts.geoMap((s) => (s === st.state ? { cls: 'geo-state', title: `${where}: ${plural(st.n, 'sale')}, median ${plural(Math.round(st.days), 'day')} to sell` } : null), {
-          focus: st.state, aria: `${where}, with each city's ${key} sales colored by how fast they sold`,
-          dots: st.cities.map((c) => ({ city: c.city, lat: c.lat, lng: c.lng, count: c.n, cls: paceClass(c.days / st.days - 1), title: `${c.city}: ${plural(c.n, 'sale')}, median ${plural(Math.round(c.days), 'day')} to sell` })),
-        })
+        ? (stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass))
         : Charts.geoMap((s) => {
           const d = tv.byState[s];
           if (!d || d.n < 5) return null;
@@ -861,7 +916,7 @@
             ${row(sc.slow, 'mark-slow')}
             ${aside ? `<p class="muted small">${aside}</p>` : ''}
           </div>
-          <div class="map-paper${st ? ' state-map' : ''}">${map}</div>
+          <div class="map-paper${st ? ' state-map' : ''}"${st ? ` id="trim-map"` : ''}>${map}</div>
         </div>
         <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
         <a class="card-cta" href="${searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, scopeF))}">Every ${esc(tv.model)} sold${where ? ` in ${esc(where)}` : ''}, fastest first →</a>
@@ -1656,6 +1711,7 @@
     const carousel = document.getElementById('insights');
     for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
     fillPanelLive();
+    fillTrimMapIfShown();
     if (isLive() && zip) fillLiveLocal();
     syncCatNav();
     startPanelCycle();

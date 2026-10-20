@@ -375,6 +375,13 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .map-paper .geo.down-1 { fill: #fbd9db; } .map-paper .geo.down-2 { fill: #f49aa0; } .map-paper .geo.down-3 { fill: #e11d48; }
 .map-paper .geo[data-state]:hover, .map-paper .geo[data-state]:focus-visible { stroke: #111; }
 .map-paper .geo.geo-state { fill: #ffffff; stroke: #9aa0a8; stroke-width: 1.2; }
+/* One state county by county: white counties with thin borders, the state's edge drawn over them. */
+.map-paper .county { fill: #ffffff; stroke: #c3c7cf; stroke-width: .35; }
+.map-paper .county.county-empty { fill: #ffffff; }
+.map-paper .county.d-great { fill: #16a34a; } .map-paper .county.d-good { fill: #86d19a; } .map-paper .county.d-fair { fill: #d9ead9; } .map-paper .county.d-high { fill: #f6a53d; } .map-paper .county.d-over { fill: #ef4444; }
+.map-paper .county[data-href] { cursor: pointer; }
+.map-paper .county[data-href]:hover, .map-paper .county[data-href]:focus-visible { stroke: #111; stroke-width: .8; }
+.map-paper .county-state { fill: none; stroke: #6b7280; stroke-width: .9; pointer-events: none; }
 .map-paper.state-map .geomap { max-height: 300px; }
 .map-paper.state-map .map-pt circle { stroke: #fff; stroke-width: 1.2; }
 .map-paper.state-map .map-pt text { fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .45); stroke-width: 2px; }
