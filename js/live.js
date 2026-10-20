@@ -323,10 +323,26 @@
   }
 
   // Facet buckets come back keyed by facet name; accept array or map shapes.
+  // Visor wraps each per-bucket metric as { value, null_reason? } (null when
+  // fewer than ten cars had the measure). Unwrap to a plain number or null so
+  // callers can do arithmetic on it directly.
+  function metricValue(m) {
+    if (m == null) return null;
+    if (typeof m === 'object') return metricValue(m.value);
+    const n = Number(m);
+    return Number.isFinite(n) ? n : null;
+  }
+  function metricsOf(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = metricValue(v);
+    return out;
+  }
+
   function bucketsOf(raw) {
     if (!raw) return [];
     const arr = Array.isArray(raw) ? raw : Array.isArray(raw.buckets) ? raw.buckets : Object.entries(raw).map(([value, count]) => (typeof count === 'object' ? Object.assign({ value }, count) : { value, count }));
-    return arr.map((b) => ({ value: b.value != null ? b.value : b.key != null ? b.key : b.name, label: b.label || b.display_name || null, count: b.count != null ? b.count : b.doc_count || 0, metrics: b.metrics || null, metric: b.metric != null ? b.metric : null }))
+    return arr.map((b) => ({ value: b.value != null ? b.value : b.key != null ? b.key : b.name, label: b.label || b.display_name || null, count: b.count != null ? b.count : b.doc_count || 0, metrics: metricsOf(b.metrics), metric: metricValue(b.metric) }))
       .filter((b) => b.value != null && b.value !== '');
   }
 
@@ -390,6 +406,19 @@
     const pp = Object.assign(toParams(f, ctx), extra || {}, { facets: 'inventory_type', facet_value_limit: 1 });
     const r = await vreq('/v1/facets', pp);
     return (r.data && r.data.total) || 0;
+  }
+
+  // How many cars match, and the median price, miles and days listed, in one request.
+  async function visorSummary(f, ctx, extra) {
+    const pp = Object.assign(toParams(f, ctx), extra || {}, { facets: 'price,miles,days_on_market', facet_value_limit: 1 });
+    const r = await vreq('/v1/facets', pp);
+    const stats = r.data && r.data.stats;
+    return {
+      total: (r.data && r.data.total) || 0,
+      medianPrice: statOf(stats, 'price', ['median', 'p50', 'mean']),
+      medianMiles: statOf(stats, 'miles', ['median', 'p50', 'mean']),
+      medianDays: statOf(stats, 'days_on_market', ['median', 'p50', 'mean']),
+    };
   }
 
   // Cars for sale on a handful of past dates, for the inventory-over-time chart.
@@ -737,14 +766,14 @@
     visor: {
       caps: { exclude: true, sold: true, snapshots: true, velocity: true, metrics: true, trend: true, features: true, options: true, upfitter: true,
         assembly: true, msrp: true, vinPattern: true, sellerType: true, pricing: true, facetCounts: true, extColor: true, photosApi: false },
-      search: visorSearch, facetMetrics: visorFacetMetrics, count: visorCount, inventoryTrend: visorInventoryTrend, velocity: visorVelocity,
+      search: visorSearch, facetMetrics: visorFacetMetrics, count: visorCount, summary: visorSummary, inventoryTrend: visorInventoryTrend, velocity: visorVelocity,
       listing: visorListing, vin: visorVin, comparables: visorComparables, vocabulary: visorVocabulary, photos: unsupported('Photo galleries'),
       overview: unsupported('Overview'), toParams, SORT, PAGE,
     },
     autodev: {
       caps: { exclude: false, sold: false, snapshots: false, velocity: false, metrics: false, trend: false, features: false, options: false, upfitter: false,
         assembly: false, msrp: false, vinPattern: false, sellerType: false, pricing: false, facetCounts: true, extColor: false, photosApi: true, history: true, historyFilters: true },
-      search: adSearch, facetMetrics: unsupported('Per-value price stats'), count: adCount, inventoryTrend: unsupported('Inventory history'),
+      search: adSearch, facetMetrics: unsupported('Per-value price stats'), count: adCount, summary: unsupported('Market summary'), inventoryTrend: unsupported('Inventory history'),
       velocity: unsupported('Sales velocity'), listing: adListing, vin: adListing, comparables: adComparables, vocabulary: adVocabulary,
       photos: adPhotos, overview: adOverview, toParams: adToParams, SORT: AD_SORT, PAGE: AD_PAGE,
     },
@@ -756,10 +785,10 @@
     PROVIDERS, setProvider, provider, info, getKey, setKey, builtInKey, usage, costs, request, transport, LiveError,
     caps: () => mod().caps, get SORT() { return mod().SORT; }, get PAGE() { return mod().PAGE; },
     toParams: (...a) => mod().toParams(...a),
-    search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), inventoryTrend: call('inventoryTrend'),
+    search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), summary: call('summary'), inventoryTrend: call('inventoryTrend'),
     velocity: call('velocity'), listing: call('listing'), vin: call('vin'), comparables: call('comparables'), vocabulary: call('vocabulary'),
     photos: call('photos'), overview: call('overview'),
-    normalize, adNormalize, adBuckets, adToParams, bucketsOf, fairValueFrom, titleCase, FAMILY_HEX, PARAM, FACET_NAMES,
+    normalize, adNormalize, adBuckets, adToParams, bucketsOf, metricValue, fairValueFrom, titleCase, FAMILY_HEX, PARAM, FACET_NAMES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Live = api;

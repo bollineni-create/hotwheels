@@ -25,7 +25,7 @@ After that, open Gridline from Launchpad, Spotlight or the Dock like any other a
 
 To hand someone a finished app with your API keys already inside, so they never see a Terminal or a key: open the repository on GitHub, go to **Settings → Secrets and variables → Actions** and add `VISOR_KEY` and/or `AUTODEV_KEY`. Then open the **Actions** tab, choose **Build Mac DMG** and press **Run workflow**. A few minutes later, download the `Gridline-mac-dmg` artifact from the run and send the `.dmg` inside it (AirDrop, Messages, a shared drive). They open it, drag Gridline to Applications, and the first time they right-click the app and choose **Open** because it is unsigned. The build works on both Intel and Apple-silicon Macs.
 
-Only people with access to this repository can download the artifact, so the keys stay private, but anyone who has the `.dmg` can use the keys inside it: share it only with people you trust. Unlike the one-line installer above, this copy does not update itself; run the workflow again and send a new `.dmg` for a new version.
+Only people with access to this repository can download the artifact, so the keys stay private, but anyone who has the `.dmg` can use the keys inside it: share it only with people you trust. Like the one-line installer, this copy keeps itself up to date: it shows the pages from the public site, which GitHub Pages rebuilds from `main` within a minute or two of every merge, so your changes reach it the next time it is opened or switched to, or within 15 minutes while it is open. The keys built into it stay as they are. Without internet it shows the copy of the pages built into it. Only a change to the desktop shell itself (the `electron/` folder) needs a new `.dmg`.
 
 ## Run it as an Electron app
 
@@ -44,7 +44,7 @@ To build an installer you can double-click, run this on the OS you're targeting:
 | `npm run dist:win` | `Gridline Setup 1.0.0.exe` |
 | `npm run dist:linux` | `Gridline-1.0.0.AppImage` and `gridline_1.0.0_amd64.deb` |
 
-The builds are unsigned. The first time you open the app, macOS asks you to confirm it (right-click → Open) and Windows SmartScreen asks you to choose "Run anyway".
+The builds are unsigned. The first time you open the app, macOS asks you to confirm it (right-click → Open) and Windows SmartScreen asks you to choose "Run anyway". Packaged builds show the pages from the public site (set `GRIDLINE_LIVE_URL` to point them elsewhere, or to an empty string to use only the bundled files); `npm run app` shows your local files.
 
 The desktop app adds a native menu with shortcuts: `⌘/Ctrl+F` or `⌘/Ctrl+K` to search, `⌘/Ctrl+N` for a new search, `⌘/Ctrl+1`–`5` to switch between Home, Search, Insights, Saved & Hunts and Compare, and Back/Forward. On a Mac, the red close button hides the window rather than quitting, so hunts keep watching; click the Dock icon to bring it back, or quit with `⌘Q`. It remembers the window's size and position, and external links open in your browser. Hunts, favorites and the compare list persist between launches, and hunts show native notifications (see **Hunts** below).
 
@@ -133,6 +133,8 @@ Where live listings work:
 | The public GitHub Pages site | ❌ Demo listings only, because auto.dev and Visor only accept browser requests from their own sites. NHTSA recalls still work |
 
 Keys are stored only on your device and are never written into the code or uploaded. Gridline names the data source on every live page, as the providers' terms require.
+
+With Visor connected, the home page's "What the market's doing" cards are about *your* market rather than a national summary: with a home ZIP set, every card covers your market radius around it (switchable in place): cars for sale with days of supply and median asking price, the models selling fastest, the biggest new-car discounts, and the "Browse the market" grid with live counts. A **Your market** card follows the hunts you've saved and the models you've favorited or opened, showing how many are for sale right now and how that's changed since you saved the hunt. The page uses three requests for the cards plus one per followed hunt or model, and repeats within 30 minutes are free.
 
 When a source can't provide something, Gridline hides that control instead of showing empty results. On the free auto.dev plan, sold history, past dates, installed options and upfitters, dealer fees, velocity and exclude filters are hidden, and auto.dev has no free-text search, so describe the car in the main search box instead.
 

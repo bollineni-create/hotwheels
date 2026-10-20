@@ -4,6 +4,16 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+const BUNDLED_PAGE = path.join(ROOT, 'index.html');
+
+// Where the pages come from. A packaged app (DMG, installer) shows the public site, which GitHub
+// Pages rebuilds from the main branch within minutes of every merge, so every copy stays current
+// without a new build; the files bundled inside the app are the fallback when there is no internet.
+// `npm run app` shows the local files. GRIDLINE_LIVE_URL overrides the site (empty disables it).
+const LIVE_URL = process.env.GRIDLINE_LIVE_URL !== undefined
+  ? process.env.GRIDLINE_LIVE_URL
+  : (app.isPackaged ? 'https://bollineni-create.github.io/hotwheels/' : '');
+const CHECK_EVERY_MS = 15 * 60 * 1000;
 
 // Optional API keys baked into your own build (electron/keys.local.json, not in git).
 function bundledKeys() {
@@ -75,7 +85,7 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 
   // Keep the app on its own pages; anything else opens in the default browser.
-  const isInternal = (url) => url.startsWith('file://');
+  const isInternal = (url) => url.startsWith('file://') || (LIVE_URL && url.startsWith(LIVE_URL));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:|^mailto:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -87,7 +97,35 @@ function createWindow() {
     }
   });
 
-  win.loadFile(path.join(ROOT, 'index.html'));
+  // No internet (or the site is down): show the copy built into the app instead.
+  win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3 /* aborted by a newer navigation */) return;
+    if (LIVE_URL && url.startsWith(LIVE_URL)) win.loadFile(BUNDLED_PAGE);
+  });
+  win.webContents.on('did-navigate', (e, url, httpStatus) => {
+    if (LIVE_URL && url.startsWith(LIVE_URL) && httpStatus >= 400) win.loadFile(BUNDLED_PAGE);
+  });
+  win.on('focus', () => checkForNewPages());
+  win.webContents.on('did-finish-load', () => checkForNewPages(true));
+
+  if (LIVE_URL) win.loadURL(LIVE_URL); else win.loadFile(BUNDLED_PAGE);
+}
+
+// Reloads the window when the site has changed since it was last shown. Runs when the window
+// gets focus (at most once a minute) and every 15 minutes while the app is open.
+let pagesTag = null;
+let lastCheck = 0;
+async function checkForNewPages(force) {
+  if (!LIVE_URL || !win || win.isDestroyed() || !win.webContents.getURL().startsWith(LIVE_URL)) return;
+  if (!force && Date.now() - lastCheck < 60 * 1000) return;
+  lastCheck = Date.now();
+  try {
+    const res = await net.fetch(LIVE_URL, { method: 'HEAD', cache: 'no-store', headers: { 'cache-control': 'no-cache' } });
+    const tag = res.ok ? (res.headers.get('etag') || res.headers.get('last-modified')) : null;
+    if (!tag) return;
+    if (pagesTag && tag !== pagesTag) win.webContents.reloadIgnoringCache();
+    pagesTag = tag;
+  } catch (e) { /* offline: keep showing what we have */ }
 }
 
 // Listing-data API requests from the page. Visor and auto.dev only accept
@@ -185,6 +223,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     buildMenu();
     createWindow();
+    if (LIVE_URL) setInterval(() => checkForNewPages(true), CHECK_EVERY_MS);
     app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   });
   app.on('window-all-closed', () => { if (!isMac) app.quit(); });
