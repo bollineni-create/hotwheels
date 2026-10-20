@@ -207,6 +207,78 @@
     return `<svg class="chart trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Inventory over time')}">${g}<path class="trend-area" d="${area}"/><path class="trend-line" d="${line}"/>${med}${labels}${hits}</svg>`;
   }
 
+  /* ----- Real US geography (js/usmap.js): state outlines in the Albers USA projection ----- */
+
+  const usGeo = () => (typeof USMap !== 'undefined' ? USMap : root.USMap) || null;
+  const PX_PER_MILE = 1300 * (Math.PI / 180) / 69; // the projection's scale, in map pixels per mile
+  const geoCache = new Map();
+  // Bounding box and visual center of a state's outline, from its largest ring.
+  function geoShape(st) {
+    if (geoCache.has(st)) return geoCache.get(st);
+    const d = usGeo().paths[st];
+    let best = null, bestArea = 0;
+    const box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const ring of d.split('Z')) {
+      if (!ring) continue;
+      const pts = ring.slice(1).split('L').map((p) => p.split(',').map(Number));
+      let a = 0, cx = 0, cy = 0;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const f = pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+        a += f; cx += (pts[j][0] + pts[i][0]) * f; cy += (pts[j][1] + pts[i][1]) * f;
+        box[0] = Math.min(box[0], pts[i][0]); box[1] = Math.min(box[1], pts[i][1]); box[2] = Math.max(box[2], pts[i][0]); box[3] = Math.max(box[3], pts[i][1]);
+      }
+      if (Math.abs(a) > bestArea) { bestArea = Math.abs(a); best = [cx / (3 * a), cy / (3 * a)]; }
+    }
+    const out = { box, center: best || [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] };
+    geoCache.set(st, out);
+    return out;
+  }
+  // States too small to carry a label on a full-size map.
+  const TINY = new Set(['RI', 'DE', 'DC', 'CT', 'NJ', 'MD', 'MA', 'NH', 'VT', 'HI']);
+
+  // City dots on top of a map: area tracks the count, color is `cls`.
+  function dotsHtml(groups, proj, maxN, opts) {
+    const scale = (opts && opts.dotScale) || 1;
+    return [...groups].sort((a, b) => b.count - a.count).map((g) => {
+      const [x, y] = proj(g.lat, g.lng);
+      const r = (3 + Math.sqrt(g.count / maxN) * 16) * scale;
+      return `<g class="map-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
+        (g.count >= maxN * 0.25 || r > 9 * scale ? `<text x="${x.toFixed(1)}" y="${(y + 3.5 * scale).toFixed(1)}" style="font-size:${(10 * scale).toFixed(1)}px" text-anchor="middle">${g.count}</text>` : '') +
+        `<title>${esc(g.title)}</title></g>`;
+    }).join('');
+  }
+
+  /* Choropleth of the US drawn from real state outlines. cell(state) -> { cls, value, title, selected, href } or null.
+     opts: { clickable, aria, labels, focus: 'TX' (zoom to one state), dots: [{ city, lat, lng, count, cls, title }] } */
+  function geoMap(cell, opts) {
+    const o = opts || {};
+    const U = usGeo();
+    if (!U) return tileMap(cell, opts);
+    let vb = [0, 0, U.W, U.H], scale = 1;
+    if (o.focus && U.paths[o.focus]) {
+      const b = geoShape(o.focus).box;
+      const w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.08;
+      vb = [b[0] - pad, b[1] - pad, w + pad * 2, h + pad * 2];
+      scale = vb[2] / U.W;
+    }
+    let out = '', labels = '';
+    for (const st of Object.keys(U.paths)) {
+      const c = cell(st);
+      const cls = c ? c.cls : 'geo-empty';
+      const act = c && (o.clickable || c.href) ? ` data-state="${st}"${c.href ? ` data-href="${esc(c.href)}"` : ''} role="button" tabindex="0" aria-label="${esc(c.title || st)}"` : '';
+      out += `<path class="geo ${cls}${c && c.selected ? ' selected' : ''}${o.focus === st ? ' focus' : ''}" d="${U.paths[st]}"${act}>${c && c.title ? `<title>${esc(c.title)}</title>` : ''}</path>`;
+      if (o.labels && c && !TINY.has(st) && (!o.focus || o.focus === st)) {
+        const [x, y] = geoShape(st).center;
+        const fs = o.focus ? 18 * scale : 16;
+        labels += `<text class="geo-label${c.value != null ? ' has-val' : ''}" x="${x.toFixed(1)}" y="${(y + (c.value != null ? -1 : 3.5)).toFixed(1)}" text-anchor="middle" style="font-size:${fs.toFixed(1)}px">${st}</text>` +
+          (c.value != null ? `<text class="geo-val" x="${x.toFixed(1)}" y="${(y + fs * 0.95).toFixed(1)}" text-anchor="middle" style="font-size:${(fs * 0.85).toFixed(1)}px">${esc(c.value)}</text>` : '');
+      }
+    }
+    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale: scale }) : '';
+    return `<svg class="chart geomap${o.focus ? ' focused' : ''}" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || 'Map of the United States by state')}">${out}${labels}${dots}</svg>`;
+  }
+
   /* Dot map of the US. Points are grouped by city; the circle area tracks the
      count and its color the median market position. */
   const US_OUTLINE = [[-124.7, 48.4], [-122.8, 49], [-95.2, 49], [-95.15, 49.38], [-94.6, 48.7], [-93, 48.6], [-91.4, 48.05], [-89.6, 48], [-88.4, 48.3],
@@ -221,41 +293,35 @@
     [-122.5, 37.8], [-123.7, 39], [-124.4, 40.4], [-124.2, 42], [-124.6, 43], [-124, 46.3]];
 
   function usMap(groups, opts) {
-    const W = 760, H = 430;
+    const U = usGeo();
+    const W = U ? U.W : 760, H = U ? U.H : 430;
     const lower = (lat, lng) => [20 + (lng + 125) * 12.1 * 0.82, 16 + (50 - lat) * 13.6];
-    const proj = (lat, lng) => {
+    const proj = U ? U.project : (lat, lng) => {
       if (lat > 51) return [36 + (lng + 170) * 3.1, 330 + (72 - lat) * 4.4];  // Alaska inset
       if (lng < -150) return [205 + (lng + 160.5) * 14, 360 + (22.5 - lat) * 14]; // Hawaii inset
       return lower(lat, lng);
     };
-    const outline = 'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z';
+    const land = U ? Object.entries(U.paths).map(([st, d]) => `<path class="map-land map-state" d="${d}"><title>${st}</title></path>`).join('')
+      : `<path class="map-land" d="${'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z'}"/>` +
+        `<rect class="map-inset" x="14" y="318" width="150" height="100" rx="8"/><text class="map-inset-label" x="22" y="410">AK</text>` +
+        `<rect class="map-inset" x="176" y="350" width="110" height="68" rx="8"/><text class="map-inset-label" x="184" y="410">HI</text>`;
     const maxN = Math.max(1, ...groups.map((g) => g.count));
     let ring = '';
     // One ring for `radius`, or several for `rings` (the first is the main one; the rest are wider).
     const radii = opts && opts.center ? (opts.rings || (opts.radius ? [opts.radius] : [])) : [];
     radii.forEach((r, i) => {
       const [cx, cy] = proj(opts.center[0], opts.center[1]);
-      const rx = (r / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
-      const ry = (r / 69) * 13.6;
+      const rx = U ? r * PX_PER_MILE : (r / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
+      const ry = U ? r * PX_PER_MILE : (r / 69) * 13.6;
       ring = `<ellipse class="map-ring${i ? ' map-ring-wide' : ''}" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>` + ring;
     });
     if (opts && opts.center) {
       const [cx, cy] = proj(opts.center[0], opts.center[1]);
       ring += `<g class="map-home"><circle cx="${cx}" cy="${cy}" r="9"/><circle cx="${cx}" cy="${cy}" r="3.5"/></g>`;
     }
-    const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
-      const [x, y] = proj(g.lat, g.lng);
-      const r = 3 + Math.sqrt(g.count / maxN) * 16;
-      return `<g class="map-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
-        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
-        (g.count >= maxN * 0.25 || r > 9 ? `<text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${g.count}</text>` : '') +
-        `<title>${esc(g.title)}</title></g>`;
-    }).join('');
-    return `<svg class="chart usmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Map of listings')}">` +
-      `<path class="map-land" d="${outline}"/>` +
-      `<rect class="map-inset" x="14" y="318" width="150" height="100" rx="8"/><text class="map-inset-label" x="22" y="410">AK</text>` +
-      `<rect class="map-inset" x="176" y="350" width="110" height="68" rx="8"/><text class="map-inset-label" x="184" y="410">HI</text>` +
-      ring + dots + `</svg>`;
+    const dots = dotsHtml(groups, proj, maxN);
+    return `<svg class="chart usmap${U ? ' geo' : ''}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Map of listings')}">` +
+      land + ring + dots + `</svg>`;
   }
 
 
@@ -307,7 +373,7 @@
       `<text class="lm-you" x="${cx - 13}" y="${cy - 10}" text-anchor="end">You</text></svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, trend, usMap, localMap, niceTicks, esc, TILES };
+  const api = { scatter, retentionBars, tileMap, geoMap, priceHistory, columns, car, trend, usMap, localMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

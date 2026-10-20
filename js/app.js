@@ -596,17 +596,122 @@
     document.body.dataset.view = name;
   }
 
-  /* ----- Home + insights ----- */
+  /* ----- Home: categories ----- */
 
-  function insightsHtml() {
+  // The home page's categories, in order: each is a section with its own heading, a spot in the
+  // strip under the search box, and previous/next pills to flip between them.
+  const HOME_CATS = [
+    { id: 'insights', title: 'What the market’s doing', short: 'This week' },
+    { id: 'local', title: 'Your market', short: 'Your market' },
+    { id: 'trends', title: 'National trends', short: 'National trends' },
+    { id: 'capsules', title: 'Time capsules', short: 'Time capsules' },
+    { id: 'rare-specs', title: 'Rare specs', short: 'Rare specs' },
+    { id: 'browse', title: 'Browse the market', short: 'Browse' },
+  ];
+  // The categories the page can show right now: a live source skips the ones that need the demo's sales history or spec data.
+  function homeCats() {
+    return HOME_CATS.filter((c) => {
+      if (c.id === 'local') return !!homeZip();
+      if (c.id === 'trends' || c.id === 'rare-specs') return !isLive();
+      if (c.id === 'capsules') return !isLive() || can('snapshots');
+      return true;
+    });
+  }
+  // A category's heading row: title and eyebrow on the left, anything extra plus previous/next pills on the right.
+  function catHead(cats, id, o) {
+    const i = Math.max(0, cats.findIndex((c) => c.id === id));
+    const cat = cats[i], prev = cats[(i - 1 + cats.length) % cats.length], next = cats[(i + 1) % cats.length];
+    const pill = (c, dir) => `<a class="cat-pill" href="#/${c.id}" data-action="jump" data-target="${c.id}" aria-label="${dir === 'prev' ? 'Previous' : 'Next'}: ${esc(c.short)}">${dir === 'prev' ? '<span aria-hidden="true">‹</span> ' : ''}${esc(c.short)}${dir === 'next' ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    return `<div class="insight-head cat-head">
+        <div><h2>${(o && o.title) || esc(cat.title)}</h2>${o && o.eyebrow ? `<p class="eyebrow">${o.eyebrow}</p>` : ''}</div>
+        <div class="cat-switch">${(o && o.extra) || ''}${cats.length > 1 ? pill(prev, 'prev') + pill(next, 'next') : ''}</div>
+      </div>`;
+  }
+  const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${cats.map((c) => `<a href="#/${c.id}" data-action="jump" data-target="${c.id}" data-cat="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
+
+  // Highlight the category you're reading in the strip as you scroll.
+  function syncCatNav() {
+    const links = document.querySelectorAll('.cat-nav a[data-cat]');
+    if (!links.length) return;
+    const line = window.scrollY + 140;
+    let active = null;
+    document.querySelectorAll('section.cat').forEach((sec) => { if (sec.offsetTop <= line) active = sec.id; });
+    if (!active) active = document.querySelector('section.cat')?.id;
+    links.forEach((a) => a.classList.toggle('active', a.dataset.cat === active));
+  }
+  let catTick = false;
+  window.addEventListener('scroll', () => {
+    if (view.name !== 'home' || catTick) return;
+    catTick = true;
+    requestAnimationFrame(() => { catTick = false; syncCatNav(); });
+  }, { passive: true });
+
+  const signedPct = (v, digits) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${pct(Math.abs(v), digits)}`;
+  const soldLabel = (l) => (l.sold.daysAgo === 0 ? 'sold today' : `sold ${l.sold.daysAgo} days ago`);
+
+  /* ----- What the market's doing: this week's four cards ----- */
+
+  function weeklyHtml(cats) {
     const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
-    const movers = Market.priceMovers(LISTINGS, 20);
-    const mv = movers[0];
     const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR).slice(0, 4);
-    const drops = Market.recentDrops(LISTINGS, 7);
-    const states = Market.stateDeltas(LISTINGS, delta);
-    const values = LISTINGS.filter((l) => l.condition !== 'New' && l.miles < 80000 && l.year >= CURRENT_YEAR - 6)
-      .sort((a, b) => delta(a) - delta(b)).slice(0, 5);
+    const momentum = Market.makeMomentum(SOLD, 30, 20);
+    const mv = momentum.find((m) => m.models.length >= 3 && m.now >= 50) || momentum[0];
+    const tv = Market.trimVelocity(SOLD, 20)[0];
+
+    const retentionCard = ret.length ? `<article class="card insight">
+      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in value kept over 4 years</h3>
+      <p class="muted">${CURRENT_YEAR - 4} to ${CURRENT_YEAR - 1} model years · under 75k miles · average list price vs. original MSRP</p></header>
+      ${Charts.retentionBars(ret.map((r) => ({ title: `${r.make} ${r.model}`, sub: `MSRP ${money(r.msrp)} → avg ${money(r.avgList)}`, values: r.byAge })))}
+      <div class="legend">${[1, 2, 3, 4].map((y) => `<span><i class="key ret-${y}"></i>Year ${y}</span>`).join('')}</div>
+      <a class="card-cta" href="${searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1] })}">Shop ${CURRENT_YEAR - 4}–${CURRENT_YEAR - 1} compact SUVs →</a>
+    </article>` : '';
+
+    let trimCard = '';
+    if (tv) {
+      const key = `${tv.make} ${tv.model}`;
+      const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
+      const row = (t, cls) => `<div class="trim-row ${cls}"><i class="key"></i><span class="trim-name"><b>${esc(t.trim)}</b><small>${plural(t.n, 'sale')} · median ${money(t.price)}</small></span><b class="trim-days">${plural(Math.round(t.days), 'day')}</b></div>`;
+      trimCard = `<article class="card insight">
+        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(tv.fast.trim)} models sell ${Math.round(tv.gap)} days faster than the ${esc(tv.slow.trim)} trim</h3>
+        <p class="muted">Median days from listing to sale over the last 120 days · ${plural(tv.n, 'sale')} nationwide · a typical ${esc(tv.model)} takes ${plural(Math.round(tv.days), 'day')}</p></header>
+        <div class="split-map">
+          <div class="trim-vs">
+            ${row(tv.fast, 'fast')}
+            <div class="trim-track" aria-hidden="true"><i class="fast" style="width:${((tv.fast.days / tv.slow.days) * 100).toFixed(1)}%"></i><i class="slow" style="width:100%"></i></div>
+            ${row(tv.slow, 'slow')}
+            ${tv.trims.length > 2 ? `<p class="muted small">${tv.trims.slice(1, -1).map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ')}</p>` : ''}
+          </div>
+          ${Charts.geoMap((st) => {
+            const d = tv.byState[st];
+            if (!d || d.n < 5) return null;
+            return { cls: paceClass(d.days / tv.days - 1), title: `${st}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: st, when: 'sold', sort: 'sold-fastest' }) };
+          }, { aria: `States shaded by how fast ${key}s sell` })}
+        </div>
+        <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
+        <a class="card-cta" href="${searchHref({ model: key, when: 'sold', sort: 'sold-fastest' })}">Every ${esc(tv.model)} sold, fastest first →</a>
+      </article>`;
+    }
+
+    let momentumCard = '';
+    if (mv) {
+      const rose = mv.change >= 0;
+      const lead = mv.models.filter((m) => m.change != null && m.now >= 5).sort((a, b) => b.change - a.change)[0];
+      const chgClass = (d) => (d == null ? 'up-2' : d >= 0.25 ? 'up-3' : d >= 0.1 ? 'up-2' : d > 0.02 ? 'up-1' : d > -0.02 ? 'flat' : d > -0.1 ? 'down-1' : d > -0.25 ? 'down-2' : 'down-3');
+      momentumCard = `<article class="card insight">
+        <header><h3>${badge('Used', 'b-used')} ${esc(mv.make)} sales ${rose ? 'rose' : 'fell'} ${pct(Math.abs(mv.change))} in the last month</h3>
+        <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month · ` : ''}${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before</p></header>
+        <div class="split-map">
+          <ul class="momentum-list">${mv.models.slice(0, 5).map((m) => `<li><a href="${searchHref({ model: `${mv.make} ${m.model}`, when: 'sold', sort: 'sold-recent' })}"><span>${esc(m.model)}</span><b>${num(m.now)}</b><i class="chg ${m.change == null || m.change >= 0 ? 'up' : 'down'}">${m.change == null ? 'new' : signedPct(m.change, 1)}</i></a></li>`).join('')}</ul>
+          ${Charts.geoMap((st) => {
+            const d = mv.byState[st];
+            if (!d || d.now + d.before < 4) return null;
+            return { cls: chgClass(d.change), title: `${st}: ${plural(d.now, 'sale')} this month vs. ${num(d.before)} before${d.change != null ? ` (${signedPct(d.change)})` : ''}`, href: searchHref({ make: mv.make, state: st, when: 'sold', sort: 'sold-recent' }) };
+          }, { aria: `States shaded by the change in ${mv.make} sales` })}
+        </div>
+        <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
+        <a class="card-cta" href="${searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' })}">Every ${esc(mv.make)} sold this month →</a>
+      </article>`;
+    }
 
     const arrivalsCard = `<article class="card insight">
       <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving</h3></header>
@@ -624,6 +729,19 @@
       </div>
       <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
     </article>`;
+
+    return catHead(cats, 'insights', { eyebrow: `Week of ${esc(weekOf)}` }) + `<div class="insight-grid">${retentionCard}${trimCard}${momentumCard}${arrivalsCard}</div>`;
+  }
+
+  /* ----- National trends: the whole market, computed from every listing ----- */
+
+  function trendsHtml(cats) {
+    const movers = Market.priceMovers(LISTINGS, 20);
+    const mv = movers[0];
+    const drops = Market.recentDrops(LISTINGS, 7);
+    const states = Market.stateDeltas(LISTINGS, delta);
+    const values = LISTINGS.filter((l) => l.condition !== 'New' && l.miles < 80000 && l.year >= CURRENT_YEAR - 6)
+      .sort((a, b) => delta(a) - delta(b)).slice(0, 5);
 
     let moverCard = '';
     if (mv) {
@@ -644,13 +762,6 @@
       </article>`;
     }
 
-    const retentionCard = ret.length ? `<article class="card insight">
-      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in value kept over 4 years</h3>
-      <p class="muted">${CURRENT_YEAR - 4} to ${CURRENT_YEAR - 1} model years · under 75k miles · average list price vs. original MSRP</p></header>
-      ${Charts.retentionBars(ret.map((r) => ({ title: `${r.make} ${r.model}`, sub: `MSRP ${money(r.msrp)} → avg ${money(r.avgList)}`, values: r.byAge })))}
-      <div class="legend">${[1, 2, 3, 4].map((y) => `<span><i class="key ret-${y}"></i>Year ${y}</span>`).join('')}</div>
-    </article>` : '';
-
     const dropsCard = `<article class="card insight">
       <header><h3>${badge('Price cuts', 'b-drop')} ${num(drops.length)} cars got cheaper this week</h3>
       <p class="muted">Biggest reductions in the last 7 days</p></header>
@@ -663,11 +774,11 @@
     const mapCard = `<article class="card insight">
       <header><h3>Where used cars are priced below market</h3>
       <p class="muted">Median price vs. expected value for the same car, by state. Tap a state to shop it.</p></header>
-      ${Charts.tileMap((st) => {
+      ${Charts.geoMap((st) => {
         const d = states[st];
         if (!d || d.n < 8) return null;
-        return { cls: deltaClass(d.delta), value: `${d.delta > 0 ? '+' : ''}${(d.delta * 100).toFixed(1)}%`, title: `${st}: ${plural(d.n, 'used car')}, median ${pct(Math.abs(d.delta), 1)} ${d.delta < 0 ? 'below' : 'above'} market` };
-      }, { clickable: true, aria: 'States shaded by how far used prices sit from market value' })}
+        return { cls: deltaClass(d.delta), title: `${st}: ${plural(d.n, 'used car')}, median ${pct(Math.abs(d.delta), 1)} ${d.delta < 0 ? 'below' : 'above'} market` };
+      }, { clickable: true, labels: true, aria: 'States shaded by how far used prices sit from market value' })}
       <div class="legend diverging"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div>
     </article>`;
 
@@ -704,13 +815,69 @@
       <p class="muted">Cars for sale nationwide each day, with the median asking price · ${num(inv.sold30)} sold in the last 30 days</p></header>
       ${Charts.trend(inv.series, { aria: 'Cars for sale nationwide over the last 90 days' })}
       <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div>
-      <a class="card-cta" href="${searchHref({ when: '90' })}">See the market as it was 3 months ago →</a>
+      <a class="card-cta" href="#/capsules" data-action="jump" data-target="capsules">Open a time capsule of the market ↓</a>
     </article>`;
 
+    const states_n = new Set(LISTINGS.map((l) => l.state)).size;
+    return catHead(cats, 'trends', { eyebrow: `Every one of the ${num(LISTINGS.length)} cars for sale across ${states_n} states, and the ${num(SOLD.length)} that sold in the last 120 days` }) +
+      `<div class="insight-grid">${trendCard}${mapCard}${moverCard}${fastCard}${dropsCard}${valueCard}</div>`;
+  }
+
+  /* ----- Time capsules: the market as it stood on an earlier day ----- */
+
+  const CAPSULES = [[7, '1 week ago'], [30, '1 month ago'], [90, '3 months ago']];
+
+  function capsulesHtml(cats) {
+    const caps = CAPSULES.map(([d, label]) => Object.assign(Market.timeCapsule(LISTINGS, SOLD, d, { minGroup: 25 }), { label }));
+    const cls = (v, lowGood) => (Math.abs(v) < 0.005 ? '' : (lowGood ? v < 0 : v > 0) ? 'good' : 'warn');
+    const cards = caps.map((c) => {
+      const cnt = c.now.count / c.then.count - 1, med = c.now.median / c.then.median - 1, used = c.now.usedMedian / c.then.usedMedian - 1;
+      return `<article class="card insight capsule">
+        <header><p class="capsule-when">${esc(c.label)}</p><h3>${esc(dateDaysAgo(c.daysAgo))}</h3></header>
+        <dl class="capsule-stats">
+          <div><dt>Cars for sale</dt><dd>${num(c.then.count)}<span class="arrow" aria-hidden="true">→</span>${num(c.now.count)}</dd><small class="${cls(cnt)}">${signedPct(cnt, 1)} since</small></div>
+          <div><dt>Median asking</dt><dd>${money(c.then.median)}<span class="arrow" aria-hidden="true">→</span>${money(c.now.median)}</dd><small class="${cls(med, true)}">${signedPct(med, 1)}</small></div>
+          <div><dt>Used median</dt><dd>${money(c.then.usedMedian)}<span class="arrow" aria-hidden="true">→</span>${money(c.now.usedMedian)}</dd><small class="${cls(used, true)}">${signedPct(used, 1)}</small></div>
+        </dl>
+        <p class="capsule-since"><span><b>${num(c.soldSince)}</b> sold since</span><span><b>${num(c.listedSince)}</b> listed since</span><span><b>${num(c.cutsSince)}</b> price cuts since</span></p>
+        ${c.models.length ? `<ul class="rank-list">${c.models.slice(0, 3).map((m) => `<li><a href="${searchHref({ model: m.key, condition: ['Used', 'Certified'] })}"><span><b>${esc(m.key)}</b><small>used median was ${money(m.thenMedian)}</small></span><span class="r"><b>${money(m.nowMedian)}</b><small class="${cls(m.change, true)}">${signedPct(m.change, 1)}</small></span></a></li>`).join('')}</ul>` : ''}
+        <a class="card-cta" href="${searchHref({ when: String(c.daysAgo) })}">Open the market as it was on ${esc(dateDaysAgo(c.daysAgo))} →</a>
+      </article>`;
+    }).join('');
+    const long = caps[caps.length - 1];
+    const movers = long.models.slice(0, 8);
+    const vsCard = !movers.length ? '' : `<article class="card insight wide">
+      <header><h3>Used prices then and now, by model</h3><p class="muted">Median asking price for each model on ${esc(dateDaysAgo(long.daysAgo))} vs. today, the biggest moves first. Models with 25+ cars both days.</p></header>
+      <ul class="vs-list">${movers.map((m) => {
+        const v = Math.max(-1, Math.min(1, m.change / 0.25));
+        const c = m.change <= -0.03 ? 'good' : m.change >= 0.03 ? 'warn' : '';
+        return `<li><a href="${searchHref({ model: m.key, condition: ['Used', 'Certified'] })}">
+          <span class="vs-model"><b>${esc(m.key)}</b><small>${money(m.thenMedian)} then · ${money(m.nowMedian)} now · ${plural(m.nowCount, 'car')} today</small></span>
+          <span class="vs-bar" aria-hidden="true"><i class="${c}" style="left:${v < 0 ? 50 + v * 50 : 50}%;width:${Math.abs(v) * 50}%"></i></span>
+          <b class="vs-num ${c}">${signedPct(m.change)}</b></a></li>`;
+      }).join('')}</ul>
+    </article>`;
+    return catHead(cats, 'capsules', { eyebrow: 'The whole market frozen as it stood 1 week, 1 month and 3 months ago: every car then for sale, at that day’s asking price. Any search can be run on any of those days.' }) +
+      `<div class="capsule-grid">${cards}</div>${vsCard ? `<div class="insight-grid">${vsCard}</div>` : ''}`;
+  }
+
+  // With live data, the capsules are doors into the source's daily snapshots rather than numbers computed here.
+  function liveCapsulesHtml(cats) {
+    const scope = homeScope();
+    return catHead(cats, 'capsules', { eyebrow: `${esc(srcName())} keeps a daily snapshot of every listing. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
+      `<div class="capsule-grid">${CAPSULES.map(([d, label]) => `<a class="card insight capsule link" href="${searchHref(Object.assign({ when: String(d) }, scope))}">
+        <p class="capsule-when">${esc(label)}</p><h3>${esc(dateDaysAgo(d))}</h3>
+        <p class="muted">Every car for sale ${esc(scopeText())} that day, at that day’s asking price.</p>
+        <span class="card-cta">Open this capsule →</span></a>`).join('')}</div>`;
+  }
+
+  /* ----- Rare specs ----- */
+
+  function rareHtml(cats) {
     const rare = Market.rareSpecs(LISTINGS, rarity, 10);
-    const rareHtml = `<div class="rare-head" id="rare-specs"><h3>💎 Rare specs</h3><p class="muted">Unusual color and option combinations — few exist anywhere in the country.</p>
-      <div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-dir="1" aria-label="Scroll right">›</button></div></div>
-      <div class="scroller" id="rare-scroller">${rare.map(({ l, r }) => `<article class="card rare-card">
+    const btns = `<div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-dir="1" aria-label="Scroll right">›</button></div>`;
+    return catHead(cats, 'rare-specs', { title: '💎 Rare specs', eyebrow: 'Unusual color and option combinations: few exist anywhere in the country.', extra: btns }) +
+      `<div class="scroller" id="rare-scroller">${rare.map(({ l, r }) => `<article class="card rare-card">
         <a class="card-link" href="#/car/${l.id}" aria-label="${esc(title(l))}"></a>
         <div class="card-art" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex)}</div>
         <div class="card-body">
@@ -724,13 +891,6 @@
             <div><dt>Options</dt><dd>${money(r.optionsTotal)}</dd><span class="of">${pct(r.optionsVsAvg)} above avg</span></div>
           </dl>
         </div></article>`).join('')}</div>`;
-
-    return `<div class="insight-head">
-        <div><h2>What the market's doing</h2><p class="eyebrow">Week of ${esc(weekOf)}</p></div>
-        <a class="chip-link" href="#rare-specs" data-action="jump" data-target="rare-specs">💎 Rare specs</a>
-      </div>
-      <div class="insight-grid">${arrivalsCard}${moverCard}${fastCard}${trendCard}${retentionCard}${dropsCard}${mapCard}${valueCard}</div>
-      ${rareHtml}`;
   }
 
   // Live cards cover the market around your home ZIP (the box at the top, or Settings) or, with none set, the whole country.
@@ -738,10 +898,11 @@
   const scopeText = () => (homeZip() ? `within ${homeRadius()} miles of ${placeLabel(homeZip())}` : 'nationwide');
   const scopeShort = () => (homeZip() ? 'near you' : 'nationwide');
 
-  function liveInsightsShell() {
-    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(scopeText())}</p></div>
-        ${homeZip() ? `<div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === homeRadius()}">${r} mi</button>`).join('')}</div>` : '<p class="muted small">Type a ZIP code above to see the market near you.</p>'}</div>
-      <div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
+  function liveInsightsShell(cats) {
+    return catHead(cats, 'insights', {
+      eyebrow: `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(scopeText())}`,
+      extra: homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>',
+    }) + `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
   }
 
   // Models you've favorited or opened lately, most often first, skipping any a hunt already covers.
@@ -901,6 +1062,7 @@
   /* ----- Home: your market, from a ZIP code ----- */
 
   const RADII = [25, 50, 100, 250];
+  const radiusSegHtml = (radius) => `<div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === (radius || homeRadius())}">${r} mi</button>`).join('')}</div>`;
   const WIDE = 500; // the larger market around you, in miles
   const POPULAR_MARKETS = [['Los Angeles', '90012'], ['New York', '10001'], ['Chicago', '60601'], ['Dallas', '75201'], ['Houston', '77002'], ['Atlanta', '30303'],
     ['Miami', '33130'], ['Phoenix', '85004'], ['Seattle', '98101'], ['Denver', '80202'], ['Boston', '02108'], ['Bay Area', '94022']];
@@ -980,11 +1142,11 @@
     const { lm, origin } = d;
     const st = lm.stats, nat = lm.national;
     const g = Geo.lookup(zip);
-    const head = `<div class="insight-head local-head">
-        <div><h2>Your market: <span class="place" data-home-place>${esc(Geo.label(g, { short: true }))}</span></h2>
-          <p class="eyebrow">${live ? `Live from ${esc(srcName())} · ` : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}</p></div>
-        <div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === radius}">${r} mi</button>`).join('')}</div>
-      </div>`;
+    const head = catHead(homeCats(), 'local', {
+      title: `Your market: <span class="place" data-home-place>${esc(Geo.label(g, { short: true }))}</span>`,
+      eyebrow: `${live ? `Live from ${esc(srcName())} · ` : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}`,
+      extra: radiusSegHtml(radius),
+    });
     const strip = `<dl class="market-strip reveal">
         <div><dt>Cars for sale</dt><dd>${num(live && lm.total != null ? lm.total : st.count)}</dd>${nat.count ? `<small>${pct(((live && lm.total != null ? lm.total : st.count) / nat.count), 1)} of the US market</small>` : ''}</div>
         <div><dt>Median asking</dt><dd>${money(st.medianPrice)}</dd>${compareLine(st.medianPrice, nat.medianPrice, 'median', true)}</div>
@@ -1037,8 +1199,8 @@
   function localSectionHtml() {
     const zip = homeZip(), radius = homeRadius();
     if (!zip) return '';
-    if (isLive()) return `<section class="section local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip} from ${srcName()}…`)}</div></section>`;
-    return `<section class="section local" id="local"><div id="local-body">${localHtml(localData(zip, radius, LISTINGS), zip, radius, false)}</div></section>`;
+    if (isLive()) return `<section class="section cat local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip} from ${srcName()}…`)}</div></section>`;
+    return `<section class="section cat local" id="local"><div id="local-body">${localHtml(localData(zip, radius, LISTINGS), zip, radius, false)}</div></section>`;
   }
 
   // Redraw the local section in place (radius change, exact location found).
@@ -1100,68 +1262,75 @@
     }, { timeout: 8000, maximumAge: 600000 });
   }
 
+  // The top of the home page: one big search box, then where your market is.
+  function homeTopHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    const g = zip ? Geo.lookup(zip) : null;
+    const states = new Set(LISTINGS.map((l) => l.state)).size;
+    const eyebrow = isLive() ? `Live listings from ${esc(srcName())}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`;
+    const localQuick = zip ? [
+      { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
+      { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
+      { label: 'Price cuts near me', href: searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' }), demoOnly: true },
+    ].filter((q) => !isLive() || !q.demoOnly) : [];
+    const market = zip
+      ? `<div class="home-market" id="home-market">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>
+          <span>Your market is <b data-home-place>${esc(Geo.label(g, { short: true }))}</b> <span class="muted">${esc(zip)} · within ${radius} mi</span></span>
+          <button class="link-btn" type="button" data-action="edit-zip">Change</button>
+          <a class="link-btn" href="#/local" data-action="jump" data-target="local">Best deals near you ↓</a>
+        </div>`
+      : `<div class="home-market open" id="home-market">
+          ${zipFormHtml('home')}
+          <div class="market-chips"><span class="muted small">Or start from a big market:</span>${POPULAR_MARKETS.map(([n, z]) => `<button class="chip-link" type="button" data-action="set-zip" data-zip="${z}">${esc(n)} <span class="muted">${z}</span></button>`).join('')}</div>
+          <p class="muted small">Your ZIP stays on this device. It sets the home page, the distance on every car and the “Distance from home” sort.</p>
+        </div>`;
+    return `<section class="home-top">
+        <div class="home-top-inner">
+          <p class="eyebrow">${eyebrow}</p>
+          <div id="hero-search" class="home-search"></div>
+          ${market}
+          <div class="quick"><span class="muted">Try</span>${localQuick.concat(quickFor()).slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
+        </div>
+      </section>`;
+  }
+
+  function browseHtml(cats) {
+    const zip = homeZip();
+    const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
+    const popular = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
+    return catHead(cats, 'browse', { eyebrow: isLive() ? `The most-listed models ${esc(scopeText())}, with live counts and median asking prices from ${esc(srcName())}.` : 'The most-listed models, with how many are for sale and the median used asking price.' }) +
+      (isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
+        ${popular.map(([key, g]) => {
+          const used = g.filter((l) => l.condition !== 'New');
+          return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
+        }).join('')}
+      </div>`);
+  }
+
   function renderHome(scrollTo, params) {
     if (params && params.get('zip')) {
       setHomeZip(params.get('zip'), { quiet: true });
       history.replaceState(null, '', '#/');
       scrollTo = scrollTo || 'local';
     }
-    const zip = homeZip(), radius = homeRadius();
-    const states = new Set(LISTINGS.map((l) => l.state)).size;
-    const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
-    const popular = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
-    let feature;
-    const top = zip && !isLive() ? Market.bestDeals(Market.localMarket(LISTINGS, Geo.place(zip), radius, expected).local, expected, { limit: 1, currentYear: CURRENT_YEAR })[0] : null;
-    if (top) {
-      const l = top.l;
-      feature = `<a class="hero-feature" href="#/car/${l.id}" style="--paint:${esc(l.extHex)}">
-          ${Charts.car(l.body, l.extHex, { cls: 'hero-car' })}
-          <span class="hero-caption"><b>Best deal near you · ${esc(title(l))} ${esc(l.trim)}</b><small>${money(l.price)} · ${money(top.saving)} below fair value · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi` : ''}</small></span>
-        </a>`;
-    } else if (zip) {
-      feature = `<div class="hero-feature" aria-hidden="true">${Charts.car('SUV', '#2367b2', { cls: 'hero-car' })}</div>`;
-    } else {
-      feature = `<div class="hero-feature markets-panel">
-          <h3>Or start from a big market</h3>
-          <div class="market-chips">${POPULAR_MARKETS.map(([n, z]) => `<button class="chip-link" type="button" data-action="set-zip" data-zip="${z}">${esc(n)} <span class="muted">${z}</span></button>`).join('')}</div>
-          <p class="muted small">Your ZIP stays on this device. It sets the home page, the distance on every car and the “Distance from home” sort.</p>
-        </div>`;
-    }
-    const localQuick = zip ? [
-      { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
-      { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
-      { label: 'Price cuts near me', href: searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' }), demoOnly: true },
-    ].filter((q) => !isLive() || !q.demoOnly) : [];
+    const zip = homeZip();
+    const cats = homeCats();
+    const has = (id) => cats.some((c) => c.id === id);
     setView('home', `
-      <section class="hero${zip ? ' has-zip' : ''}">
-        <div class="hero-grid" aria-hidden="true"></div>
-        <div class="hero-inner">
-          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}${zip ? ` · near ${esc(Geo.label(Geo.lookup(zip), { short: true }))}` : ''}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
-          <h1>${zip ? 'The best deals around you.' : 'See the best car deals around you.'}<span>${zip ? `And the ones worth a drive from <span data-home-place>${esc(Geo.label(Geo.lookup(zip), { short: true }))}</span>.` : 'Type your ZIP code. Gridline ranks every car near you by how far its price sits below fair value, then looks at the wider market for ones worth the drive.'}</span></h1>
-          ${zipFormHtml('home')}
-          <div id="hero-search"></div>
-          <div class="quick"><span class="muted">Try</span>${localQuick.concat(quickFor()).slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
-        </div>
-        ${feature}
-      </section>
-
+      ${homeTopHtml()}
+      ${catNavHtml(cats)}
+      <section class="section cat" id="insights">${isLive() ? liveInsightsShell(cats) : weeklyHtml(cats)}</section>
       ${localSectionHtml()}
-
-      <section class="section" id="insights">${isLive() ? liveInsightsShell() : insightsHtml()}</section>
-
-      <section class="section browse">
-        <h2>Browse the market</h2>${isLive() ? `<p class="muted small">The most-listed models ${esc(scopeText())}, with live counts and median asking prices from ${esc(srcName())}.</p>` : ''}
-        ${isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
-          ${popular.map(([key, g]) => {
-            const used = g.filter((l) => l.condition !== 'New');
-            return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
-          }).join('')}
-        </div>`}
-      </section>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: zip ? `Try “manual miata under 30k near ${zip}”` : 'Try “red convertibles under 40k near 80202”' });
+      ${has('trends') ? `<section class="section cat" id="trends">${trendsHtml(cats)}</section>` : ''}
+      ${has('capsules') ? `<section class="section cat" id="capsules">${isLive() ? liveCapsulesHtml(cats) : capsulesHtml(cats)}</section>` : ''}
+      ${has('rare-specs') ? `<section class="section cat" id="rare-specs">${rareHtml(cats)}</section>` : ''}
+      <section class="section cat" id="browse">${browseHtml(cats)}</section>`);
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…' });
     if (isLive()) { fillLiveInsights(); if (zip) fillLiveLocal(); }
+    syncCatNav();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
-    if (scrollTo) requestAnimationFrame(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }));
+    if (scrollTo) requestAnimationFrame(() => { document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }); });
     else window.scrollTo(0, 0);
   }
 
@@ -1590,14 +1759,14 @@
     });
     const byState = Market.groupBy(results, (l) => l.state);
     const liveStates = live ? new Map((S.facets.state || []).map((x) => [x.value, x.count])) : null;
-    const tiles = Charts.tileMap((st) => {
+    const tiles = Charts.geoMap((st) => {
       const g = byState.get(st);
       const n = live ? liveStates.get(st) || 0 : g ? g.length : 0;
       if (!n) return S.f.state.includes(st) ? { cls: 'cnt-0', value: 0, selected: true, title: st } : null;
       const hi = live ? Math.max(1, ...liveStates.values()) : 60;
       const cls = n >= hi * (live ? 0.5 : 1) ? 'cnt-4' : n >= hi * (live ? 0.2 : 25 / 60) ? 'cnt-3' : n >= hi * (live ? 0.07 : 10 / 60) ? 'cnt-2' : 'cnt-1';
       return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${g && !live ? `, median ${money(Market.median(g.map((l) => l.price)))}` : ''}`, selected: S.f.state.includes(st) };
-    }, { clickable: true, size: 40, aria: 'Matching cars by state' });
+    }, { clickable: true, aria: 'Matching cars by state' });
 
     let trendCard;
     if (!live) {
@@ -2662,7 +2831,7 @@
     const dot = e.target.closest('circle.dot[data-id]');
     if (dot) { location.hash = `#/car/${dot.dataset.id}`; return; }
     const tile = e.target.closest('[data-state]');
-    if (tile) { onTile(tile.dataset.state); return; }
+    if (tile) { onTile(tile.dataset.state, tile.dataset.href); return; }
     const pt = e.target.closest('.map-pt[data-city]');
     if (pt) { onMapCity(pt.dataset.city); return; }
     const fl = e.target.closest('#finder-list li[data-i]');
@@ -2719,6 +2888,14 @@
       locateMe(el);
     } else if (a === 'set-zip') {
       if (setHomeZip(el.dataset.zip)) renderHome('local');
+    } else if (a === 'edit-zip') {
+      const box = document.getElementById('home-market');
+      if (!box) return;
+      box.classList.add('open');
+      box.innerHTML = `${zipFormHtml('home')}<button class="link-btn" type="button" data-action="cancel-zip">Keep ${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))}</button>`;
+      box.querySelector('#zip-input')?.focus();
+    } else if (a === 'cancel-zip') {
+      renderHome();
     } else if (a === 'clear-zip') {
       store.update((s) => { s.prefs.homeZip = null; s.prefs.homeCity = null; });
       toast('Home ZIP cleared');
@@ -2859,7 +3036,7 @@
   app.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-state]')) {
       e.preventDefault();
-      onTile(e.target.dataset.state);
+      onTile(e.target.dataset.state, e.target.dataset.href);
     } else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.map-pt[data-city]')) {
       e.preventDefault();
       onMapCity(e.target.dataset.city);
@@ -2872,8 +3049,9 @@
     }
   });
 
-  function onTile(st) {
-    if (view.name === 'search') {
+  function onTile(st, href) {
+    if (href) location.hash = href;
+    else if (view.name === 'search') {
       updateFilters((f) => { f.state = f.state.includes(st) ? f.state.filter((x) => x !== st) : [...f.state, st]; });
     } else {
       location.hash = searchHref({ state: st, condition: ['Used', 'Certified'], belowMarket: 1 });
@@ -2989,7 +3167,7 @@
     const params = new URLSearchParams(qs || '');
     document.getElementById('header-search').hidden = !parts.length;
     if (!parts.length) return renderHome(null, params);
-    if (parts[0] === 'insights') return renderHome('insights');
+    if (parts.length === 1 && HOME_CATS.some((c) => c.id === parts[0])) return renderHome(parts[0]);
     if (parts[0] === 'search') return renderSearch(params);
     if (parts[0] === 'car') return renderCar(parts[1], params);
     if (parts[0] === 'vin') return renderVin(parts[1] || '');
