@@ -976,7 +976,7 @@
 
   function liveInsightsShell(cats) {
     return catHead(cats, 'insights', {
-      eyebrow: `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(scopeText())}`,
+      eyebrow: `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`,
       extra: homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>',
     }) + `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
   }
@@ -1087,17 +1087,21 @@
               <b class="hb-val">${num(b.count)}</b></a></li>`; }).join('')}</ol>
           <a class="card-cta" href="${searchHref(scope)}">Browse every listing ${esc(where)} →</a></article>`;
 
-      const huntRow = (x, sum) => {
+      // Your market: one tile per hunt and per model you follow, in a slim card across the top of the
+      // grid, so it never sits stretched next to the long lists below.
+      const tile = (href, name, why, sum, notes) => `<a class="you-tile" href="${href}"><span class="you-name"><b>${name}</b><small>${why}</small></span>
+          <span class="you-stat"><b>${num(sum.total)} for sale</b><small>${notes.filter(Boolean).join(' · ') || '&nbsp;'}</small></span></a>`;
+      const huntTile = (x, sum) => {
         const diff = x.count != null ? sum.total - x.count : 0;
-        return `<li><a href="#/hunt/${esc(x.id)}"><span><b>${esc(x.name)}</b><small>${esc(describeFilters(huntFilters(x)))}</small></span>
-          <span class="r"><b>${num(sum.total)} for sale</b><small>${[diff ? `${diff > 0 ? '↑' : '↓'} ${num(Math.abs(diff))} since last check` : '', sum.medianPrice ? `median ${money(sum.medianPrice)}` : ''].filter(Boolean).join(' · ')}</small></span></a></li>`;
+        return tile(`#/hunt/${esc(x.id)}`, esc(x.name), esc(describeFilters(huntFilters(x))), sum,
+          [diff ? `${diff > 0 ? '↑' : '↓'} ${num(Math.abs(diff))} since last check` : '', sum.medianPrice ? `median ${money(sum.medianPrice)}` : '']);
       };
-      const modelRow = (mo, sum) => `<li><a href="${searchHref(Object.assign({ model: mo.key }, scope))}"><span><b>${esc(mo.key)}</b><small>${esc(mo.why)} · ${scoped ? 'near you' : 'nationwide'}</small></span>
-          <span class="r"><b>${num(sum.total)} for sale</b><small>${[sum.medianPrice ? `median ${money(sum.medianPrice)}` : '', sum.medianDays != null ? `${Math.round(sum.medianDays)} days listed` : ''].filter(Boolean).join(' · ')}</small></span></a></li>`;
-      const yours = hunts.map((x, i) => ({ html: huntSums[i] && huntRow(x, huntSums[i]) })).concat(interests.map((mo, i) => ({ html: interestSums[i] && modelRow(mo, interestSums[i]) }))).filter((r) => r.html);
-      const yourCard = `<article class="card insight"><header><h3>${badge('You', 'b-you')} Your market</h3>
+      const modelTile = (mo, sum) => tile(searchHref(Object.assign({ model: mo.key }, scope)), esc(mo.key), `${esc(mo.why)} · ${scoped ? 'near you' : 'nationwide'}`, sum,
+        [sum.medianPrice ? `median ${money(sum.medianPrice)}` : '', sum.medianDays != null ? `${Math.round(sum.medianDays)} days listed` : '']);
+      const yours = hunts.map((x, i) => huntSums[i] && huntTile(x, huntSums[i])).concat(interests.map((mo, i) => interestSums[i] && modelTile(mo, interestSums[i]))).filter(Boolean);
+      const yourCard = `<article class="card insight wide you-card"><header><h3>${badge('You', 'b-you')} Your market</h3>
           <p class="muted">${yours.length ? `The cars you’re hunting, favoriting and looking at, as the market stands right now.` : 'Save a hunt or favorite a car, and this card follows that market for you: how many are for sale, what they ask, and how that changes.'}</p></header>
-          ${yours.length ? `<ul class="rank-list">${yours.map((r) => r.html).join('')}</ul>` : `<div class="quick">${quickFor().slice(0, 3).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>`}
+          ${yours.length ? `<div class="you-tiles">${yours.join('')}</div>` : `<div class="quick">${quickFor().slice(0, 3).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>`}
           <a class="card-cta" href="#/saved">${yours.length ? 'All hunts and favorites →' : 'Hunts and favorites →'}</a></article>`;
 
       const fastCard = `<article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest ${esc(scopeShort())}</h3>
@@ -1111,15 +1115,16 @@
               <b class="hb-val">${plural(Math.round(days), 'day')}</b></a></li>`; }).join('')}</ol>` : `<p class="muted">Not enough sales ${esc(scopeShort())} in the last 30 days to rank models.${scoped ? ' Widen the radius above to see more of the market.' : ''}</p>`}
           <a class="card-cta" href="${searchHref(Object.assign({ when: 'sold' }, scope))}">Browse recently sold cars ${esc(scopeShort())} →</a></article>`;
 
-      const dealsCard = `<article class="card insight"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars ${esc(scopeShort())}</h3><p class="muted">Live listings ${esc(where)}, MSRP over $20,000</p></header>
-          <div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('') || '<p class="muted">No discounted new cars listed here right now.</p>'}</div>
+      const dealsCard = `<article class="card insight${priceBuckets.length ? '' : ' wide'}"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars ${esc(scopeShort())}</h3><p class="muted">Live listings ${esc(where)}, MSRP over $20,000</p></header>
+          ${discountCars.length ? `<div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('')}</div>` : '<p class="muted">No discounted new cars listed here right now.</p>'}
           <a class="card-cta" href="${searchHref(Object.assign({ condition: 'New', sort: 'discount', msrpMin: 20000 }, scope))}">See all new-car discounts ${esc(scopeShort())} →</a></article>`;
 
-      const priceCard = !priceBuckets.length ? '' : `<article class="card insight wide"><header><h3>What cars cost ${esc(scopeShort())}</h3>
+      const priceCard = !priceBuckets.length ? '' : `<article class="card insight"><header><h3>What cars cost ${esc(scopeShort())}</h3>
           <p class="muted">Every listing ${esc(where)} by asking price${medianAsk != null ? ` · half are listed under ${money(medianAsk)}` : ''} · tap a range to browse it</p></header>
           <ul class="price-bars">${priceBuckets.map((b) => `<li><a href="${searchHref(Object.assign({ priceMin: Math.round(b.min), priceMax: Math.round(b.max) }, scope))}" title="${moneyK(b.min)}–${moneyK(b.max)}: ${num(b.count)} for sale (${pct(b.count / Math.max(1, active), 1)})"><span>${moneyK(b.min)}–${moneyK(b.max)}</span><i style="width:${Math.round((b.count / maxBucket) * 100)}%"></i><b>${num(b.count)}</b></a></li>`).join('')}</ul></article>`;
 
-      grid.innerHTML = `${makesCard}${yourCard}${fastCard}${dealsCard}${priceCard}`;
+      // Your market across the top, then the two long lists side by side, then deals next to prices.
+      grid.innerHTML = `${yourCard}${makesCard}${fastCard}${dealsCard}${priceCard}`;
       if (browseEl) {
         browseEl.innerHTML = modelRows.map((b) => `<a class="browse-item" href="${searchHref(Object.assign({ model: b.value }, scope))}"><b>${esc(b.value)}</b><small>${plural(b.count, 'car')}${m(b, 'price.median') != null ? ` · median ${money(m(b, 'price.median'))}` : ''}</small></a>`).join('')
           || `<p class="muted">Nothing listed ${esc(where)} right now.</p>`;

@@ -1049,6 +1049,14 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 /* ---------- Live market: KPI strip + horizontal bars ---------- */
 .live-kpis { gap: 18px 28px; padding: 10px 0 4px; border-top: 1px solid var(--border); }
 .live-kpis dd { font-size: 1.25rem; }
+/* Your market, live: a tile per hunt or followed model across a full-width card. */
+.you-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.you-tile { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-width: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); color: var(--text); }
+.you-tile:hover, .you-tile:focus-visible { text-decoration: none; border-color: var(--text-2); }
+.you-tile b, .you-tile small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.you-tile b { font-weight: 600; }
+.you-tile small { color: var(--muted); font-size: .78rem; margin-top: 2px; }
+.you-stat b { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .hbars-title { margin: 8px 0 2px; font-size: .86rem; color: var(--text-2); font-weight: 600; }
 .hbars-title .muted { font-weight: 500; }
 .hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
