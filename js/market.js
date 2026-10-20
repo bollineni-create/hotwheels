@@ -570,6 +570,112 @@
       .sort((a, b) => a.c.delta - b.c.delta);
   }
 
+
+  /* ---------- Your market: everything within a radius of a ZIP code ---------- */
+
+  // What's for sale around a point, compared with the whole market. `expected(l)`
+  // gives a car's fair value (null when unknown). Returns null without an origin.
+  // Miles from an origin to a car: from its coordinates, else the distance the listing API
+  // reported, else unknown (null).
+  const distOf = (origin, l) => (l.lat != null && l.lng != null ? haversineMiles(origin[2], origin[3], l.lat, l.lng) : l.distance != null ? l.distance : null);
+
+  function localMarket(listings, origin, radius, expected) {
+    if (!origin) return null;
+    // A car with no known distance is trusted to be local (a live API already filtered by radius).
+    const withD = listings.map((l) => ({ l, d: distOf(origin, l) }));
+    const local = withD.filter((x) => x.d == null || x.d <= radius).sort((a, b) => (a.d || 0) - (b.d || 0));
+    const stat = (rows) => {
+      const used = rows.filter((l) => l.condition !== 'New');
+      const deltas = rows.map((l) => { const e = expected(l); return e ? l.price / e - 1 : null; }).filter((v) => v != null);
+      return {
+        count: rows.length,
+        medianPrice: rows.length ? median(rows.map((l) => l.price)) : null,
+        medianUsed: used.length ? median(used.map((l) => l.price)) : null,
+        medianDays: rows.length ? median(rows.map((l) => l.daysListed)) : null,
+        belowShare: deltas.length ? deltas.filter((v) => v <= -0.03).length / deltas.length : null,
+        medianDelta: deltas.length ? median(deltas) : null,
+        dealers: new Set(rows.map((l) => l.dealer)).size,
+        cuts: rows.filter((l) => { const c = lastChange(l); return c && c.delta < 0 && c.daysAgo <= 7; }).length,
+      };
+    };
+    return { origin, radius, local: local.map((x) => x.l), distance: new Map(local.map((x) => [x.l.id, x.d])), stats: stat(local.map((x) => x.l)), national: stat(listings) };
+  }
+
+  // The cars priced furthest below their fair value nearby. Newer, lower-mile used cars
+  // first, so a cheap high-mile car doesn't crowd out the real bargains.
+  function bestDeals(local, expected, opts) {
+    const o = Object.assign({ limit: 8, condition: null, currentYear: new Date().getFullYear() }, opts);
+    return local
+      .filter((l) => !o.condition || o.condition === 'All' || (o.condition === 'Used' ? l.condition !== 'New' : l.condition === o.condition))
+      .map((l) => { const e = expected(l); return e ? { l, expected: e, saving: e - l.price, delta: l.price / e - 1 } : null; })
+      .filter((x) => x && x.delta <= -0.03 && (x.l.condition === 'New' || (x.l.miles < 120000 && x.l.year >= o.currentYear - 10)))
+      .sort((a, b) => a.delta - b.delta)
+      .slice(0, o.limit);
+  }
+
+  // Cars outside your radius (but within `wide` miles) that still beat what's near you once
+  // you count the drive. A deal is worth it when the fair-value saving minus a round-trip fuel
+  // estimate beats the best saving on the same model nearby.
+  const FUEL_PER_MILE = 0.14; // about 30 mpg at $4.20 a gallon
+  function worthTheDrive(listings, origin, radius, wide, expected, opts) {
+    if (!origin) return [];
+    const o = Object.assign({ limit: 8, currentYear: new Date().getFullYear() }, opts);
+    const dist = (l) => distOf(origin, l);
+    const bestNearby = new Map(); // model -> best saving within the radius
+    for (const l of listings) {
+      const d = dist(l);
+      if (d != null && d > radius) continue;
+      const e = expected(l);
+      if (!e) continue;
+      const k = l.make + ' ' + l.model;
+      bestNearby.set(k, Math.max(bestNearby.get(k) || 0, e - l.price));
+    }
+    return listings
+      .map((l) => {
+        const d = dist(l);
+        if (d == null || d <= radius || d > wide) return null;
+        const e = expected(l);
+        if (!e || l.price / e - 1 > -0.05) return null;
+        if (l.condition !== 'New' && (l.miles >= 120000 || l.year < o.currentYear - 10)) return null;
+        const fuel = d * 2 * FUEL_PER_MILE;
+        const saving = e - l.price;
+        const net = saving - fuel - (bestNearby.get(l.make + ' ' + l.model) || 0);
+        return net > 250 ? { l, miles: d, expected: e, saving, fuel, net, nearbyBest: bestNearby.get(l.make + ' ' + l.model) || 0 } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.net - a.net)
+      .slice(0, o.limit);
+  }
+
+  // Median used price per model near you vs. nationwide, for the models with enough cars.
+  function localVsNational(listings, origin, radius, opts) {
+    if (!origin) return [];
+    const o = Object.assign({ limit: 8, minLocal: 4 }, opts);
+    const used = listings.filter((l) => l.condition !== 'New');
+    const byModel = groupBy(used, (l) => l.make + ' ' + l.model);
+    const rows = [];
+    for (const [model, g] of byModel) {
+      const local = g.filter((l) => { const d = distOf(origin, l); return d == null || d <= radius; });
+      if (local.length < o.minLocal) continue;
+      const lm = median(local.map((l) => l.price)), nm = median(g.map((l) => l.price));
+      rows.push({ model, local: local.length, national: g.length, localMedian: lm, nationalMedian: nm, diff: lm / nm - 1 });
+    }
+    return rows.sort((a, b) => b.local - a.local).slice(0, o.limit);
+  }
+
+  // Cities with cars for sale near a point, each with how its prices sit against fair value.
+  function marketCities(listings, origin, radius, expected) {
+    const by = groupBy(listings, (l) => `${l.city}, ${l.state}`);
+    const out = [];
+    for (const [city, g] of by) {
+      if (g[0].lat == null || g[0].lng == null) continue;
+      const d = origin ? haversineMiles(origin[2], origin[3], g[0].lat, g[0].lng) : null;
+      const deltas = g.map((l) => { const e = expected(l); return e ? l.price / e - 1 : null; }).filter((v) => v != null);
+      out.push({ city, lat: g[0].lat, lng: g[0].lng, count: g.length, miles: d, inside: d != null && d <= radius, delta: deltas.length ? median(deltas) : null });
+    }
+    return out.sort((a, b) => (a.miles || 0) - (b.miles || 0));
+  }
+
   /* ---------- Hunts ---------- */
 
   // What changed for a hunt since its last check. `seen` maps listing id -> the
@@ -629,6 +735,7 @@
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
     arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops,
     huntDiff, huntStats, rarityLabel,
+    localMarket, bestDeals, worthTheDrive, localVsNational, marketCities, distOf, FUEL_PER_MILE,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Market = api;

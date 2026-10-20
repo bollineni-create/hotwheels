@@ -231,11 +231,17 @@
     const outline = 'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z';
     const maxN = Math.max(1, ...groups.map((g) => g.count));
     let ring = '';
-    if (opts && opts.center && opts.radius) {
+    // One ring for `radius`, or several for `rings` (the first is the main one; the rest are wider).
+    const radii = opts && opts.center ? (opts.rings || (opts.radius ? [opts.radius] : [])) : [];
+    radii.forEach((r, i) => {
       const [cx, cy] = proj(opts.center[0], opts.center[1]);
-      const rx = (opts.radius / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
-      const ry = (opts.radius / 69) * 13.6;
-      ring = `<ellipse class="map-ring" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>`;
+      const rx = (r / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
+      const ry = (r / 69) * 13.6;
+      ring = `<ellipse class="map-ring${i ? ' map-ring-wide' : ''}" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>` + ring;
+    });
+    if (opts && opts.center) {
+      const [cx, cy] = proj(opts.center[0], opts.center[1]);
+      ring += `<g class="map-home"><circle cx="${cx}" cy="${cy}" r="9"/><circle cx="${cx}" cy="${cy}" r="3.5"/></g>`;
     }
     const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
       const [x, y] = proj(g.lat, g.lng);
@@ -252,7 +258,56 @@
       ring + dots + `</svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, trend, usMap, niceTicks, esc, TILES };
+
+  // A map centered on you: rings at each radius in `rings` (miles), cities as dots sized by
+  // count and colored by `cls`, the biggest labeled. Distance from the center is drawn on a
+  // square-root scale, so the cars near you get the room and the far ones still fit.
+  // groups: [{ city, lat, lng, count, cls, title, inside }].
+  function localMap(groups, opts) {
+    const W = 560, H = 420, cx = W / 2, cy = H / 2;
+    const [lat0, lng0] = opts.center;
+    const rings = (opts.rings || []).filter(Boolean).sort((a, b) => a - b);
+    const outer = rings[rings.length - 1] || 500;
+    const R = Math.min(W, H) / 2 - 24;
+    const px = (miles) => R * Math.sqrt(Math.min(miles, outer * 1.05) / outer);
+    const proj = (lat, lng) => {
+      const dx = (lng - lng0) * Math.cos(lat0 * Math.PI / 180) * 69.17, dy = (lat - lat0) * 69.17;
+      const d = Math.hypot(dx, dy);
+      if (!d) return [cx, cy, 0];
+      const r = px(d);
+      return [cx + (dx / d) * r, cy - (dy / d) * r, d];
+    };
+    const ringsHtml = rings.map((r, i) => {
+      const rp = px(r);
+      const a = i === rings.length - 1 ? -Math.PI / 2 : Math.PI / 2; // top for the outer ring, bottom for inner ones
+      return `<circle class="lm-ring${i === rings.length - 1 ? ' lm-ring-wide' : ''}" cx="${cx}" cy="${cy}" r="${rp.toFixed(1)}"/>` +
+        `<text class="lm-ring-label" x="${(cx + Math.cos(a) * (rp + 9)).toFixed(1)}" y="${(cy + Math.sin(a) * (rp + 9) + 4).toFixed(1)}" text-anchor="middle">${r} mi</text>`;
+    }).join('');
+    const maxN = Math.max(1, ...groups.map((g) => g.count));
+    const placed = [];
+    const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
+      const [x, y, d] = proj(g.lat, g.lng);
+      if (d > outer) return '';
+      const r = 4 + Math.sqrt(g.count / maxN) * 15;
+      const name = g.city.split(',')[0];
+      const want = g.inside || g.count >= maxN * 0.25;
+      const clash = placed.some((p) => Math.abs(p[0] - x) < 90 && Math.abs(p[1] - y) < 15);
+      const label = want && !clash;
+      if (label) placed.push([x + r + 30, y]);
+      return `<g class="map-pt lm-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
+        (r > 9 ? `<text class="lm-count" x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${g.count}</text>` : '') +
+        (label ? `<text class="lm-name" x="${(x + r + 4).toFixed(1)}" y="${(y + 4).toFixed(1)}">${esc(name)}</text>` : '') +
+        `<title>${esc(g.title)}</title></g>`;
+    }).join('');
+    const cross = `<path class="lm-grid" d="M${cx} ${cy - R}V${cy + R}M${cx - R} ${cy}H${cx + R}"/>`;
+    const home = `<g class="map-home"><circle cx="${cx}" cy="${cy}" r="9"/><circle cx="${cx}" cy="${cy}" r="3.5"/></g>`;
+    return `<svg class="chart localmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.aria || 'Map of cars for sale around you')}">` +
+      `<circle class="lm-bg" cx="${cx}" cy="${cy}" r="${R.toFixed(1)}"/>` + cross + ringsHtml + home + dots +
+      `<text class="lm-you" x="${cx - 13}" y="${cy - 10}" text-anchor="end">You</text></svg>`;
+  }
+
+  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, trend, usMap, localMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);
