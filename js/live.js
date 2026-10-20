@@ -323,10 +323,26 @@
   }
 
   // Facet buckets come back keyed by facet name; accept array or map shapes.
+  // Visor wraps each per-bucket metric as { value, null_reason? } (null when
+  // fewer than ten cars had the measure). Unwrap to a plain number or null so
+  // callers can do arithmetic on it directly.
+  function metricValue(m) {
+    if (m == null) return null;
+    if (typeof m === 'object') return metricValue(m.value);
+    const n = Number(m);
+    return Number.isFinite(n) ? n : null;
+  }
+  function metricsOf(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = metricValue(v);
+    return out;
+  }
+
   function bucketsOf(raw) {
     if (!raw) return [];
     const arr = Array.isArray(raw) ? raw : Array.isArray(raw.buckets) ? raw.buckets : Object.entries(raw).map(([value, count]) => (typeof count === 'object' ? Object.assign({ value }, count) : { value, count }));
-    return arr.map((b) => ({ value: b.value != null ? b.value : b.key != null ? b.key : b.name, label: b.label || b.display_name || null, count: b.count != null ? b.count : b.doc_count || 0, metrics: b.metrics || null, metric: b.metric != null ? b.metric : null }))
+    return arr.map((b) => ({ value: b.value != null ? b.value : b.key != null ? b.key : b.name, label: b.label || b.display_name || null, count: b.count != null ? b.count : b.doc_count || 0, metrics: metricsOf(b.metrics), metric: metricValue(b.metric) }))
       .filter((b) => b.value != null && b.value !== '');
   }
 
@@ -772,7 +788,7 @@
     search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), summary: call('summary'), inventoryTrend: call('inventoryTrend'),
     velocity: call('velocity'), listing: call('listing'), vin: call('vin'), comparables: call('comparables'), vocabulary: call('vocabulary'),
     photos: call('photos'), overview: call('overview'),
-    normalize, adNormalize, adBuckets, adToParams, bucketsOf, fairValueFrom, titleCase, FAMILY_HEX, PARAM, FACET_NAMES,
+    normalize, adNormalize, adBuckets, adToParams, bucketsOf, metricValue, fairValueFrom, titleCase, FAMILY_HEX, PARAM, FACET_NAMES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Live = api;

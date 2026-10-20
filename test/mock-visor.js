@@ -114,9 +114,20 @@ function handle(req, res) {
     const names = (q.get('facets') || '').split(',').filter(Boolean);
     const limit = Number(q.get('facet_value_limit')) || 20;
     const metrics = q.get('metrics') ? q.get('metrics').split(',') : null;
-    const facets = {}, stats = {};
+    const facets = {}, stats = {}, range_facets = {};
     for (const n of names) {
-      if (['price', 'miles', 'days_on_market', 'msrp'].includes(n)) { stats[n] = stat(pool.map((r) => r[n]).filter((v) => v != null)); continue; }
+      if (['price', 'miles', 'days_on_market', 'msrp'].includes(n)) {
+        const vals = pool.map((r) => r[n]).filter((v) => v != null);
+        stats[n] = stat(vals);
+        // Fixed-width buckets, like the real API's numeric range facets.
+        if (vals.length) {
+          const lo = Math.min(...vals), hi = Math.max(...vals), interval = Math.max(1, Math.round((hi - lo) / 10));
+          const buckets = [];
+          for (let b = lo; b < hi; b += interval) buckets.push({ min: b, max: b + interval, count: vals.filter((v) => v >= b && v < b + interval).length });
+          range_facets[n] = { buckets, interval, min: lo, max: hi };
+        }
+        continue;
+      }
       const field = FACET_FIELD[n];
       if (!field) continue;
       const by = new Map();
@@ -128,13 +139,15 @@ function handle(req, res) {
           for (const m of metrics) {
             const [measure, agg] = m.split('.');
             const vals = rs.map((r) => r[measure]).filter((v) => v != null);
-            b.metrics[m] = vals.length ? (agg === 'mean' ? vals.reduce((x, y) => x + y, 0) / vals.length : pctl(vals, agg === 'median' ? 0.5 : 0.5)) : null;
+            // Same envelope as the real API: { value } with null below ten samples.
+            const v = vals.length >= 10 ? (agg === 'mean' ? vals.reduce((x, y) => x + y, 0) / vals.length : pctl(vals, agg === 'median' ? 0.5 : 0.5)) : null;
+            b.metrics[m] = v == null ? { value: null, null_reason: 'insufficient_sample' } : { value: v };
           }
         }
         return b;
       });
     }
-    return send(200, { data: { total: pool.length, facets, range_facets: {}, stats }, meta: { facets: names, metric: 'count' } });
+    return send(200, { data: { total: pool.length, facets, range_facets, stats }, meta: { facets: names, metric: 'count' } });
   }
   let m;
   if ((m = p.match(/^\/v1\/listings\/([^/]+)$/))) {

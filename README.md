@@ -65,7 +65,7 @@ The public site at https://bollineni-create.github.io/hotwheels/ is served by Gi
 | Hero with a search box for models, VINs and dealers | Typeahead search across models, model + year, makes, dealers, cities, saved searches and VINs, with full keyboard support (`/` to focus, arrow keys, Enter) |
 | "What the market's doing" weekly cards | Six cards, each **computed from the inventory** rather than written by hand: new-model arrivals by status, the biggest 30-day price move (price-vs-miles scatter, then vs. now), 4-year value retention, this week's price cuts, a state map of prices vs. market, and the cars priced lowest for what they are |
 | Rare specs carousel | Rarity scored per listing: paint and interior counts within the model, and options value vs. the model average |
-| "Built for buyers, not dealers" pitch | Kept. Every claim on the page is backed by a working feature |
+| "Built for buyers, not dealers" pitch | Removed |
 | Footer links for SEO (models, overviews, prices) | "Browse the market" grid with live counts and median prices, plus footer links into real searches |
 
 ## Hunts: find the car you want before someone else does
