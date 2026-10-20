@@ -546,18 +546,24 @@
   }
 
   const nlQuick = (text) => nlHref(NLQ.parse(text, VOCAB));
-  const QUICK = [
-    { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
-    { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
-    { label: '4x4 trucks under 50k miles near Denver', href: nlQuick('4x4 trucks under 50k miles near denver') },
-    { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
-    { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
-    { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
-    { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
-    { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
-  ];
+  // The "near …" example uses your home city once one is set.
+  const quickList = () => {
+    const home = prefs().homeCity;
+    const trucks = NLQ.parse('4x4 trucks under 50k miles', VOCAB);
+    trucks.filters.near = home || 'Denver, CO';
+    return [
+      { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
+      { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
+      { label: `4x4 trucks under 50k miles near ${home ? home.split(',')[0] : 'Denver'}`, href: nlHref(trucks) },
+      { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
+      { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
+      { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
+      { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
+      { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
+    ];
+  };
   // Example searches the current data source can actually answer.
-  const quickFor = () => QUICK.filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
+  const quickFor = () => quickList().filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
 
   /* ---------- Views ---------- */
 
@@ -708,9 +714,38 @@
       ${rareHtml}`;
   }
 
+  // Live cards cover the market around your home city (Settings) or, with none set, the whole country.
+  const HOME_RADIUS = 150;
+  const homeScope = () => (prefs().homeCity ? { near: prefs().homeCity, radius: HOME_RADIUS } : {});
+  const scopeText = () => (prefs().homeCity ? `within ${HOME_RADIUS} miles of ${prefs().homeCity}` : 'nationwide');
+  const scopeShort = () => (prefs().homeCity ? 'near you' : 'nationwide');
+
   function liveInsightsShell() {
-    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))}</p></div></div>
-      <div class="insight-grid" id="live-insights">${loadingHtml('Loading the live market…')}</div>`;
+    const home = prefs().homeCity;
+    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(scopeText())}</p></div>
+        <label class="scope-pick"><span class="muted small">Show the market</span>
+          <select data-pref="homeCity" aria-label="Market area"><option value="">Nationwide</option>${CITY_NAMES.map((c) => `<option value="${esc(c)}" ${home === c ? 'selected' : ''}>near ${esc(c)}</option>`).join('')}</select></label></div>
+      <div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
+  }
+
+  // Models you've favorited or opened lately, most often first, skipping any a hunt already covers.
+  function interestModels(hunts) {
+    const s = store.get();
+    // Hunts saved on live data store bare model names ("RAV4"), demo hunts "Toyota RAV4".
+    const covered = hunts.flatMap((x) => huntFilters(x).model.map((m) => m.toLowerCase()));
+    const isCovered = (key) => covered.some((m) => key.toLowerCase() === m || key.toLowerCase().endsWith(' ' + m));
+    const seen = new Map();
+    const add = (id, why, weight) => {
+      const l = carById(id);
+      if (!l || !l.make || !l.model) return;
+      const key = `${l.make} ${l.model}`;
+      const e = seen.get(key) || { key, why, w: 0 };
+      e.w += weight;
+      seen.set(key, e);
+    };
+    for (const id of Object.keys(s.favs)) add(id, 'In your favorites', 2);
+    for (const id of s.recent) add(id, 'Recently viewed', 1);
+    return [...seen.values()].filter((e) => !isCovered(e.key)).sort((a, b) => b.w - a.w);
   }
 
   async function fillLiveInsights() {
@@ -735,34 +770,73 @@
       }
       return;
     }
+    // Both captured now: if the area changes while this loads, the results stay off the new page.
+    const browseEl = document.getElementById('live-browse');
     try {
-      const [active, sold30, fast, deals, makes] = await Promise.all([
-        Live.count({ ex: {} }, ctx),
-        Live.count({ ex: {} }, ctx, { inventory_status: 'sold', sold_within_days: 30 }),
-        Live.request('/v1/facets', { inventory_status: 'sold', sold_within_days: 30, facets: 'model', facet_value_limit: 60, metrics: 'days_on_market.median,price.median' }),
-        Live.request('/v1/listings', { inventory_type: 'new', sort: 'discount', limit: 8, min_msrp: 20000 }),
-        Live.request('/v1/facets', { facets: 'make', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' }),
+      const scope = homeScope();
+      const scoped = !!scope.near;
+      const where = scopeText();
+      const bp = Live.toParams(Object.assign(Market.emptyFilters(), scope), ctx);
+      const hunts = store.get().saved.slice(0, 3);
+      const interests = interestModels(hunts).slice(0, 2);
+      const stat = (st, n) => { const s = st && st[n]; return s ? (s.median ?? s.p50 ?? s.mean ?? null) : null; };
+      // One request each: the market here, what sold here, new-car discounts here, then one per hunt and per model you follow.
+      const [overview, sold, deals, huntSums, interestSums] = await Promise.all([
+        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'make,model,price,days_on_market', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' })),
+        Live.request('/v1/facets', Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: 30, facets: 'model,days_on_market', facet_value_limit: 60, metrics: 'days_on_market.median,price.median' })),
+        Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'new', sort: 'discount', limit: 4, min_msrp: 20000 })),
+        Promise.all(hunts.map((x) => Live.summary(huntFilters(x), ctx).catch(() => null))),
+        Promise.all(interests.map((m) => Live.summary(Object.assign(Market.emptyFilters(), scope, { model: [m.key] }), ctx).catch(() => null))),
       ]);
-      if (!document.getElementById('live-insights')) return;
-      const fastest = Live.bucketsOf(fast.data && fast.data.facets && fast.data.facets.model)
-        .filter((b) => b.count >= 50 && b.metrics && b.metrics['days_on_market.median'] != null)
+      if (!grid.isConnected) return;
+      const od = overview.data || {}, sd = sold.data || {};
+      const active = od.total || 0, sold30 = sd.total || 0;
+      const medPrice = stat(od.stats, 'price'), medDays = stat(od.stats, 'days_on_market'), soldDays = stat(sd.stats, 'days_on_market');
+      const supply = active && sold30 ? Math.round(active / (sold30 / 30)) : null;
+      const makeRows = Live.bucketsOf(od.facets && od.facets.make);
+      const modelRows = Live.bucketsOf(od.facets && od.facets.model);
+      const minSales = scoped ? 8 : 50;
+      const fastest = Live.bucketsOf(sd.facets && sd.facets.model)
+        .filter((b) => b.count >= minSales && b.metrics && b.metrics['days_on_market.median'] != null)
         .sort((a, b) => a.metrics['days_on_market.median'] - b.metrics['days_on_market.median']).slice(0, 6);
       const discountCars = (deals.data || []).map(Live.normalize);
       discountCars.forEach((l) => LIVE_SEEN.set(l.id, l));
-      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make);
+      const metric = (b, k) => (b.metrics && b.metrics[k] != null ? b.metrics[k] : null);
+
+      const huntRow = (x, sum) => {
+        const diff = x.count != null ? sum.total - x.count : 0;
+        return `<li><a href="#/hunt/${esc(x.id)}"><span><b>${esc(x.name)}</b><small>${esc(describeFilters(huntFilters(x)))}</small></span>
+          <span class="r"><b>${num(sum.total)} for sale</b><small>${[diff ? `${diff > 0 ? '↑' : '↓'} ${num(Math.abs(diff))} since last check` : '', sum.medianPrice ? `median ${money(sum.medianPrice)}` : ''].filter(Boolean).join(' · ')}</small></span></a></li>`;
+      };
+      const modelRow = (m, sum) => `<li><a href="${searchHref(Object.assign({ model: m.key }, scope))}"><span><b>${esc(m.key)}</b><small>${esc(m.why)} · ${scoped ? 'near you' : 'nationwide'}</small></span>
+          <span class="r"><b>${num(sum.total)} for sale</b><small>${[sum.medianPrice ? `median ${money(sum.medianPrice)}` : '', sum.medianDays != null ? `${Math.round(sum.medianDays)} days listed` : ''].filter(Boolean).join(' · ')}</small></span></a></li>`;
+      const yours = hunts.map((x, i) => ({ html: huntSums[i] && huntRow(x, huntSums[i]) })).concat(interests.map((m, i) => ({ html: interestSums[i] && modelRow(m, interestSums[i]) }))).filter((r) => r.html);
+      const yourCard = `<article class="card insight"><header><h3>${badge('You', 'b-you')} Your market</h3>
+          <p class="muted">${yours.length ? `The cars you’re hunting, favoriting and looking at, as the market stands right now.` : 'Save a hunt or favorite a car, and this card follows that market for you: how many are for sale, what they ask, and how that changes.'}</p></header>
+          ${yours.length ? `<ul class="rank-list">${yours.map((r) => r.html).join('')}</ul>` : `<div class="quick">${quickFor().slice(0, 3).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>`}
+          <a class="card-cta" href="#/saved">${yours.length ? 'All hunts and favorites →' : 'Hunts and favorites →'}</a></article>`;
+
       grid.innerHTML = `
-        <article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale nationwide</h3>
-          <p class="muted">${num(sold30)} sold in the last 30 days, about ${num(sold30 / 30)} a day · ${active && sold30 ? Math.round(active / (sold30 / 30)) + ' days of supply' : ''}</p></header>
-          <ul class="rank-list">${makeRows.map((b) => `<li><a href="${searchHref({ make: b.value })}"><span><b>${esc(b.value)}</b><small>${b.metrics && b.metrics['days_on_market.median'] != null ? Math.round(b.metrics['days_on_market.median']) + ' median days listed' : ''}</small></span>
-            <span class="r"><b>${num(b.count)}</b><small>${b.metrics && b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('')}</ul></article>
-        <article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest right now</h3><p class="muted">Median days from listing to sale, last 30 days (models with 50+ sales)</p></header>
-          <ul class="rank-list">${fastest.map((b) => `<li><a href="${searchHref({ model: b.value, when: 'sold' })}"><span><b>${esc(b.value)}</b><small>${plural(b.count, 'sale')}</small></span>
-            <span class="r"><b>${Math.round(b.metrics['days_on_market.median'])} days</b><small>${b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('') || '<li class="muted">Not enough sales data.</li>'}</ul></article>
-        <article class="card insight wide"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars</h3><p class="muted">Live listings, MSRP over $20,000</p></header>
-          <div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('')}</div>
-          <a class="card-cta" href="${searchHref({ condition: 'New', sort: 'discount', msrpMin: 20000 })}">See all new-car discounts →</a></article>`;
+        <article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale ${esc(where)}</h3>
+          <p class="muted">${sold30 ? `${num(sold30)} sold in the last 30 days, about ${sold30 >= 60 ? `${num(sold30 / 30)} a day` : `${num(sold30 / 4.3)} a week`}${supply ? ` · ${num(supply)} days of supply` : ''}` : 'No sales recorded here in the last 30 days'}${medPrice ? ` · median asking ${money(medPrice)}` : ''}${medDays != null ? ` · listed a median ${plural(Math.round(medDays), 'day')}` : ''}</p></header>
+          <ul class="rank-list">${makeRows.map((b) => `<li><a href="${searchHref(Object.assign({ make: b.value }, scope))}"><span><b>${esc(b.value)}</b><small>${metric(b, 'days_on_market.median') != null ? Math.round(metric(b, 'days_on_market.median')) + ' median days listed' : ''}</small></span>
+            <span class="r"><b>${num(b.count)}</b><small>${metric(b, 'price.median') ? 'median ' + money(metric(b, 'price.median')) : ''}</small></span></a></li>`).join('')}</ul>
+          <a class="card-cta" href="${searchHref(scope)}">Everything for sale ${esc(where)} →</a></article>
+        ${yourCard}
+        <article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest ${esc(scopeShort())}</h3>
+          <p class="muted">Median days from listing to sale, last 30 days (models with ${minSales}+ sales${scoped ? ` within ${HOME_RADIUS} miles` : ''})${soldDays != null ? ` · all cars: ${Math.round(soldDays)} days` : ''}</p></header>
+          <ul class="rank-list">${fastest.map((b) => `<li><a href="${searchHref(Object.assign({ model: b.value, when: 'sold' }, scope))}"><span><b>${esc(b.value)}</b><small>${plural(b.count, 'sale')}</small></span>
+            <span class="r"><b>${Math.round(b.metrics['days_on_market.median'])} days</b><small>${b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('') || `<li class="muted">Not enough sales ${esc(scopeShort())} in the last 30 days.${scoped ? ' Switch to Nationwide above to see the whole market.' : ''}</li>`}</ul></article>
+        <article class="card insight"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars ${esc(scopeShort())}</h3><p class="muted">Live listings ${esc(where)}, MSRP over $20,000</p></header>
+          <div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('') || '<p class="muted">No discounted new cars listed here right now.</p>'}</div>
+          <a class="card-cta" href="${searchHref(Object.assign({ condition: 'New', sort: 'discount', msrpMin: 20000 }, scope))}">See all new-car discounts ${esc(scopeShort())} →</a></article>`;
+      if (browseEl) {
+        browseEl.innerHTML = modelRows.map((b) => `<a class="browse-item" href="${searchHref(Object.assign({ model: b.value }, scope))}"><b>${esc(b.value)}</b><small>${plural(b.count, 'car')}${metric(b, 'price.median') ? ` · median ${money(metric(b, 'price.median'))}` : ''}</small></a>`).join('')
+          || `<p class="muted">Nothing listed ${esc(where)} right now.</p>`;
+      }
     } catch (e) {
-      if (document.getElementById('live-insights')) grid.innerHTML = liveErrorHtml(e);
+      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+      if (browseEl) browseEl.innerHTML = '<p class="muted">Live counts aren’t available right now.</p>';
     }
   }
 
@@ -780,7 +854,7 @@
       <section class="hero">
         <div class="hero-grid" aria-hidden="true"></div>
         <div class="hero-inner">
-          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
+          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}${prefs().homeCity ? ` · near ${esc(prefs().homeCity)}` : ''}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
           <h1>See the whole market.<span>Not just pages of listings.</span></h1>
           <div id="hero-search"></div>
           <div class="quick"><span class="muted">Try</span>${quickFor().slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
@@ -823,13 +897,13 @@
       </section>
 
       <section class="section browse">
-        <h2>Browse the market</h2>${isLive() ? '<p class="muted small">Counts below are from the demo sample; each link searches live listings.</p>' : ''}
-        <div class="browse-grid">
+        <h2>Browse the market</h2>${isLive() ? `<p class="muted small">The most-listed models ${esc(scopeText())}, with live counts and median asking prices from ${esc(srcName())}.</p>` : ''}
+        ${isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
           ${popular.map(([key, g]) => {
             const used = g.filter((l) => l.condition !== 'New');
             return `<a class="browse-item" href="${searchHref({ model: key })}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
           }).join('')}
-        </div>
+        </div>`}
       </section>`);
     mountSearchBox(document.getElementById('hero-search'), { size: 'lg' });
     if (isLive()) fillLiveInsights();
@@ -2532,6 +2606,9 @@
         applyModeUi();
         renderSettings();
         toast(t.value === 'demo' ? 'Using demo data' : isLive() ? `Live data from ${srcName()}` : `Add your ${Live.info(t.value).name} API key to use live data`);
+      } else if (k === 'homeCity' && view.name === 'home') {
+        renderHome('insights');
+        toast(t.value ? `Showing the market near ${t.value}` : 'Showing the whole country');
       } else toast('Saved');
       return;
     }

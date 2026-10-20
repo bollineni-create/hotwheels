@@ -392,6 +392,19 @@
     return (r.data && r.data.total) || 0;
   }
 
+  // How many cars match, and the median price, miles and days listed, in one request.
+  async function visorSummary(f, ctx, extra) {
+    const pp = Object.assign(toParams(f, ctx), extra || {}, { facets: 'price,miles,days_on_market', facet_value_limit: 1 });
+    const r = await vreq('/v1/facets', pp);
+    const stats = r.data && r.data.stats;
+    return {
+      total: (r.data && r.data.total) || 0,
+      medianPrice: statOf(stats, 'price', ['median', 'p50', 'mean']),
+      medianMiles: statOf(stats, 'miles', ['median', 'p50', 'mean']),
+      medianDays: statOf(stats, 'days_on_market', ['median', 'p50', 'mean']),
+    };
+  }
+
   // Cars for sale on a handful of past dates, for the inventory-over-time chart.
   async function visorInventoryTrend(f, ctx) {
     const days = [90, 75, 60, 45, 30, 15, 7, 0];
@@ -737,14 +750,14 @@
     visor: {
       caps: { exclude: true, sold: true, snapshots: true, velocity: true, metrics: true, trend: true, features: true, options: true, upfitter: true,
         assembly: true, msrp: true, vinPattern: true, sellerType: true, pricing: true, facetCounts: true, extColor: true, photosApi: false },
-      search: visorSearch, facetMetrics: visorFacetMetrics, count: visorCount, inventoryTrend: visorInventoryTrend, velocity: visorVelocity,
+      search: visorSearch, facetMetrics: visorFacetMetrics, count: visorCount, summary: visorSummary, inventoryTrend: visorInventoryTrend, velocity: visorVelocity,
       listing: visorListing, vin: visorVin, comparables: visorComparables, vocabulary: visorVocabulary, photos: unsupported('Photo galleries'),
       overview: unsupported('Overview'), toParams, SORT, PAGE,
     },
     autodev: {
       caps: { exclude: false, sold: false, snapshots: false, velocity: false, metrics: false, trend: false, features: false, options: false, upfitter: false,
         assembly: false, msrp: false, vinPattern: false, sellerType: false, pricing: false, facetCounts: true, extColor: false, photosApi: true, history: true, historyFilters: true },
-      search: adSearch, facetMetrics: unsupported('Per-value price stats'), count: adCount, inventoryTrend: unsupported('Inventory history'),
+      search: adSearch, facetMetrics: unsupported('Per-value price stats'), count: adCount, summary: unsupported('Market summary'), inventoryTrend: unsupported('Inventory history'),
       velocity: unsupported('Sales velocity'), listing: adListing, vin: adListing, comparables: adComparables, vocabulary: adVocabulary,
       photos: adPhotos, overview: adOverview, toParams: adToParams, SORT: AD_SORT, PAGE: AD_PAGE,
     },
@@ -756,7 +769,7 @@
     PROVIDERS, setProvider, provider, info, getKey, setKey, builtInKey, usage, costs, request, transport, LiveError,
     caps: () => mod().caps, get SORT() { return mod().SORT; }, get PAGE() { return mod().PAGE; },
     toParams: (...a) => mod().toParams(...a),
-    search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), inventoryTrend: call('inventoryTrend'),
+    search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), summary: call('summary'), inventoryTrend: call('inventoryTrend'),
     velocity: call('velocity'), listing: call('listing'), vin: call('vin'), comparables: call('comparables'), vocabulary: call('vocabulary'),
     photos: call('photos'), overview: call('overview'),
     normalize, adNormalize, adBuckets, adToParams, bucketsOf, fairValueFrom, titleCase, FAMILY_HEX, PARAM, FACET_NAMES,
