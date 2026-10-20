@@ -958,14 +958,14 @@
       const interests = interestModels(hunts).slice(0, 2);
       const stat = (st, n) => { const s = st && st[n]; return s ? (s.median ?? s.p50 ?? s.mean ?? null) : null; };
       const metricNames = 'price.median,days_on_market.median';
-      // Price buckets ride along with the make and model facets when Visor allows it;
-      // if a plan or version rejects the combination, fall back to the facets only.
-      const overviewFacets = () => Live.request('/v1/facets', Object.assign({}, bp, { facets: 'make,model,price,days_on_market', facet_value_limit: 12, metrics: metricNames }))
-        .catch((e) => (e && e.code === 'bad_request' ? Live.request('/v1/facets', Object.assign({}, bp, { facets: 'make,model', facet_value_limit: 12, metrics: metricNames })) : Promise.reject(e)));
-      // One request each: the market here, what sold here, new-car discounts here, then one per hunt and per model you follow.
-      const [overview, sold, deals, huntSums, interestSums] = await Promise.all([
-        overviewFacets(),
-        Live.request('/v1/facets', Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: 30, facets: 'model,days_on_market', facet_value_limit: 60, metrics: metricNames })),
+      // Visor computes metrics for one facet per request, so the market here takes three small ones
+      // (price buckets and the total, makes, models), then what sold here, new-car discounts here,
+      // and one per hunt and per model you follow. The live client keeps only a few in flight at once.
+      const [overview, makes, models, sold, deals, huntSums, interestSums] = await Promise.all([
+        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'price', facet_value_limit: 12 })),
+        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'make', facet_value_limit: 12, metrics: metricNames })),
+        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' })),
+        Live.request('/v1/facets', Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: 30, facets: 'model', facet_value_limit: 60, metrics: metricNames })),
         Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'new', sort: 'discount', limit: 4, min_msrp: 20000 })),
         Promise.all(hunts.map((x) => Live.summary(huntFilters(x), ctx).catch(() => null))),
         Promise.all(interests.map((m) => Live.summary(Object.assign(Market.emptyFilters(), scope, { model: [m.key] }), ctx).catch(() => null))),
@@ -982,8 +982,8 @@
       const typicalDays = Market.median(soldModels.map((b) => m(b, 'days_on_market.median')));
       const discountCars = (deals.data || []).map(Live.normalize);
       discountCars.forEach((l) => LIVE_SEEN.set(l.id, l));
-      const makeRows = Live.bucketsOf(od.facets && od.facets.make).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
-      const modelRows = Live.bucketsOf(od.facets && od.facets.model).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
+      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
+      const modelRows = Live.bucketsOf(models.data && models.data.facets && models.data.facets.model).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
       const maxMake = Math.max(1, ...makeRows.map((b) => b.count));
       const maxDays = Math.max(1, ...fastest.map((b) => m(b, 'days_on_market.median')));
       const perDay = sold30 ? sold30 / 30 : 0;

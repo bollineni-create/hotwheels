@@ -114,6 +114,7 @@ function handle(req, res) {
     const names = (q.get('facets') || '').split(',').filter(Boolean);
     const limit = Number(q.get('facet_value_limit')) || 20;
     const metrics = q.get('metrics') ? q.get('metrics').split(',') : null;
+    if (metrics && names.length !== 1) return send(400, { error: { type: 'invalid_request', code: 'bad_request', message: 'metric other than count requires exactly one facet.' } });
     const facets = {}, stats = {}, range_facets = {};
     for (const n of names) {
       if (['price', 'miles', 'days_on_market', 'msrp'].includes(n)) {

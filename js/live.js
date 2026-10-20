@@ -86,7 +86,34 @@
     } catch (e) {
       throw new LiveError('blocked', `${PROVIDERS[prov].name} only accepts browser requests from its own website. Use the Gridline desktop app, or run \`npm start\` and open http://localhost:8080.`);
     }
-    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0 };
+    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0, retryAfter: Number(res.headers.get('retry-after')) || 0 };
+  }
+
+  // The APIs allow a handful of requests a second, and a page can want a dozen at once. So: only a
+  // few requests are in flight at a time, identical ones in flight share a single fetch, and a
+  // "rate limit exceeded" reply pauses everything for the seconds it names and then tries again.
+  const MAX_INFLIGHT = 3;
+  const RETRIES = 2;
+  let inflightCount = 0, pausedUntil = 0;
+  const waiting = [];
+  const inflight = new Map();
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function slot() {
+    while (inflightCount >= MAX_INFLIGHT) await new Promise((resolve) => waiting.push(resolve));
+    inflightCount++;
+    const wait = pausedUntil - Date.now();
+    if (wait > 0) await sleep(wait);
+  }
+  function free() {
+    inflightCount--;
+    const next = waiting.shift();
+    if (next) next();
+  }
+  // Seconds to wait after a 429: the Retry-After header, else the "Retry after 9 seconds" in the message, else a guess.
+  function retrySeconds(r, message) {
+    const m = /retry after (\d+(?:\.\d+)?)/i.exec(message || '');
+    const s = r.retryAfter || (m ? Number(m[1]) : 0) || 3;
+    return Math.min(20, Math.max(1, s));
   }
 
   async function request(path, params, prov) {
@@ -97,22 +124,38 @@
     const cacheKey = p + path + '?' + query;
     const hit = memCache.get(cacheKey) || safe(() => JSON.parse(sessionStorage.getItem('gv:' + cacheKey)), null);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    if (inflight.has(cacheKey)) return inflight.get(cacheKey);
+    const run = fetchJson(p, path, query, key, cacheKey);
+    inflight.set(cacheKey, run);
+    try { return await run; } finally { inflight.delete(cacheKey); }
+  }
 
-    const r = await rawFetch(p, path, query, key);
-    if (r.status !== 401 && r.status !== 403) track(p, r.cost);
-    let json = null;
-    try { json = JSON.parse(r.body); } catch (e) { /* non-JSON error */ }
-    if (r.status < 200 || r.status >= 300) {
+  async function fetchJson(p, path, query, key, cacheKey) {
+    for (let attempt = 0; ; attempt++) {
+      await slot();
+      let r;
+      try { r = await rawFetch(p, path, query, key); } finally { free(); }
+      if (r.status !== 401 && r.status !== 403 && r.status !== 429) track(p, r.cost);
+      let json = null;
+      try { json = JSON.parse(r.body); } catch (e) { /* non-JSON error */ }
+      if (r.status >= 200 && r.status < 300) {
+        const entry = { t: Date.now(), json };
+        memCache.set(cacheKey, entry);
+        safe(() => sessionStorage.setItem('gv:' + cacheKey, JSON.stringify(entry)));
+        return json;
+      }
       const err = (json && (typeof json.error === 'object' ? json.error : { message: json.error, code: json.code })) || {};
+      if (r.status === 429 && attempt < RETRIES) {
+        const ms = retrySeconds(r, err.message) * 1000;
+        pausedUntil = Math.max(pausedUntil, Date.now() + ms);
+        await sleep(ms);
+        continue;
+      }
       const code = r.status === 401 || r.status === 403 ? 'auth' : r.status === 402 ? 'billing' : r.status === 429 ? 'rate_limit' : r.status === 404 ? 'not_found' : r.status === 400 ? 'bad_request' : 'api';
       const e = new LiveError(code, err.message || `${PROVIDERS[p].name} API error (${r.status})`, r.status);
       e.apiCode = err.code;
       throw e;
     }
-    const entry = { t: Date.now(), json };
-    memCache.set(cacheKey, entry);
-    safe(() => sessionStorage.setItem('gv:' + cacheKey, JSON.stringify(entry)));
-    return json;
   }
 
   const vreq = (path, params) => request(path, params, 'visor');
