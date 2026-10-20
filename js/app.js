@@ -634,6 +634,7 @@
   // the panels and the sections.
   const HOME_CATS = [
     { id: 'insights', title: 'What the market’s doing', short: 'This Week' },
+    { id: 'map', title: 'On the map', short: 'Map' },
     { id: 'local', title: 'Your market', short: 'Your Market' },
     { id: 'trends', title: 'The whole market', short: 'Whole Market' },
     { id: 'rewind', title: 'Rewind the market', short: 'Rewind' },
@@ -1567,6 +1568,75 @@
     return `${head}${strip}<div class="local-grid">${dealsCard}${mapCard}${vsCard}${driveCard}${cutsCard}</div>`;
   }
 
+  /* ----- Home: the market on a map ----- */
+
+  // The whole country on one map: every city with cars for sale as a dot sized by how many and colored
+  // by how they price against fair value. Click a city to search around it; the link under it opens
+  // the search page in its map view. With a live source the counts come from the source, by state.
+  function homeMapGroups(pool, o) {
+    return [...Market.groupBy(pool, (l) => `${l.city}, ${l.state}`).entries()].filter(([, g]) => g[0].lat != null).map(([city, g]) => {
+      const d = o && o.noDelta ? null : Market.median(g.map(delta));
+      return {
+        city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: deltaClass(d),
+        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(g.map((l) => l.price)))}${d != null ? `, ${pct(Math.abs(d), 1)} ${d < 0 ? 'below' : 'above'} market` : ''}`,
+      };
+    });
+  }
+  const mapLegend = `<div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div>`;
+
+  function mapSectionHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    const cats = homeCats();
+    const full = searchHref(Object.assign({ layout: 'map' }, zip ? { near: zip, radius: WIDE } : {}));
+    const cta = `<a class="card-cta" href="${full}">Open the full map view${zip ? `, ${num(WIDE)} miles around ${esc(zip)}` : ''} →</a>`;
+    if (isLive()) {
+      return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `Where ${esc(srcName())}’s listings are. Click a state or city to shop it.` })}
+        <article class="card insight home-map"><div id="home-map-body">${loadingHtml(`Counting listings by state from ${srcName()}…`)}</div>${cta}</article></section>`;
+    }
+    const groups = homeMapGroups(LISTINGS);
+    const states = new Set(LISTINGS.map((l) => l.state)).size;
+    return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `${num(LISTINGS.length)} cars for sale in ${num(groups.length)} ${groups.length === 1 ? 'city' : 'cities'} across ${plural(states, 'state')}. Circle size is the number of cars; color is how the city prices against fair value. Click a city to shop it.` })}
+      <article class="card insight home-map">
+        ${Charts.usMap(groups, Object.assign({ aria: 'Map of cars for sale by city' }, zip && CTX.origin ? { center: [CTX.origin[2], CTX.origin[3]], radius } : {}))}
+        ${mapLegend}${cta}
+      </article></section>`;
+  }
+
+  // Live: counts by state from the source (one facets request). A source without facet metrics
+  // (the free auto.dev plan) gets the cities of the newest listings instead.
+  async function fillLiveMap() {
+    const body = () => document.getElementById('home-map-body');
+    if (!body()) return;
+    const ctx = liveCtx();
+    try {
+      await ensureLiveVocab();
+      let html;
+      try {
+        const rows = (await Live.facetMetrics(Market.emptyFilters(), ctx, 'state')).filter((r) => r.value && r.count);
+        const by = new Map(rows.map((r) => [String(r.value).toUpperCase(), r]));
+        const hi = Math.max(1, ...rows.map((r) => r.count));
+        html = Charts.geoMap((st) => {
+          const r = by.get(st);
+          if (!r) return null;
+          const n = r.count;
+          const cls = n >= hi * 0.5 ? 'cnt-4' : n >= hi * 0.2 ? 'cnt-3' : n >= hi * 0.07 ? 'cnt-2' : 'cnt-1';
+          return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${r.avgPrice ? `, average ${money(r.avgPrice)}` : ''}`, href: searchHref({ state: st, layout: 'map' }) };
+        }, { clickable: true, labels: true, aria: 'Cars for sale by state' }) +
+          `<div class="legend"><span><i class="key cnt-1"></i>Fewer</span><span><i class="key cnt-4"></i>More cars for sale</span></div>`;
+      } catch (e) {
+        const zip = homeZip();
+        const f = Object.assign(Market.emptyFilters(), { sort: 'newest' }, zip ? { near: zip, radius: WIDE } : {});
+        const r = await Live.search(f, ctx, { lite: true });
+        const groups = homeMapGroups(r.results, { noDelta: true });
+        html = Charts.usMap(groups, { aria: 'Map of the newest cars for sale by city' }) +
+          `<p class="muted small">The ${plural(r.results.length, 'newest listing')}${zip ? ` within ${num(WIDE)} miles of ${esc(zip)}` : ''}; the full count by state needs Visor.</p>`;
+      }
+      if (body()) body().innerHTML = html;
+    } catch (e) {
+      if (body()) body().innerHTML = `<p class="muted">Couldn’t load the map from ${esc(srcName())}: ${esc(e.message || String(e))}</p>`;
+    }
+  }
+
   function localSectionHtml() {
     const zip = homeZip(), radius = homeRadius();
     if (!zip) return '';
@@ -1703,6 +1773,7 @@
       ${homeTopHtml()}
       ${catNavHtml(cats)}
       <section class="section cat" id="insights"><div id="market-head">${marketHeadHtml()}</div><div id="market-panel">${marketPanelHtml()}</div></section>
+      ${mapSectionHtml()}
       ${localSectionHtml()}
       ${has('trends') ? `<section class="section cat" id="trends">${trendsHtml(cats)}</section>` : ''}
       ${has('rewind') ? `<section class="section cat" id="rewind">${isLive() ? liveRewindHtml(cats) : rewindHtml(cats)}</section>` : ''}
@@ -1712,6 +1783,7 @@
     for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
     fillPanelLive();
     fillTrimMapIfShown();
+    if (isLive()) fillLiveMap();
     if (isLive() && zip) fillLiveLocal();
     syncCatNav();
     startPanelCycle();
@@ -1731,7 +1803,7 @@
     ['sold-recent', 'Recently sold'], ['sold-fastest', 'Sold fastest']];
 
   function renderSearch(params) {
-    S = { f: filtersFromParams(params), shown: PAGE, layout: S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
+    S = { f: filtersFromParams(params), shown: PAGE, layout: ['grid', 'table', 'map'].includes(params.get('layout')) ? params.get('layout') : S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
     setView('search', `
       <div class="search-layout">
         <aside class="filters" id="filters" aria-label="Filters"></aside>
@@ -1742,9 +1814,9 @@
               <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" aria-label="Refine results" value="${esc(S.f.q)}"></form>
             <label class="sort"><span class="sr-only">Sort</span><select id="sort-select"></select></label>
             <div class="seg" role="group" aria-label="Layout">
-              <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦</button>
-              <button type="button" data-action="layout" data-layout="table" aria-label="Table view" title="Table">☰</button>
-              <button type="button" data-action="layout" data-layout="map" aria-label="Map view" title="Map">◎</button>
+              <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦<span class="seg-label"> Grid</span></button>
+              <button type="button" data-action="layout" data-layout="table" aria-label="Table view" title="Table">☰<span class="seg-label"> Table</span></button>
+              <button type="button" data-action="layout" data-layout="map" aria-label="Map view" title="Map">◎<span class="seg-label"> Map</span></button>
             </div>
             <button class="btn primary" type="button" data-action="save-search" title="Save this search and get notified when a new match is listed or one drops its price">🎯 Hunt this</button>
           </div>

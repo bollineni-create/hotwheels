@@ -554,6 +554,9 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .seg button { border: 0; background: transparent; padding: 7px 11px; cursor: pointer; color: var(--muted); }
 .seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.seg-label { font-size: .85rem; font-weight: 600; }
+.home-map .usmap { width: 100%; height: auto; display: block; max-height: 520px; }
+.home-map .geomap { width: 100%; max-height: 520px; }
 .filters-toggle { display: none; }
 .active-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .chip span[aria-hidden] { font-size: .7rem; opacity: .6; }
@@ -992,6 +995,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
   .stats-strip > div:nth-child(-n+2) { border-top: 0; }
   .footer-links { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .results-top .btn.primary { flex: 1; }
+  .seg-label { display: none; }
   .calc { grid-template-columns: minmax(0, 1fr); }
   .spec > div { grid-template-columns: 100px 1fr; }
   .timeline li { grid-template-columns: 90px 1fr auto; }
