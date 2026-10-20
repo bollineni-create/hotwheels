@@ -576,6 +576,19 @@
       { label: `4x4 trucks under 50k miles near ${home ? Geo.lookup(home).place : 'Denver'}`, href: nlHref(trucks) },
       { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
       { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
+      { label: 'Manual Civic under 60k miles', href: nlQuick('manual civic under 60k miles') },
+      { label: 'Tacoma 4x4 with tow package', href: nlQuick('tacoma 4x4 with tow package') },
+      { label: 'Wrangler under $35k', href: nlQuick('wrangler under 35k') },
+      { label: 'AWD wagons with heated seats', href: nlQuick('awd wagons with heated seats') },
+      { label: 'Black Model 3 under $30k', href: nlQuick('black model 3 under 30k') },
+      { label: 'F-150 under 40k miles with CarPlay', href: nlQuick('f-150 under 40k miles with carplay') },
+      { label: 'Plug-in hybrid SUVs 2022+', href: nlQuick('plug-in hybrid suv 2022+') },
+      { label: 'Corvette, any year, under $60k', href: nlQuick('corvette under 60k') },
+      { label: 'Minivans with 360° camera', href: nlQuick('minivan with 360 camera') },
+      { label: 'Diesel trucks under 80k miles', href: nlQuick('diesel trucks under 80k miles') },
+      { label: 'Blue Bronco with a manual', href: nlQuick('blue bronco manual') },
+      { label: 'Outback under $25k with blind spot monitor', href: nlQuick('outback under 25k with blind spot monitor') },
+      { label: 'Coupes with ventilated seats', href: nlQuick('coupes with ventilated seats') },
       { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
       { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
       { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
@@ -583,6 +596,15 @@
   };
   // Example searches the current data source can actually answer.
   const quickFor = () => quickList().filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
+  // A copy of the list in random order (Fisher–Yates), so the examples change on every visit.
+  const shuffle = (list) => {
+    const out = list.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
 
   /* ---------- Views ---------- */
 
@@ -1262,6 +1284,16 @@
     }, { timeout: 8000, maximumAge: 600000 });
   }
 
+  // The "Try" row under the search box: six examples, different on every load. One local
+  // example (when you have a home market) always leads so the row stays grounded in your
+  // area; the rest are a fresh draw from everything else.
+  function tryChips(localQuick) {
+    const local = shuffle(localQuick);
+    const lead = local.slice(0, 1);
+    const rest = shuffle(local.slice(1).concat(quickFor()));
+    return lead.concat(rest).slice(0, 6);
+  }
+
   // The top of the home page: one big search box, then where your market is.
   function homeTopHtml() {
     const zip = homeZip(), radius = homeRadius();
@@ -1290,7 +1322,7 @@
           <p class="eyebrow">${eyebrow}</p>
           <div id="hero-search" class="home-search"></div>
           ${market}
-          <div class="quick"><span class="muted">Try</span>${localQuick.concat(quickFor()).slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
+          <div class="quick"><span class="muted">Try</span>${tryChips(localQuick).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
         </div>
       </section>`;
   }
