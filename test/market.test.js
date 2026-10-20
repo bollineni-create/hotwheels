@@ -390,3 +390,54 @@ test('live home page sizes the market near home, and a hunt, in one request each
     delete globalThis.gridlineDesktop;
   }
 });
+
+test('make momentum compares the last 30 days of sales with the 30 before', () => {
+  const { sold } = generateInventory();
+  const rows = Market.makeMomentum(sold, 30, 20);
+  assert.ok(rows.length > 3);
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].change >= rows[i].change, 'sorted by change');
+  const top = rows[0];
+  const now = sold.filter((l) => l.make === top.make && l.sold.daysAgo < 30).length;
+  const before = sold.filter((l) => l.make === top.make && l.sold.daysAgo >= 30 && l.sold.daysAgo < 60).length;
+  assert.equal(top.now, now);
+  assert.equal(top.before, before);
+  assert.ok(Math.abs(top.change - (now / before - 1)) < 1e-9);
+  assert.equal(top.models.reduce((s, m) => s + m.now, 0), now, 'models add up to the make');
+  assert.equal(Object.values(top.byState).reduce((s, x) => s + x.now, 0), now, 'states add up to the make');
+});
+
+test('trim velocity pairs the fastest and slowest trims of a model', () => {
+  const { sold } = generateInventory();
+  const rows = Market.trimVelocity(sold, 20);
+  assert.ok(rows.length > 0);
+  for (const r of rows) {
+    assert.ok(r.fast.n >= 20 && r.slow.n >= 20);
+    assert.ok(r.slow.days > r.fast.days);
+    assert.ok(Math.abs(r.gap - (r.slow.days - r.fast.days)) < 1e-9);
+    assert.ok(['New', 'Used'].includes(r.condition));
+  }
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].gap >= rows[i].gap, 'biggest gap first');
+  const r = rows[0];
+  const pool = sold.filter((l) => l.make === r.make && l.model === r.model && l.trim === r.fast.trim);
+  assert.equal(Market.median(pool.map((l) => l.sold.daysToSell)), r.fast.days);
+});
+
+test('a time capsule matches a snapshot of the same day', () => {
+  const { sold } = generateInventory();
+  for (const d of [7, 30, 90]) {
+    const c = Market.timeCapsule(listings, sold, d, { minGroup: 25 });
+    const snap = Market.snapshot(listings, sold, d);
+    assert.equal(c.then.count, snap.length);
+    assert.equal(c.then.median, Market.median(snap.map((l) => l.price)));
+    assert.equal(c.now.count, listings.length);
+    assert.equal(c.soldSince, sold.filter((l) => l.sold.daysAgo < d).length);
+    assert.equal(c.listedSince, listings.filter((l) => l.daysListed < d).length);
+    assert.ok(c.cutsSince <= listings.length);
+    for (const m of c.models) {
+      assert.ok(m.thenCount >= 25 && m.nowCount >= 25);
+      assert.ok(Math.abs(m.change - (m.nowMedian / m.thenMedian - 1)) < 1e-9);
+    }
+    for (let i = 1; i < c.models.length; i++) assert.ok(Math.abs(c.models[i - 1].change) >= Math.abs(c.models[i].change));
+  }
+  assert.equal(Market.timeCapsule(listings, sold, 0).then.count, listings.length, 'today is today');
+});

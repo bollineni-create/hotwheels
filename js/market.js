@@ -571,6 +571,81 @@
   }
 
 
+  /* ---------- Weekly cards: who's selling more, which trim moves, the market then and now ---------- */
+
+  const inWindow = (l, from, to) => l.sold && l.sold.daysAgo >= from && l.sold.daysAgo < to;
+
+  // Makes that sold more in the last `days` days than in the `days` before, biggest climb first:
+  // [{ make, now, before, change, models: [{ model, now, before, change }], byState: { ST: { now, before, change } } }].
+  function makeMomentum(sold, days, minSales) {
+    const d = days || 30, min = minSales || 20;
+    const split = (g) => [g.filter((l) => inWindow(l, 0, d)), g.filter((l) => inWindow(l, d, 2 * d))];
+    const out = [];
+    for (const [make, g] of groupBy(sold, (l) => l.make)) {
+      const [now, before] = split(g);
+      if (now.length < min || before.length < min) continue;
+      const models = [...groupBy(g, (l) => l.model)].map(([model, mg]) => {
+        const [n, b] = split(mg);
+        return { model, now: n.length, before: b.length, change: b.length ? n.length / b.length - 1 : null };
+      }).sort((a, b) => b.now - a.now);
+      const byState = {};
+      for (const [st, sg] of groupBy(g, (l) => l.state)) {
+        const [n, b] = split(sg);
+        byState[st] = { now: n.length, before: b.length, change: b.length ? n.length / b.length - 1 : null };
+      }
+      out.push({ make, now: now.length, before: before.length, change: now.length / before.length - 1, models, byState });
+    }
+    return out.sort((a, b) => b.change - a.change);
+  }
+
+  // Within each model, the trim that sold fastest against the one that sold slowest (median days to sell),
+  // with every state's pace for the model. Biggest gap first.
+  function trimVelocity(sold, minGroup) {
+    const min = minGroup || 20;
+    const out = [];
+    for (const [key, g] of groupBy(sold, (l) => `${l.make}|${l.model}`)) {
+      const trims = [...groupBy(g, (l) => l.trim)].filter(([, t]) => t.length >= min)
+        .map(([trim, t]) => ({ trim, n: t.length, days: median(t.map((l) => l.sold.daysToSell)), price: median(t.map((l) => l.sold.price)) }))
+        .sort((a, b) => a.days - b.days);
+      if (trims.length < 2) continue;
+      const [make, model] = key.split('|');
+      const fast = trims[0], slow = trims[trims.length - 1];
+      if (slow.days - fast.days < 1) continue;
+      const byState = {};
+      for (const [st, sg] of groupBy(g, (l) => l.state)) byState[st] = { n: sg.length, days: median(sg.map((l) => l.sold.daysToSell)) };
+      const newShare = g.filter((l) => l.condition === 'New').length / g.length;
+      out.push({ make, model, fast, slow, gap: slow.days - fast.days, trims, byState, n: g.length, days: median(g.map((l) => l.sold.daysToSell)), condition: newShare >= 0.5 ? 'New' : 'Used' });
+    }
+    return out.sort((a, b) => b.gap - a.gap);
+  }
+
+  // The market as it stood `daysAgo` days ago next to today: how many cars were for sale and at what
+  // median price, what has happened since, and the used models whose median asking price moved most.
+  function timeCapsule(active, sold, daysAgo, opts) {
+    const minGroup = (opts && opts.minGroup) || 15;
+    const then = snapshot(active, sold, daysAgo);
+    const used = (arr) => arr.filter((l) => l.condition !== 'New');
+    const medPrice = (arr) => median(arr.map((l) => l.price));
+    const stats = (arr) => ({ count: arr.length, median: medPrice(arr), usedMedian: medPrice(used(arr)) });
+    const nowBy = groupBy(used(active), (l) => `${l.make} ${l.model}`);
+    const models = [];
+    for (const [key, tg] of groupBy(used(then), (l) => `${l.make} ${l.model}`)) {
+      const ng = nowBy.get(key) || [];
+      if (tg.length < minGroup || ng.length < minGroup) continue;
+      const a = medPrice(tg), b = medPrice(ng);
+      models.push({ key, thenCount: tg.length, nowCount: ng.length, thenMedian: a, nowMedian: b, change: b / a - 1 });
+    }
+    models.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    return {
+      daysAgo,
+      then: stats(then), now: stats(active),
+      soldSince: sold.filter((l) => l.sold.daysAgo < daysAgo).length,
+      listedSince: active.filter((l) => l.daysListed < daysAgo).length,
+      cutsSince: active.filter((l) => l.history.slice(1).some((h) => h.daysAgo < daysAgo)).length,
+      models,
+    };
+  }
+
   /* ---------- Your market: everything within a radius of a ZIP code ---------- */
 
   // What's for sale around a point, compared with the whole market. `expected(l)`
@@ -733,7 +808,7 @@
     median, mean, groupBy, linearFit, fit2, buildFairValue, specModel, applySpecs, liftOf, priceOn, lastChange, haversineMiles,
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
-    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops,
+    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops, makeMomentum, trimVelocity, timeCapsule,
     huntDiff, huntStats, rarityLabel,
     localMarket, bestDeals, worthTheDrive, localVsNational, marketCities, distOf, FUEL_PER_MILE,
   };
