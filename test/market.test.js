@@ -441,3 +441,49 @@ test('a time capsule matches a snapshot of the same day', () => {
   }
   assert.equal(Market.timeCapsule(listings, sold, 0).then.count, listings.length, 'today is today');
 });
+
+test('live requests are paced: a few in flight, duplicates shared, a rate-limit reply retried', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const Live = require('../js/live.js');
+  let open = 0, maxOpen = 0, hits = 0, limited = 0;
+  const server = http.createServer((req, res) => {
+    hits++;
+    open++; maxOpen = Math.max(maxOpen, open);
+    res.on('finish', () => { open--; });
+    // The first request for sold cars is refused, the way Visor refuses a burst.
+    if (req.url.includes('inventory_status=sold') && !limited) {
+      limited++;
+      res.writeHead(429, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Rate limit exceeded. Retry after 1 seconds.' } }));
+    }
+    setTimeout(() => handle(req, res), 30);
+  }).listen(0);
+  const prevBase = Live.PROVIDERS.visor.base;
+  Live.PROVIDERS.visor.base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  try {
+    Live.setProvider('visor');
+    const facet = (n, extra) => Live.request('/v1/facets', Object.assign({ facets: n, facet_value_limit: 5 }, extra || {}));
+    const t0 = Date.now();
+    const results = await Promise.all([
+      facet('make'), facet('model'), facet('body_type'), facet('price'), facet('trim'), facet('year'),
+      facet('make'), // identical to the first: shares its fetch
+      facet('model', { inventory_status: 'sold', sold_within_days: 30 }),
+    ]);
+    assert.equal(results.length, 8);
+    assert.ok(results.every((r) => r.data && r.data.total > 0));
+    assert.ok(maxOpen <= 3, `at most 3 in flight, saw ${maxOpen}`);
+    assert.equal(hits, 8, 'seven distinct requests plus one retry');
+    assert.equal(limited, 1);
+    assert.ok(Date.now() - t0 >= 1000, 'waited out the retry-after');
+    // The real API computes metrics for one facet per request; the mock enforces it so the pages stay within it.
+    await assert.rejects(facet('make,model', { metrics: 'price.median' }), (e) => e.code === 'bad_request' && /exactly one facet/.test(e.message));
+    const one = await facet('make', { metrics: 'price.median' });
+    assert.ok(Live.bucketsOf(one.data.facets.make).some((b) => b.metrics['price.median'] != null));
+  } finally {
+    server.close();
+    Live.PROVIDERS.visor.base = prevBase;
+    delete globalThis.gridlineDesktop;
+  }
+});
