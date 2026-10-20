@@ -32,10 +32,11 @@
   --seq-4: #0f766e;
   --then: #a3aab5;
   --now: #1e3a5f;
-  --ret-1: #c9dcef;
-  --ret-2: #8fb4da;
-  --ret-3: #4e82b8;
-  --ret-4: #1e3a5f;
+  --ret-1: #1e3a5f;
+  --ret-2: #2f6a9a;
+  --ret-3: #6aa6d4;
+  --ret-4: #a9cbe8;
+  --track: #eef1f5;
   --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 4px 16px rgba(15, 23, 42, .06);
   --shadow-lg: 0 8px 40px rgba(15, 23, 42, .14);
   --radius: 14px;
@@ -50,7 +51,7 @@
     --good: #34d399; --bad: #f87171; --used: #1e3a8a; --cert: #3b82f6;
     --d-great: #2dd4bf; --d-good: #2a8f84; --d-fair: #3b3b40; --d-high: #b4683c; --d-over: #fb923c;
     --seq-1: #173a39; --seq-2: #1d5f58; --seq-3: #26968a; --seq-4: #2dd4bf;
-    --then: #5b6576; --now: #8ab4f8; --ret-1: #1f3550; --ret-2: #2f5785; --ret-3: #4d84c4; --ret-4: #8ab4f8;
+    --then: #5b6576; --now: #8ab4f8; --ret-1: #0a2240; --ret-2: #0a5273; --ret-3: #2479a6; --ret-4: #5ca8d6; --track: #070708;
     --shadow: none; --shadow-lg: 0 8px 40px rgba(0, 0, 0, .6);
     color-scheme: dark;
   }
@@ -61,7 +62,7 @@
   --good: #34d399; --bad: #f87171; --used: #1e3a8a; --cert: #3b82f6;
   --d-great: #2dd4bf; --d-good: #2a8f84; --d-fair: #3b3b40; --d-high: #b4683c; --d-over: #fb923c;
   --seq-1: #173a39; --seq-2: #1d5f58; --seq-3: #26968a; --seq-4: #2dd4bf;
-  --then: #5b6576; --now: #8ab4f8; --ret-1: #1f3550; --ret-2: #2f5785; --ret-3: #4d84c4; --ret-4: #8ab4f8;
+  --then: #5b6576; --now: #8ab4f8; --ret-1: #0a2240; --ret-2: #0a5273; --ret-3: #2479a6; --ret-4: #5ca8d6; --track: #070708;
   --shadow: none; --shadow-lg: 0 8px 40px rgba(0, 0, 0, .6);
   color-scheme: dark;
 }
@@ -210,9 +211,9 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .cat-head h2 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); letter-spacing: -.035em; line-height: 1.1; }
 .cat-head .eyebrow { margin: 6px 0 0; max-width: 70ch; }
 .cat-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-.cat-pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 9px 16px; border-radius: 999px; font-weight: 600; font-size: .92rem; box-shadow: var(--shadow); white-space: nowrap; }
-.cat-pill:hover { border-color: var(--text); text-decoration: none; }
-.cat-pill span { color: var(--muted); }
+.cat-pill { display: inline-flex; align-items: center; gap: 10px; background: var(--surface-2); color: var(--text-2); padding: 11px 20px; border-radius: 999px; font-weight: 500; font-size: 1.02rem; white-space: nowrap; transition: background .15s, color .15s; }
+.cat-pill:hover, .cat-pill:focus-visible { background: color-mix(in srgb, var(--surface-2) 82%, var(--text)); color: var(--text); text-decoration: none; }
+.cat-pill span { color: var(--muted); font-size: 1.1em; line-height: 1; }
 
 /* ---------- Car illustration ---------- */
 .car-art { width: 100%; height: auto; display: block; }
@@ -274,27 +275,37 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .legend.boxed { align-self: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; gap: 6px 18px; font-size: .86rem; font-weight: 500; color: var(--text); }
 .legend.boxed .key { width: 12px; height: 12px; }
 /* Value kept by year: one track per model; each year's bar sits on the one before it, so the steps show where value went. */
-.ret-bars { display: grid; gap: 14px; }
+.ret-bars { display: grid; gap: 18px; }
 .ret-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .ret-head span:last-child { text-align: right; color: var(--text-2); font-size: .98rem; }
 .ret-head b { color: var(--text); font-weight: 700; }
 .ret-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
 .ret-label b { display: block; font-size: 1.02rem; font-weight: 600; line-height: 1.25; }
 .ret-label small { display: block; color: var(--muted); font-size: .76rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ret-track { position: relative; height: 40px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); overflow: hidden; }
-.ret-fill { position: absolute; top: 3px; bottom: 3px; left: 3px; right: 62px; }
-.ret-track i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 5px; box-shadow: 2px 0 0 var(--surface-2); }
+.ret-track { position: relative; height: 44px; border: 1px solid color-mix(in srgb, var(--text) 24%, var(--surface)); border-radius: 9px; background: var(--track); overflow: hidden; }
+.ret-fill { position: absolute; top: 3px; bottom: 3px; left: 3px; right: 70px; }
+.ret-track i { position: absolute; top: 0; bottom: 0; border-radius: 3px; box-shadow: -2px 0 0 var(--track); }
 .ret-track i.ret-1 { background: var(--ret-1); } .ret-track i.ret-2 { background: var(--ret-2); } .ret-track i.ret-3 { background: var(--ret-3); } .ret-track i.ret-4 { background: var(--ret-4); }
-.ret-track b { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ret-track b { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 /* Days to sell: a strip of dots from fast to slow, with each trim's pace marked. */
-.days-dots { display: flex; gap: 4px; margin: 2px 0 8px; }
-.days-dots i { flex: 1 1 0; min-width: 4px; height: 22px; border-radius: 4px; }
-.days-dots i.d-great { background: var(--d-great); } .days-dots i.d-good { background: var(--d-good); } .days-dots i.d-fair { background: color-mix(in srgb, var(--new) 70%, var(--d-high)); } .days-dots i.d-high { background: var(--d-high); } .days-dots i.d-over { background: var(--d-over); }
-.days-dots i.mark, .key.mark { background: #a78bfa; }
-.days-dots i.mark { outline: 2px solid var(--surface); }
-.trim-vs .trim-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.days-dots { display: flex; gap: 6px; margin: 2px 0 10px; }
+.days-dots i { flex: 1 1 0; min-width: 4px; max-width: 12px; height: 20px; border-radius: 999px; }
+.days-dots i.p1 { background: #8acf86; } .days-dots i.p2 { background: #b3d284; } .days-dots i.p3 { background: #cbcf83; } .days-dots i.p4 { background: #fc923b; } .days-dots i.p5 { background: #fd6536; } .days-dots i.p6 { background: #e43938; }
+.days-dots i.mark-fast, .key.mark-fast { background: #b7a9fb; }
+.days-dots i.mark-slow, .key.mark-slow { background: #5b6fd8; }
+.trim-vs .trim-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .trim-vs .trim-row:last-of-type { border-bottom: 0; }
-.split-map.trim { grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); }
+.trim-vs .small { margin-top: 2px; }
+/* The trim card: the days-to-sell strip and trims on the left, the state map on the right. */
+.trim-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 16px 24px; align-items: center; flex: 1; }
+.trim-layout .map-paper { display: flex; align-items: center; }
+.trim-layout .geomap { width: 100%; max-height: 300px; }
+.momentum { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pulse-dots { display: inline-flex; gap: 3px; }
+.pulse-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); animation: pulse-dot 1.8s infinite; }
+.pulse-dots i:nth-child(2) { animation-delay: .3s; }
+.pulse-dots i:nth-child(3) { animation-delay: .6s; }
+@keyframes pulse-dot { 0%, 100% { opacity: .3; } 40% { opacity: 1; } }
 .trim-vs .trim-name small { white-space: nowrap; }
 .trim-vs .trim-name b { display: inline; font-size: 1rem; }
 .trim-vs .trim-days { font-size: 1.05rem; font-weight: 700; }
@@ -864,7 +875,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 @media (max-width: 1080px) {
   .insight-grid, .viz-row, .overview-grid { grid-template-columns: minmax(0, 1fr); }
   .capsule-grid { grid-template-columns: minmax(0, 1fr); }
-  .split-map .geomap { max-height: 320px; }
+  .split-map .geomap, .trim-layout .geomap { max-height: 320px; }
   .car-hero, .car-grid { grid-template-columns: minmax(0, 1fr); }
   .stats-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stats-strip > div:nth-child(3) { border-right: 0; }
@@ -901,7 +912,8 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
   .ret-head span:first-child { display: none; }
   .ret-head span:last-child { text-align: left; }
   .arrivals { gap: 16px; }
-  .split-map { grid-template-columns: minmax(0, 1fr); }
+  .split-map, .trim-layout { grid-template-columns: minmax(0, 1fr); }
+  .cat-pill { padding: 9px 16px; font-size: .95rem; }
   .cat-nav { top: 53px; }
   .cat-nav-inner { padding: 6px 12px; }
   .home-market { font-size: .88rem; }

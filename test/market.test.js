@@ -68,6 +68,15 @@ test('weekly insights produce content', () => {
   assert.ok(Market.arrivals(listings, 2026).total > 0);
   assert.ok(Market.priceMovers(listings, 20).length > 0);
   assert.ok(Market.retention(listings, 'Compact SUV', 2026).length >= 3);
+  // The home page follows residual value over 3 years: one share of MSRP per year, best keeper first.
+  const three = Market.retention(listings, 'Compact SUV', 2026, 3);
+  assert.ok(three.length >= 3);
+  for (const r of three) {
+    assert.equal(r.byAge.length, 3);
+    for (const v of r.byAge) assert.ok(v > 0 && v < 1.5);
+    assert.ok(r.msrp > 0 && r.avgList > 0 && r.avgMiles > 0);
+  }
+  for (let i = 1; i < three.length; i++) assert.ok(three[i - 1].byAge[2] >= three[i].byAge[2], 'best 3-year keeper first');
   assert.ok(Market.rareSpecs(listings, Market.colorStats(listings), 8).length > 0);
 });
 
