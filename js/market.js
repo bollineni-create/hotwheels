@@ -497,22 +497,26 @@
     return out.sort((a, b) => a.change - b.change);
   }
 
-  function retention(listings, segment, currentYear) {
+  // Residual value by model within a segment: the share of base MSRP that used cars under 75k miles
+  // still ask at 1, 2 ... `years` years old (default 4), best keeper first. MSRP, average list price
+  // and miles describe the oldest of those model years.
+  function retention(listings, segment, currentYear, years) {
+    const span = years || 4;
     const pool = listings.filter((l) => l.segment === segment && l.condition !== 'New' && l.miles < 75000);
     const rows = [];
     for (const [key, group] of groupBy(pool, (l) => l.make + '|' + l.model)) {
       const [make, model] = key.split('|');
       const byAge = [];
-      for (let age = 1; age <= 4; age++) {
+      for (let age = 1; age <= span; age++) {
         const g = group.filter((l) => currentYear - l.year === age);
         byAge.push(g.length >= 3 ? mean(g.map((l) => l.price / l.msrpBase)) : null);
       }
       if (byAge.some((v) => v == null)) continue;
-      const four = group.filter((l) => currentYear - l.year === 4);
+      const oldest = group.filter((l) => currentYear - l.year === span);
       rows.push({ make, model, byAge, n: group.length,
-        msrp: mean(four.map((l) => l.msrpBase)), avgList: mean(four.map((l) => l.price)), avgMiles: mean(four.map((l) => l.miles)) });
+        msrp: mean(oldest.map((l) => l.msrpBase)), avgList: mean(oldest.map((l) => l.price)), avgMiles: mean(oldest.map((l) => l.miles)) });
     }
-    return rows.sort((a, b) => b.byAge[3] - a.byAge[3]);
+    return rows.sort((a, b) => b.byAge[span - 1] - a.byAge[span - 1]);
   }
 
   function stateDeltas(listings, delta) {
