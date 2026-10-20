@@ -165,17 +165,68 @@
     Truck: 'M50 36 L61 19 C62 17 64 16 67 16 L84 16 L84 36 Z M88 16 L105 16 C108 16 110 18 110 20 L113 36 L88 36 Z',
     Minivan: 'M42 34 L61 17 C63 15 66 14 70 14 L98 14 L98 34 Z M102 14 L140 14 L140 34 L102 34 Z M144 14 L168 14 C173 14 176 16 177 20 L182 34 L144 34 Z',
   };
-  function car(body, hex, opts) {
+  // The side profile's parts, shared by the single drawing and the four-view strip.
+  function carParts(body, hex) {
     const b = BODIES[body] ? body : 'Sedan';
     const front = b === 'Truck' ? 48 : 52;
     const rear = b === 'Truck' ? 164 : 160;
-    return `<svg class="car-art${opts && opts.cls ? ' ' + opts.cls : ''}" viewBox="0 0 210 84" role="img" aria-label="${esc((opts && opts.label) || b)}">` +
-      `<ellipse class="car-shadow" cx="105" cy="74" rx="92" ry="5"/>` +
+    return `<ellipse class="car-shadow" cx="105" cy="74" rx="92" ry="5"/>` +
       `<path d="${BODIES[b]}" fill="${esc(hex)}" class="car-body"/>` +
       `<path d="${WINDOWS[b]}" class="car-glass"/>` +
       `<path d="${BODIES[b]}" class="car-shine"/>` +
-      [front, rear].map((x) => `<circle cx="${x}" cy="64" r="13" class="car-tire"/><circle cx="${x}" cy="64" r="6.5" class="car-rim"/>`).join('') +
-      `</svg>`;
+      [front, rear].map((x) => `<circle cx="${x}" cy="64" r="13" class="car-tire"/><circle cx="${x}" cy="64" r="6.5" class="car-rim"/>`).join('');
+  }
+  function car(body, hex, opts) {
+    const b = BODIES[body] ? body : 'Sedan';
+    return `<svg class="car-art${opts && opts.cls ? ' ' + opts.cls : ''}" viewBox="0 0 210 84" role="img" aria-label="${esc((opts && opts.label) || b)}">${carParts(b, hex)}</svg>`;
+  }
+
+  // Interior colors as paint, for the interior view.
+  const INTERIOR_HEX = { Black: '#1b1d21', Gray: '#6b6f76', Charcoal: '#3a3d42', Beige: '#c9b99a', Ivory: '#e9e3d3', Blond: '#d9c9a6', Sepia: '#5a3f2c',
+    Cognac: '#8a4b2a', Brown: '#5c3d2e', Red: '#8a1c22', 'Rioja Red': '#7a1a26', Navy: '#1f2a4a', Tan: '#c9b99a', White: '#e9e6df', Blue: '#2c3e6b', Green: '#2f4a3a' };
+  const interiorHex = (name) => INTERIOR_HEX[name] || INTERIOR_HEX[Object.keys(INTERIOR_HEX).find((k) => String(name || '').toLowerCase().includes(k.toLowerCase()))] || '#3a3d42';
+  const TALL = new Set(['SUV', 'Truck', 'Minivan', 'Wagon']);
+
+  /* Four views of a car, in place of dealer photos: the side, the front, the interior in its own
+     color, and a wheel against the paint. Each view is an SVG tile; the strip is a 4-up grid. */
+  function carStrip(l, opts) {
+    const b = BODIES[l.body] ? l.body : 'Sedan';
+    const hex = l.extHex || '#888', ih = interiorHex(l.intColor);
+    const label = (opts && opts.label) || `${l.extColor || ''} ${l.model || ''}`.trim();
+    const tile = (inner, name) => `<svg class="car-view" viewBox="0 0 140 100" role="img" aria-label="${esc(name)}">${inner}</svg>`;
+    const side = tile(`<g transform="translate(0 20) scale(0.6667)">${carParts(b, hex)}</g>`, `${label}, side`);
+    const top = TALL.has(b) ? 16 : 24;
+    const front = tile(
+      `<ellipse class="car-shadow" cx="70" cy="88" rx="52" ry="5"/>` +
+      `<path class="car-body" fill="${esc(hex)}" d="M28 82 L28 54 C28 44 32 40 42 37 L52 ${top + 4} C55 ${top} 58 ${top - 2} 64 ${top - 2} L76 ${top - 2} C82 ${top - 2} 85 ${top} 88 ${top + 4} L98 37 C108 40 112 44 112 54 L112 82 Z"/>` +
+      `<path class="car-glass" d="M48 38 L55 ${top + 6} C57 ${top + 2} 60 ${top + 1} 64 ${top + 1} L76 ${top + 1} C80 ${top + 1} 83 ${top + 2} 85 ${top + 6} L92 38 Z"/>` +
+      `<rect class="car-mirror" fill="${esc(hex)}" x="19" y="44" width="10" height="7" rx="2"/><rect class="car-mirror" fill="${esc(hex)}" x="111" y="44" width="10" height="7" rx="2"/>` +
+      `<rect class="car-lamp" x="34" y="56" width="18" height="7" rx="3"/><rect class="car-lamp" x="88" y="56" width="18" height="7" rx="3"/>` +
+      `<rect class="car-grille" x="56" y="58" width="28" height="11" rx="2"/>` +
+      `<rect class="car-bumper" x="30" y="72" width="80" height="10" rx="3"/>` +
+      `<rect class="car-tire" x="30" y="80" width="14" height="10" rx="2"/><rect class="car-tire" x="96" y="80" width="14" height="10" rx="2"/>`,
+      `${label}, front`);
+    const interior = tile(
+      `<rect class="int-cabin" x="0" y="0" width="140" height="100"/>` +
+      `<path class="int-dash" fill="${esc(ih)}" d="M6 42 C40 26 100 26 134 42 L134 60 C100 48 40 48 6 60 Z"/>` +
+      `<path class="int-dash-shade" d="M6 42 C40 26 100 26 134 42 L134 60 C100 48 40 48 6 60 Z"/>` +
+      `<rect class="int-screen" x="60" y="36" width="24" height="13" rx="2"/>` +
+      `<circle class="int-wheel" cx="40" cy="60" r="15"/><circle class="int-hub" cx="40" cy="60" r="4.5"/>` +
+      `<rect class="int-seat" fill="${esc(ih)}" x="30" y="64" width="14" height="9" rx="4"/><rect class="int-seat" fill="${esc(ih)}" x="96" y="64" width="14" height="9" rx="4"/>` +
+      `<rect class="int-seat" fill="${esc(ih)}" x="16" y="72" width="42" height="30" rx="9"/><rect class="int-seat" fill="${esc(ih)}" x="82" y="72" width="42" height="30" rx="9"/>` +
+      `<path class="int-seat-shade" d="M16 81 C16 76 20 72 25 72 L49 72 C54 72 58 76 58 81 L58 102 L16 102 Z M82 81 C82 76 86 72 91 72 L115 72 C120 72 124 76 124 81 L124 102 L82 102 Z"/>`,
+      `${l.intColor || ''} interior`.trim());
+    const spokes = [0, 72, 144, 216, 288].map((a) => `<rect class="car-spoke" x="-3" y="-25" width="6" height="25" rx="2" transform="rotate(${a})"/>`).join('');
+    const wheel = tile(
+      `<rect class="car-body" fill="${esc(hex)}" x="0" y="0" width="140" height="100"/>` +
+      `<path class="car-shine" d="M0 30 C40 22 100 22 140 30"/>` +
+      `<circle class="car-well" cx="70" cy="86" r="48"/>` +
+      `<circle class="car-tire" cx="70" cy="86" r="42"/>` +
+      `<circle class="car-rim" cx="70" cy="86" r="27"/>` +
+      `<g transform="translate(70 86)">${spokes}</g>` +
+      `<circle class="car-hub" cx="70" cy="86" r="6"/>`,
+      `${label}, wheel`);
+    return `<div class="spec-strip">${side}${front}${interior}${wheel}</div>`;
   }
 
   /* Area chart of a count over the last N days, with optional median price line. */
@@ -262,8 +313,13 @@
       vb = [b[0] - pad, b[1] - pad, w + pad * 2, h + pad * 2];
       scale = vb[2] / U.W;
     }
+    // Zoomed to one state, only the states that reach into the view are drawn (never the Alaska and
+    // Hawaii insets, which sit under the lower-left of the country), and dots grow to stay readable.
+    const inView = (st) => { const b = geoShape(st).box; return b[2] >= vb[0] && b[0] <= vb[0] + vb[2] && b[3] >= vb[1] && b[1] <= vb[1] + vb[3]; };
+    const dotScale = o.focus ? scale * 2.6 : 1;
     let out = '', labels = '';
     for (const st of Object.keys(U.paths)) {
+      if (o.focus && st !== o.focus && (st === 'AK' || st === 'HI' || !inView(st))) continue;
       const c = cell(st);
       const cls = c ? c.cls : 'geo-empty';
       const act = c && (o.clickable || c.href) ? ` data-state="${st}"${c.href ? ` data-href="${esc(c.href)}"` : ''} role="button" tabindex="0" aria-label="${esc(c.title || st)}"` : '';
@@ -275,7 +331,7 @@
           (c.value != null ? `<text class="geo-val" x="${x.toFixed(1)}" y="${(y + fs * 0.95).toFixed(1)}" text-anchor="middle" style="font-size:${(fs * 0.85).toFixed(1)}px">${esc(c.value)}</text>` : '');
       }
     }
-    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale: scale }) : '';
+    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale }) : '';
     return `<svg class="chart geomap${o.focus ? ' focused' : ''}" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || 'Map of the United States by state')}">${out}${labels}${dots}</svg>`;
   }
 
@@ -373,7 +429,7 @@
       `<text class="lm-you" x="${cx - 13}" y="${cy - 10}" text-anchor="end">You</text></svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, geoMap, priceHistory, columns, car, trend, usMap, localMap, niceTicks, esc, TILES };
+  const api = { scatter, retentionBars, tileMap, geoMap, priceHistory, columns, car, carStrip, trend, usMap, localMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

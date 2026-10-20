@@ -615,7 +615,7 @@
 
   // Within each model, the trim that sold fastest against the one that sold slowest (median days to sell),
   // with every state's pace for the model. Biggest gap first.
-  function trimVelocity(sold, minGroup) {
+  function trimVelocity(sold, minGroup, minState) {
     const min = minGroup || 20;
     const out = [];
     for (const [key, g] of groupBy(sold, (l) => `${l.make}|${l.model}`)) {
@@ -628,8 +628,23 @@
       if (slow.days - fast.days < 1) continue;
       const byState = {};
       for (const [st, sg] of groupBy(g, (l) => l.state)) byState[st] = { n: sg.length, days: median(sg.map((l) => l.sold.daysToSell)) };
+      // The same two trims state by state, where each sold at least `minState` times and the fast
+      // one still sold faster: the state with the widest gap first. Each state carries its sales
+      // by city, for a map of where the model sells.
+      const minSt = minState || 5;
+      const states = [];
+      for (const [st, sg] of groupBy(g, (l) => l.state)) {
+        const sf = sg.filter((l) => l.trim === fast.trim), ss = sg.filter((l) => l.trim === slow.trim);
+        if (sf.length < minSt || ss.length < minSt) continue;
+        const fd = median(sf.map((l) => l.sold.daysToSell)), sd = median(ss.map((l) => l.sold.daysToSell));
+        if (sd - fd < 1) continue;
+        const cities = [...groupBy(sg, (l) => l.city)].map(([city, cg]) => ({ city, lat: cg[0].lat, lng: cg[0].lng, n: cg.length, days: median(cg.map((l) => l.sold.daysToSell)) }))
+          .sort((a, b) => b.n - a.n);
+        states.push({ state: st, n: sg.length, days: median(sg.map((l) => l.sold.daysToSell)), fast: { trim: fast.trim, n: sf.length, days: fd }, slow: { trim: slow.trim, n: ss.length, days: sd }, gap: sd - fd, cities });
+      }
+      states.sort((a, b) => b.gap - a.gap);
       const newShare = g.filter((l) => l.condition === 'New').length / g.length;
-      out.push({ make, model, fast, slow, gap: slow.days - fast.days, trims, byState, n: g.length, days: median(g.map((l) => l.sold.daysToSell)), condition: newShare >= 0.5 ? 'New' : 'Used' });
+      out.push({ make, model, fast, slow, gap: slow.days - fast.days, trims, byState, states, n: g.length, days: median(g.map((l) => l.sold.daysToSell)), condition: newShare >= 0.5 ? 'New' : 'Used' });
     }
     return out.sort((a, b) => b.gap - a.gap);
   }

@@ -218,7 +218,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .cat-pill.next { position: relative; }
 .cat-pill.auto::before { content: ""; position: absolute; inset: -3px; border-radius: 999px; padding: 2px; pointer-events: none; background: conic-gradient(from -90deg, var(--text) var(--ring, 0%), transparent 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
 /* Rare Specs and Time Capsules: a card per car. */
-.spec-card { display: flex; flex-direction: column; gap: 14px; padding: 26px 28px; border-radius: 18px; }
+.spec-card { display: flex; flex-direction: column; gap: 14px; padding: 26px 28px 30px; border-radius: 18px; position: relative; }
 .spec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; }
 .spec-head h3 { margin: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; min-width: 0; }
 .spec-head .spec-facts { grid-column: 1 / -1; }
@@ -230,8 +230,30 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .spec-tag:hover, .spec-tag:focus-visible { text-decoration: none; border-color: var(--text); }
 .spec-media { display: block; border-radius: 10px; overflow: hidden; }
 .spec-media:hover { text-decoration: none; }
-.spec-art { background: linear-gradient(180deg, color-mix(in srgb, var(--paint, #888) 18%, var(--surface-2)) 0%, var(--surface-2) 100%); padding: 12px 20%; }
-.spec-art svg { display: block; width: 100%; height: auto; max-height: 160px; }
+.spec-art { background: var(--surface-2); }
+.spec-art .car-art { display: block; width: 100%; height: auto; max-height: 160px; padding: 12px 20%; }
+/* Four drawn views where Visor shows four photos: side, front, interior and a wheel, each a tile. */
+.spec-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; aspect-ratio: 4 / 1.05; }
+.spec-strip .car-view { display: block; width: 100%; height: 100%; background: linear-gradient(180deg, color-mix(in srgb, var(--paint, #888) 16%, #5b6372) 0%, color-mix(in srgb, var(--paint, #888) 6%, #2f343d) 100%); }
+.spec-strip .car-shadow { fill: rgba(0, 0, 0, .35); }
+.car-view .car-shine { fill: none; }
+.car-lamp { fill: #eef3ff; stroke: rgba(0, 0, 0, .25); stroke-width: .6; }
+.car-grille { fill: #1f2328; }
+.car-bumper { fill: rgba(0, 0, 0, .22); }
+.car-mirror { stroke: rgba(0, 0, 0, .25); stroke-width: .6; }
+.car-well { fill: #0b0d11; }
+.car-spoke { fill: #e5e7eb; }
+.car-hub { fill: #9ca3af; stroke: #4b5563; stroke-width: 1.2; }
+.int-cabin { fill: #15171b; }
+.int-dash-shade { fill: rgba(0, 0, 0, .35); }
+.int-screen { fill: #0f172a; stroke: #334155; stroke-width: .8; }
+.int-wheel { fill: none; stroke: #2a2d33; stroke-width: 5; }
+.int-hub { fill: #2a2d33; }
+.int-seat { stroke: rgba(0, 0, 0, .3); stroke-width: .8; }
+.int-seat-shade { fill: rgba(0, 0, 0, .18); }
+.card-open { position: absolute; right: 12px; bottom: 10px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: var(--muted); font-size: 1rem; line-height: 1; opacity: .55; transition: opacity .15s, background .15s, color .15s; }
+.card-open:hover, .card-open:focus-visible { opacity: 1; text-decoration: none; background: var(--surface-2); color: var(--text); }
+.spec-card:hover .card-open, .insight:hover .card-open { opacity: .9; }
 .spec-photos { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; aspect-ratio: 4 / 1; background: var(--surface-2); }
 .spec-photos.n1 { grid-template-columns: minmax(0, 1fr); aspect-ratio: 16 / 9; }
 .spec-photos.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); aspect-ratio: 2 / 1; }
@@ -273,7 +295,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .insight-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 18px; }
 .insight-head h2 { font-size: clamp(1.5rem, 3vw, 2rem); margin: 0; }
 .insight-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.insight { display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; border-radius: 18px; }
+.insight { display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; border-radius: 18px; position: relative; }
 .insight header h3 { font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
 .insight header .muted { margin-top: 6px; }
 .sep { color: var(--border); margin: 0 2px; }
@@ -312,9 +334,6 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .legend.boxed .key { width: 12px; height: 12px; }
 /* Value kept by year: one track per model; each year's bar sits on the one before it, so the steps show where value went. */
 .ret-bars { display: grid; gap: 18px; }
-.ret-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.ret-head span:last-child { text-align: right; color: var(--text-2); font-size: .98rem; }
-.ret-head b { color: var(--text); font-weight: 700; }
 .ret-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
 .ret-label b { display: block; font-size: 1.02rem; font-weight: 600; line-height: 1.25; }
 .ret-label small { display: block; color: var(--muted); font-size: .76rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -355,6 +374,10 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .map-paper .geo.flat { fill: #f4f5f7; }
 .map-paper .geo.down-1 { fill: #fbd9db; } .map-paper .geo.down-2 { fill: #f49aa0; } .map-paper .geo.down-3 { fill: #e11d48; }
 .map-paper .geo[data-state]:hover, .map-paper .geo[data-state]:focus-visible { stroke: #111; }
+.map-paper .geo.geo-state { fill: #ffffff; stroke: #9aa0a8; stroke-width: 1.2; }
+.map-paper.state-map .geomap { max-height: 300px; }
+.map-paper.state-map .map-pt circle { stroke: #fff; stroke-width: 1.2; }
+.map-paper.state-map .map-pt text { fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, .45); stroke-width: 2px; }
 .key.d-great { background: var(--d-great); } .key.d-fair { background: var(--d-fair); } .key.d-over { background: var(--d-over); }
 
 .rare-head { display: flex; flex-wrap: wrap; align-items: end; gap: 4px 16px; margin: 40px 0 12px; scroll-margin-top: 90px; }
@@ -460,7 +483,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .tile.cnt-3 text, .tile.cnt-4 text { fill: #fff; }
 :root[data-theme="dark"] .tile.d-great text, :root[data-theme="dark"] .tile.cnt-4 text { fill: #04211e; }
 .geomap { max-height: 300px; }
-.geomap.focused { max-height: 260px; }
+.geomap.focused { max-height: 260px; overflow: hidden; }
 .geo { fill: var(--surface-2); stroke: var(--surface); stroke-width: 1; transition: fill .15s; }
 .geo.geo-empty { fill: color-mix(in srgb, var(--surface-2) 75%, var(--bg)); }
 .geo[data-state] { cursor: pointer; }
@@ -944,9 +967,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
   .cat-switch { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .cat-switch::-webkit-scrollbar { display: none; }
   .cat-pill { flex: none; }
-  .ret-head, .ret-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .ret-head span:first-child { display: none; }
-  .ret-head span:last-child { text-align: left; }
+  .ret-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .arrivals { gap: 16px; }
   .split-map, .trim-layout { grid-template-columns: minmax(0, 1fr); }
   .cat-pill { padding: 9px 16px; font-size: .95rem; }

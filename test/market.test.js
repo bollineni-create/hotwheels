@@ -443,6 +443,25 @@ test('trim velocity pairs the fastest and slowest trims of a model', () => {
   assert.equal(Market.median(pool.map((l) => l.sold.daysToSell)), r.fast.days);
 });
 
+test('trim velocity scopes the same two trims to the states where both sold enough', () => {
+  const { sold } = generateInventory();
+  const rows = Market.trimVelocity(sold, 20, 5);
+  assert.ok(rows.some((r) => r.states.length > 0), 'at least one model has a state with both trims');
+  for (const r of rows) {
+    for (const st of r.states) {
+      assert.equal(st.fast.trim, r.fast.trim);
+      assert.equal(st.slow.trim, r.slow.trim);
+      assert.ok(st.fast.n >= 5 && st.slow.n >= 5);
+      assert.ok(st.gap >= 1 && Math.abs(st.gap - (st.slow.days - st.fast.days)) < 1e-9);
+      const inState = sold.filter((l) => l.make === r.make && l.model === r.model && l.state === st.state);
+      assert.equal(st.n, inState.length);
+      assert.equal(st.cities.reduce((s, c) => s + c.n, 0), inState.length, 'every sale in the state sits in a city');
+      assert.ok(st.cities.every((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)));
+    }
+    for (let i = 1; i < r.states.length; i++) assert.ok(r.states[i - 1].gap >= r.states[i].gap, 'widest gap first');
+  }
+});
+
 test('a time capsule matches a snapshot of the same day', () => {
   const { sold } = generateInventory();
   for (const d of [7, 30, 90]) {
