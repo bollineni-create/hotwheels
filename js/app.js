@@ -736,28 +736,71 @@
       return;
     }
     try {
+      // Price buckets ride along with the make facets when Visor allows it;
+      // if a plan or version rejects the combination, fall back to makes only.
+      const makeFacets = () => Live.request('/v1/facets', { facets: 'make,price', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' })
+        .catch((e) => (e && e.code === 'bad_request' ? Live.request('/v1/facets', { facets: 'make', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' }) : Promise.reject(e)));
       const [active, sold30, fast, deals, makes] = await Promise.all([
         Live.count({ ex: {} }, ctx),
         Live.count({ ex: {} }, ctx, { inventory_status: 'sold', sold_within_days: 30 }),
         Live.request('/v1/facets', { inventory_status: 'sold', sold_within_days: 30, facets: 'model', facet_value_limit: 60, metrics: 'days_on_market.median,price.median' }),
         Live.request('/v1/listings', { inventory_type: 'new', sort: 'discount', limit: 8, min_msrp: 20000 }),
-        Live.request('/v1/facets', { facets: 'make', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' }),
+        makeFacets(),
       ]);
       if (!document.getElementById('live-insights')) return;
-      const fastest = Live.bucketsOf(fast.data && fast.data.facets && fast.data.facets.model)
-        .filter((b) => b.count >= 50 && b.metrics && b.metrics['days_on_market.median'] != null)
-        .sort((a, b) => a.metrics['days_on_market.median'] - b.metrics['days_on_market.median']).slice(0, 6);
+      const m = (b, k) => (b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
+      const soldModels = Live.bucketsOf(fast.data && fast.data.facets && fast.data.facets.model)
+        .filter((b) => b.count >= 50 && m(b, 'days_on_market.median') != null)
+        .sort((a, b) => m(a, 'days_on_market.median') - m(b, 'days_on_market.median'));
+      const fastest = soldModels.slice(0, 10);
+      const typicalDays = Market.median(soldModels.map((b) => m(b, 'days_on_market.median')));
       const discountCars = (deals.data || []).map(Live.normalize);
       discountCars.forEach((l) => LIVE_SEEN.set(l.id, l));
-      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make);
-      grid.innerHTML = `
-        <article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale nationwide</h3>
-          <p class="muted">${num(sold30)} sold in the last 30 days, about ${num(sold30 / 30)} a day · ${active && sold30 ? Math.round(active / (sold30 / 30)) + ' days of supply' : ''}</p></header>
-          <ul class="rank-list">${makeRows.map((b) => `<li><a href="${searchHref({ make: b.value })}"><span><b>${esc(b.value)}</b><small>${b.metrics && b.metrics['days_on_market.median'] != null ? Math.round(b.metrics['days_on_market.median']) + ' median days listed' : ''}</small></span>
-            <span class="r"><b>${num(b.count)}</b><small>${b.metrics && b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('')}</ul></article>
-        <article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest right now</h3><p class="muted">Median days from listing to sale, last 30 days (models with 50+ sales)</p></header>
-          <ul class="rank-list">${fastest.map((b) => `<li><a href="${searchHref({ model: b.value, when: 'sold' })}"><span><b>${esc(b.value)}</b><small>${plural(b.count, 'sale')}</small></span>
-            <span class="r"><b>${Math.round(b.metrics['days_on_market.median'])} days</b><small>${b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('') || '<li class="muted">Not enough sales data.</li>'}</ul></article>
+      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
+      const maxMake = Math.max(1, ...makeRows.map((b) => b.count));
+      const maxDays = Math.max(1, ...fastest.map((b) => m(b, 'days_on_market.median')));
+      const perDay = sold30 ? sold30 / 30 : 0;
+      const supply = active && perDay ? active / perDay : null;
+      const priceStats = makes.data && makes.data.stats && makes.data.stats.price;
+      const medianAsk = priceStats && (priceStats.median != null ? priceStats.median : priceStats.p50);
+      const priceBuckets = ((makes.data && makes.data.range_facets && makes.data.range_facets.price && makes.data.range_facets.price.buckets) || [])
+        .filter((b) => b.count > 0 && b.min != null && b.max != null);
+      const maxBucket = Math.max(1, ...priceBuckets.map((b) => b.count));
+
+      const makesCard = `<article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale nationwide</h3>
+          <p class="muted">Dealer listings tracked by ${esc(srcName())} right now, and how fast they are turning over</p></header>
+          <dl class="kpis live-kpis">
+            <div><dt>Sold, last 30 days</dt><dd>${num(sold30)}</dd></div>
+            <div><dt>Sales a day</dt><dd>${num(perDay)}</dd></div>
+            <div><dt>Days of supply</dt><dd>${supply ? num(supply) : '—'}</dd></div>
+            ${medianAsk != null ? `<div><dt>Median asking</dt><dd>${money(medianAsk)}</dd></div>` : ''}
+          </dl>
+          <h4 class="hbars-title">Cars for sale by make <span class="muted">· median asking price and days listed</span></h4>
+          <ol class="hbars">${makeRows.map((b) => {
+            const price = m(b, 'price.median'), days = m(b, 'days_on_market.median');
+            const sub = [price != null ? money(price) : null, days != null ? plural(Math.round(days), 'day') + ' listed' : null].filter(Boolean).join(' · ');
+            return `<li><a href="${searchHref({ make: b.value })}" title="${esc(b.value)}: ${num(b.count)} for sale${sub ? ' · ' + esc(sub) : ''}">
+              <span class="hb-label"><b>${esc(b.value)}</b><small>${esc(sub || '')}</small></span>
+              <span class="hb-track"><i style="width:${((b.count / maxMake) * 100).toFixed(1)}%"></i></span>
+              <b class="hb-val">${num(b.count)}</b></a></li>`; }).join('')}</ol>
+          <a class="card-cta" href="${searchHref({})}">Browse every listing →</a></article>`;
+
+      const fastCard = `<article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest right now</h3>
+          <p class="muted">Median days from listing to sale over the last 30 days, models with 50+ sales${typicalDays != null ? ` · a typical model takes ${plural(Math.round(typicalDays), 'day')}` : ''}</p></header>
+          ${fastest.length ? `<ol class="hbars sold">${fastest.map((b) => {
+            const days = m(b, 'days_on_market.median'), price = m(b, 'price.median');
+            const sub = [plural(b.count, 'sale'), price != null ? 'median ' + money(price) : null].filter(Boolean).join(' · ');
+            return `<li><a href="${searchHref({ model: b.value, when: 'sold' })}" title="${esc(b.value)}: sells in ${plural(Math.round(days), 'day')} · ${esc(sub)}">
+              <span class="hb-label"><b>${esc(b.value)}</b><small>${esc(sub)}</small></span>
+              <span class="hb-track"><i style="width:${((days / maxDays) * 100).toFixed(1)}%"></i></span>
+              <b class="hb-val">${plural(Math.round(days), 'day')}</b></a></li>`; }).join('')}</ol>` : '<p class="muted">Not enough sales data yet.</p>'}
+          <a class="card-cta" href="${searchHref({ when: 'sold' })}">Browse recently sold cars →</a></article>`;
+
+      const priceCard = !priceBuckets.length ? '' : `<article class="card insight wide"><header><h3>What cars cost right now</h3>
+          <p class="muted">Every listing nationwide by asking price${medianAsk != null ? ` · half are listed under ${money(medianAsk)}` : ''} · tap a range to browse it</p></header>
+          <ul class="price-bars">${priceBuckets.map((b) => `<li><a href="${searchHref({ priceMin: Math.round(b.min), priceMax: Math.round(b.max) })}" title="${moneyK(b.min)}–${moneyK(b.max)}: ${num(b.count)} for sale (${pct(b.count / Math.max(1, active), 1)})"><span>${moneyK(b.min)}–${moneyK(b.max)}</span><i style="width:${Math.round((b.count / maxBucket) * 100)}%"></i><b>${num(b.count)}</b></a></li>`).join('')}</ul></article>`;
+
+      grid.innerHTML = `${makesCard}${fastCard}${priceCard}
         <article class="card insight wide"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars</h3><p class="muted">Live listings, MSRP over $20,000</p></header>
           <div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('')}</div>
           <a class="card-cta" href="${searchHref({ condition: 'New', sort: 'discount', msrpMin: 20000 })}">See all new-car discounts →</a></article>`;
