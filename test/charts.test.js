@@ -45,3 +45,13 @@ test('the dot map draws real outlines when the atlas is loaded', () => {
   assert.equal((svg.match(/map-state/g) || []).length, 51);
   assert.equal((svg.match(/<ellipse/g) || []).length, 2);
 });
+
+test('the car strip draws four views, painted in the car\'s colors', () => {
+  const html = Charts.carStrip({ body: 'SUV', extHex: '#1c2b45', extColor: 'Deep Crystal Blue', intColor: 'Beige', model: 'CX-5' });
+  assert.equal((html.match(/<svg /g) || []).length, 4);
+  assert.ok(html.includes('#1c2b45'), 'paint on the body');
+  assert.ok(html.includes('#c9b99a'), 'beige interior');
+  assert.ok(/aria-label="[^"]*side"/.test(html) && /aria-label="[^"]*front"/.test(html) && /aria-label="[^"]*interior"/.test(html) && /aria-label="[^"]*wheel"/.test(html));
+  const sedan = Charts.carStrip({ body: 'Spaceship', extHex: '#fff', extColor: 'White', intColor: 'Rioja Red' });
+  assert.equal((sedan.match(/<svg /g) || []).length, 4, 'unknown bodies draw as a sedan');
+});

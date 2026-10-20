@@ -44,6 +44,13 @@
     paints: [...new Set(ALL.map((l) => l.extColor))], upfitters: UPFITTER_NAMES,
   });
 
+  const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'Washington, DC', FL: 'Florida',
+    GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts',
+    MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+    NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee',
+    TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+  const stateName = (st) => STATE_NAMES[st] || st;
+
   // Typical sales tax by state, for out-the-door estimates.
   const STATE_TAX = { CA: 8.8, NY: 8.5, TX: 6.25, FL: 7, GA: 7, NC: 3, IL: 8.25, OH: 7.2, PA: 6, MI: 6, CO: 7.7, AZ: 8.4, WA: 9.3, MN: 6.9,
     OR: 0, MA: 6.25, NJ: 6.6, VA: 4.15, TN: 9.5, IN: 7, MO: 8.2, MD: 6, WI: 5.4, SC: 5, AL: 4, LA: 9.5, KY: 6, OK: 3.25, UT: 7.2, NV: 8.2 };
@@ -649,9 +656,10 @@
       return true;
     });
   }
-  // The panels the carousel can show: rare specs need the demo's spec data; live time capsules come from Visor's listings.
+  // The panels the carousel can show: Rare Specs and Time Capsules need colors, options and model counts,
+  // which the demo market and Visor have; the free auto.dev plan has neither, so it shows the trends alone.
   function homePanels() {
-    return PANELS.filter((p) => p.id === 'national' || (p.id === 'rare' ? !isLive() : !isLive() || SOURCE() === 'visor'));
+    return PANELS.filter((p) => p.id === 'national' || !isLive() || SOURCE() === 'visor');
   }
   const panelById = (id) => homePanels().find((p) => p.id === id) || homePanels()[0];
 
@@ -706,8 +714,8 @@
 
   function marketPanelHtml() {
     const id = panelById(PANEL.id).id;
-    if (id === 'rare') return rarePanelHtml();
-    if (id === 'capsules') return isLive() ? `<div class="insight-grid" id="live-capsules">${loadingHtml(`Looking for time capsules ${scopeShort()}…`)}</div>` : capsulePanelHtml();
+    if (id === 'rare') return isLive() ? `<div class="insight-grid spec-grid" id="live-rare">${loadingHtml(`Looking for rare specs ${scopeShort()}…`)}</div>` : rarePanelHtml();
+    if (id === 'capsules') return isLive() ? `<div class="insight-grid spec-grid" id="live-capsules">${loadingHtml(`Looking for time capsules ${scopeShort()}…`)}</div>` : capsulePanelHtml();
     return isLive() ? `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>` : weeklyGridHtml();
   }
 
@@ -727,6 +735,7 @@
     if (!isLive()) return;
     fillLiveInsights();
     if (document.getElementById('live-capsules')) fillLiveCapsules();
+    if (document.getElementById('live-rare')) fillLiveRare();
   }
 
   // The next panel comes around on its own every PANEL_MS, a ring filling on its pill, until you pick
@@ -792,7 +801,6 @@
       <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in residual value over ${RET_YEARS} years</h3>
       <p class="muted">${years[0]} to ${years[years.length - 1]} <span class="sep">|</span> Under 75k miles</p></header>
       <div class="ret-bars">
-        <div class="ret-head"><span></span><span><b>Avg list price</b> ${money(ret[0].avgList)}</span></div>
         ${ret.map((r) => `<div class="ret-row">
           <div class="ret-label"><b>${esc(r.make)} ${esc(r.model)}</b><small>MSRP ${money(r.msrp)} <span class="sep">|</span> Avg list ${money(r.avgList)} <span class="sep">|</span> ${milesText(r.avgMiles)}</small></div>
           ${retTrack(r)}
@@ -800,18 +808,24 @@
       </div>
       <div class="legend boxed">${years.map((_, k) => `<span><i class="key ret-${k + 1}"></i>Year ${k + 1}</span>`).join('')}</div>
       <a class="card-cta" href="${searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: years })}">Shop ${years[0]}–${years[years.length - 1]} compact SUVs →</a>
+      ${openCorner(searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: years }), 'Shop these compact SUVs')}
     </article>` : '';
 
     let trimCard = '';
     if (tv) {
       const key = `${tv.make} ${tv.model}`;
+      // Like Visor's "in Texas": the state where the same two trims are furthest apart, when each sold
+      // there at least five times; else the whole country.
+      const st = tv.states[0] || null;
+      const sc = st || tv;
+      const where = st ? stateName(st.state) : null;
       const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
       // A strip of pills across the model's range of days to sell, with each trim's pace marked: green up
       // to the fastest trim, yellow to orange between the two, red past the slowest.
-      const N = 25, max = tv.slow.days * 1.12;
+      const N = 25, max = sc.slow.days * 1.12;
       const slot = (d) => Math.max(0, Math.min(N - 1, Math.round((d / max) * (N - 1))));
-      const sf = slot(tv.fast.days), ss = Math.max(slot(tv.slow.days), sf + 1);
-      const marks = new Map([[sf, { t: tv.fast, cls: 'mark-fast' }], [ss, { t: tv.slow, cls: 'mark-slow' }]]);
+      const sf = slot(sc.fast.days), ss = Math.max(slot(sc.slow.days), sf + 1);
+      const marks = new Map([[sf, { t: sc.fast, cls: 'mark-fast' }], [ss, { t: sc.slow, cls: 'mark-slow' }]]);
       const dots = Array.from({ length: N }, (_, k) => {
         const m = marks.get(k);
         if (m) return `<i class="${m.cls}" title="${esc(m.t.trim)}: ${plural(Math.round(m.t.days), 'day')}"></i>`;
@@ -820,25 +834,38 @@
       }).join('');
       const row = (t, cls) => `<div class="trim-row"><i class="key ${cls}"></i><span class="trim-name"><b>${esc(t.trim)}</b> <small>(${num(t.n)} sold)</small></span><b class="trim-days">${plural(Math.round(t.days), 'day')}</b></div>`;
       const others = tv.trims.slice(1, -1);
+      const aside = st
+        ? `Nationwide: ${esc(tv.fast.trim)} ${Math.round(tv.fast.days)}d · ${esc(tv.slow.trim)} ${Math.round(tv.slow.days)}d`
+        : others.length ? others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ') : '';
+      const scopeF = st ? { state: st.state } : {};
+      // The map: with a state, that state alone with its cities sized by sales and colored by pace;
+      // else every state shaded by how fast the model sells there.
+      const map = st
+        ? Charts.geoMap((s) => (s === st.state ? { cls: 'geo-state', title: `${where}: ${plural(st.n, 'sale')}, median ${plural(Math.round(st.days), 'day')} to sell` } : null), {
+          focus: st.state, aria: `${where}, with each city's ${key} sales colored by how fast they sold`,
+          dots: st.cities.map((c) => ({ city: c.city, lat: c.lat, lng: c.lng, count: c.n, cls: paceClass(c.days / st.days - 1), title: `${c.city}: ${plural(c.n, 'sale')}, median ${plural(Math.round(c.days), 'day')} to sell` })),
+        })
+        : Charts.geoMap((s) => {
+          const d = tv.byState[s];
+          if (!d || d.n < 5) return null;
+          return { cls: paceClass(d.days / tv.days - 1), title: `${s}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: s, when: 'sold', sort: 'sold-fastest' }) };
+        }, { aria: `States shaded by how fast ${key}s sell` });
       trimCard = `<article class="card insight">
-        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(tv.fast.trim) ? `${tv.fast.trim} models` : `${tv.fast.trim}s`)} sell ${Math.round(tv.gap)} days faster than ${esc(tv.slow.trim)} models</h3>
-        <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(tv.n, 'sale')} nationwide</p></header>
+        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(sc.fast.trim) ? `${sc.fast.trim} models` : `${sc.fast.trim}s`)} sell ${Math.round(sc.gap)} days faster than ${esc(sc.slow.trim)} models${where ? ` in ${esc(where)}` : ''}</h3>
+        <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(sc.n, 'sale')} ${where ? `in ${esc(where)}` : 'nationwide'}</p></header>
         <div class="trim-layout">
           <div class="trim-vs">
             <p class="muted">Avg days to sell</p>
             <div class="days-dots" aria-hidden="true">${dots}</div>
-            ${row(tv.fast, 'mark-fast')}
-            ${row(tv.slow, 'mark-slow')}
-            ${others.length ? `<p class="muted small">${others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ')}</p>` : ''}
+            ${row(sc.fast, 'mark-fast')}
+            ${row(sc.slow, 'mark-slow')}
+            ${aside ? `<p class="muted small">${aside}</p>` : ''}
           </div>
-          <div class="map-paper">${Charts.geoMap((st) => {
-            const d = tv.byState[st];
-            if (!d || d.n < 5) return null;
-            return { cls: paceClass(d.days / tv.days - 1), title: `${st}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: st, when: 'sold', sort: 'sold-fastest' }) };
-          }, { aria: `States shaded by how fast ${key}s sell` })}</div>
+          <div class="map-paper${st ? ' state-map' : ''}">${map}</div>
         </div>
         <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
-        <a class="card-cta" href="${searchHref({ model: key, when: 'sold', sort: 'sold-fastest' })}">Every ${esc(tv.model)} sold, fastest first →</a>
+        <a class="card-cta" href="${searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, scopeF))}">Every ${esc(tv.model)} sold${where ? ` in ${esc(where)}` : ''}, fastest first →</a>
+        ${openCorner(searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, scopeF)), `Every ${tv.model} sold, fastest first`)}
       </article>`;
     }
 
@@ -864,6 +891,7 @@
         </div>
         <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
         <a class="card-cta" href="${searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' })}">Every ${esc(mv.make)} sold this month →</a>
+        ${openCorner(searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' }), `Every ${mv.make} sold this month`)}
       </article>`;
     }
 
@@ -888,6 +916,7 @@
         </div>
       </div>
       <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
+      ${openCorner(searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' }), `See all ${arr.year} ${arr.model}s`)}
     </article>`;
 
     return `<div class="insight-grid">${retentionCard}${trimCard}${momentumCard}${arrivalsCard}</div>`;
@@ -1033,8 +1062,10 @@
 
   /* ----- Rare Specs and Time Capsules: a card per car ----- */
 
+  const openCorner = (href, label) => `<a class="card-open" href="${href}" aria-label="${esc(label)}" title="${esc(label)}">↗</a>`;
+
   // A car card for those panels: the title, a line of facts, the car (its photos with live data, else
-  // its drawing), how many of the model are for sale, and three stat cells, the notable ones marked 💎.
+  // four drawn views), how many of the model are for sale, and three stat cells, the notable ones marked 💎.
   function specCard(l, kind, cells, note) {
     const href = `#/car/${l.id}`;
     const facts = [conditionBadge(l), esc(l.trim), `${num(l.miles)} miles`, money(l.price),
@@ -1042,7 +1073,7 @@
     const photos = (l.photos || []).slice(0, 4);
     const art = photos.length
       ? `<div class="spec-photos n${photos.length}">${photos.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join('')}</div>`
-      : `<div class="spec-art" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}` })}</div>`;
+      : `<div class="spec-art" style="--paint:${esc(l.extHex)}">${Charts.carStrip(l)}</div>`;
     return `<article class="card spec-card">
       <header class="spec-head">
         <h3><a href="${href}">${esc(title(l))}</a></h3>
@@ -1052,18 +1083,28 @@
       <a class="spec-media" href="${href}" aria-label="${esc(title(l))} ${esc(l.trim)}">${art}</a>
       <p class="spec-of">${note}</p>
       <dl class="spec-stats">${cells.map((c) => `<div${c.hi ? ' class="hi"' : ''}><dt>${esc(c.label)}${c.hi ? ' <span class="gem" aria-label="rare">💎</span>' : ''}</dt><dd>${c.value}</dd><small>${c.sub}</small></div>`).join('')}</dl>
+      ${openCorner(href, `Open the ${title(l)}`)}
     </article>`;
   }
-  // The three cells from the demo's spec data: paint and interior counts within the model, and the
-  // options value against the model's average. A count is rare at 7 or fewer and a tenth of the model.
+  // A count is rare at 7 or fewer and a tenth of the model.
+  const rareCount = (c, total) => c != null && c <= 7 && c / Math.max(1, total) <= 0.1;
+  // The three cells: paint and interior counts within the model, and the options value against the
+  // model's average (demo) or, with live data, whether a factory package on the car is itself rare.
   function rarityCells(l, r) {
-    const rare = (c) => c != null && c <= 7 && c / Math.max(1, r.total) <= 0.1;
+    const rare = (c) => rareCount(c, r.total);
+    const n = (l.options || []).length;
+    let optSub, optHi;
+    if (r.optionsVsAvg != null) {
+      optSub = !r.optionsTotal ? 'No factory options' : r.total < 5 ? 'Few comparable builds' : r.optionsVsAvg >= 0 ? `${pct(r.optionsVsAvg)} more than avg` : `${pct(-r.optionsVsAvg)} less than avg`;
+      optHi = r.optionsTotal > 0 && r.optionsVsAvg >= 0.5;
+    } else {
+      optSub = r.rarePkg ? `${esc(r.rarePkg.name)}: on ${r.rarePkg.count} of ${num(r.total)}` : !n ? 'Options not available' : r.optionsTotal ? `${plural(n, 'factory package')}` : 'Package prices not available';
+      optHi = !!r.rarePkg;
+    }
     return [
-      { label: 'Exterior Color', value: `1 of ${num(r.extCount)}`, sub: esc(l.extColor), hi: rare(r.extCount) },
-      { label: 'Interior Color', value: `1 of ${num(r.intCount)}`, sub: esc(l.intColor), hi: rare(r.intCount) },
-      { label: 'Installed options', value: money(r.optionsTotal),
-        sub: !r.optionsTotal ? 'No factory options' : r.total < 5 ? 'Few comparable builds' : r.optionsVsAvg >= 0 ? `${pct(r.optionsVsAvg)} more than avg` : `${pct(-r.optionsVsAvg)} less than avg`,
-        hi: r.optionsTotal > 0 && r.optionsVsAvg >= 0.5 },
+      { label: 'Exterior Color', value: r.extCount == null ? '—' : `1 of ${num(r.extCount)}`, sub: esc(l.extColor), hi: rare(r.extCount) },
+      { label: 'Interior Color', value: r.intCount == null ? '—' : `1 of ${num(r.intCount)}`, sub: esc(l.intColor), hi: rare(r.intCount) },
+      { label: 'Installed options', value: r.optionsTotal || !n ? money(r.optionsTotal || 0) : plural(n, 'package'), sub: optSub, hi: optHi },
     ];
   }
   const specGrid = (cards, empty) => `<div class="insight-grid spec-grid">${cards.join('') || `<p class="muted">${empty}</p>`}</div>`;
@@ -1078,24 +1119,92 @@
       return specCard(l, 'capsules', rarityCells(l, r), `Of the ${num(r.total)} for sale nationwide <span class="sep">|</span> ${num(l.miles)} miles in ${plural(CURRENT_YEAR - l.year, 'year')}, ${usualMiles(share)}`);
     }), 'No time capsules right now.');
   }
-  // With Visor, time capsules are the lowest-mileage older used cars listed in your market: one request.
+  // How rare a live car's paint, interior and packages are among its model year nationwide: one
+  // facets request per model year (cars of the same model year share it, and repeats are free).
+  async function liveRarity(l) {
+    const r = await Live.request('/v1/facets', { make: l.make, model: l.model, year: String(l.year), facets: 'exterior_color,base_interior_color,options_packages', facet_value_limit: 100 });
+    const d = r.data || {}, fx = d.facets || {};
+    const total = d.total || 0;
+    const count = (name, v) => { const b = Live.bucketsOf(fx[name]).find((x) => String(x.value).toLowerCase() === String(v || '').toLowerCase()); return b ? b.count : null; };
+    const codes = (l.options || []).map((o) => ({ key: String(o.code || o.name).toLowerCase(), name: o.name || o.code }));
+    const rarePkg = Live.bucketsOf(fx.options_packages).map((b) => ({ b, o: codes.find((c) => c.key === String(b.value).toLowerCase()) }))
+      .filter((x) => x.o && rareCount(x.b.count, total)).sort((a, b) => a.b.count - b.b.count)[0] || null;
+    return {
+      total, extCount: count('exterior_color', l.extColor), intCount: count('base_interior_color', l.interiorFamily),
+      optionsTotal: (l.options || []).reduce((s, o) => s + (o.price || 0), 0), optionsVsAvg: null,
+      rarePkg: rarePkg ? { name: rarePkg.o.name, count: rarePkg.b.count } : null,
+    };
+  }
+  const liveSpecNote = (l, r) => `Of the ${num(r.total)} for sale nationwide`;
+
+  // With Visor, rare specs are found among the newest used listings in your market (one request):
+  // the model years with the most of them are checked for how common each car's paint, interior and
+  // packages are nationwide (a request per model year), and the four rarest get their option prices
+  // (a request each).
+  async function fillLiveRare() {
+    const grid = document.getElementById('live-rare');
+    if (!grid) return;
+    try {
+      const bp = Live.toParams(Object.assign(Market.emptyFilters(), homeScope()), liveCtx());
+      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', sort: 'days_on_market', limit: 100, fields: 'default,options_packages,photo_urls' }));
+      if (!grid.isConnected) return;
+      const cars = (res.data || []).map(Live.normalize).filter((l) => l.year && l.make && l.model);
+      const groups = [...Market.groupBy(cars, (l) => `${l.make}|${l.model}|${l.year}`)].sort((a, b) => b[1].length - a[1].length).slice(0, 6);
+      const scored = [];
+      await Promise.all(groups.map(async ([, g]) => {
+        for (const l of g) {
+          const r = await liveRarity(l).catch(() => null);
+          if (!r || !r.total) continue;
+          const score = (rareCount(r.extCount, r.total) ? 3 : 0) + (rareCount(r.intCount, r.total) ? 2 : 0) + (r.rarePkg ? 1 : 0) + (r.extCount ? 1 / r.extCount : 0);
+          scored.push({ l, r, score });
+        }
+      }));
+      if (!grid.isConnected) return;
+      // The four rarest, one per model, the ones with a 💎 first.
+      const picks = [];
+      for (const x of scored.sort((a, b) => b.score - a.score)) {
+        if (picks.length >= 4 || picks.some((p) => p.l.make === x.l.make && p.l.model === x.l.model)) continue;
+        picks.push(x);
+      }
+      await Promise.all(picks.map(async (x) => {
+        const full = await Live.listing(x.l.id).catch(() => null);
+        if (full && (full.options || []).some((o) => o.price)) { x.l.options = full.options; x.r.optionsTotal = full.options.reduce((s, o) => s + (o.price || 0), 0); }
+      }));
+      if (!grid.isConnected) return;
+      picks.forEach((x) => LIVE_SEEN.set(x.l.id, x.l));
+      grid.innerHTML = picks.map((x) => specCard(x.l, 'rare', rarityCells(x.l, x.r), liveSpecNote(x.l, x.r))).join('')
+        || `<p class="muted">No rare specs among the newest listings ${esc(scopeText())} right now${homeZip() ? ': widen the radius above to look further' : ''}.</p>`;
+    } catch (e) {
+      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+    }
+  }
+
+  // With Visor, time capsules are the lowest-mileage older used cars listed in your market (one
+  // request), with the same rarity cells as a rare spec (a request per car).
   async function fillLiveCapsules() {
     const grid = document.getElementById('live-capsules');
     if (!grid) return;
     try {
       const bp = Live.toParams(Object.assign(Market.emptyFilters(), homeScope()), liveCtx());
       const years = Array.from({ length: 32 }, (_, k) => CURRENT_YEAR - 5 - k); // model years 5 to 36 years old
-      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', year: years.join(','), max_mileage: 60000, sort: 'miles', limit: 24 }));
+      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', year: years.join(','), max_mileage: 60000, sort: 'miles', limit: 24, fields: 'default,options_packages,photo_urls' }));
       if (!grid.isConnected) return;
       const cars = (res.data || []).map(Live.normalize).filter((l) => l.year && l.miles > 0);
       cars.forEach((l) => LIVE_SEEN.set(l.id, l));
       const picks = cars.map((l) => { const age = Math.max(1, CURRENT_YEAR - l.year); return { l, age, share: l.miles / (age * 12000) }; })
         .filter((x) => x.share <= 0.35).sort((a, b) => a.share - b.share).slice(0, 4);
-      grid.innerHTML = picks.map(({ l, age, share }) => specCard(l, 'capsules', [
-        { label: 'Miles', value: num(l.miles), sub: usualMiles(share), hi: true },
-        { label: 'Model year', value: String(l.year), sub: `${plural(age, 'year')} old`, hi: false },
-        { label: 'Asking', value: money(l.price), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
-      ], `${num(l.miles)} miles in ${plural(age, 'year')} <span class="sep">|</span> ${esc(whereText(l))}`)).join('')
+      const rar = await Promise.all(picks.map((x) => liveRarity(x.l).catch(() => null)));
+      if (!grid.isConnected) return;
+      grid.innerHTML = picks.map(({ l, age, share }, i) => {
+        const r = rar[i];
+        const miles = `${num(l.miles)} miles in ${plural(age, 'year')}, ${usualMiles(share)}`;
+        const cells = r ? rarityCells(l, r) : [
+          { label: 'Miles', value: num(l.miles), sub: usualMiles(share), hi: true },
+          { label: 'Model year', value: String(l.year), sub: `${plural(age, 'year')} old`, hi: false },
+          { label: 'Asking', value: money(l.price), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
+        ];
+        return specCard(l, 'capsules', cells, `${r ? `${liveSpecNote(l, r)} <span class="sep">|</span> ` : ''}${miles}`);
+      }).join('')
         || `<p class="muted">No time capsules listed ${esc(scopeText())} right now${homeZip() ? ': widen the radius above to look further' : ''}.</p>`;
     } catch (e) {
       if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
