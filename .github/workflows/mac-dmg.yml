@@ -1,0 +1,52 @@
+# Builds the Mac installer (Gridline-<version>-universal.dmg) on GitHub's Mac runners, with your API keys
+# baked in from the repository secrets VISOR_KEY and AUTODEV_KEY (Settings → Secrets and variables → Actions).
+#
+# Run it from the Actions tab ("Build Mac DMG" → Run workflow), then download the "Gridline-mac-dmg" artifact
+# from the finished run. Artifacts are private to people with access to this repository, so the keys inside
+# are never published; share the DMG only with people you'd share the keys with.
+name: Build Mac DMG
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Bake in API keys
+        env:
+          VISOR_KEY: ${{ secrets.VISOR_KEY }}
+          AUTODEV_KEY: ${{ secrets.AUTODEV_KEY }}
+        run: |
+          if [ -n "$VISOR_KEY$AUTODEV_KEY" ]; then
+            node -e 'require("fs").writeFileSync("electron/keys.local.json", JSON.stringify({ visor: process.env.VISOR_KEY || "", autodev: process.env.AUTODEV_KEY || "" }) + "\n")'
+            echo "Keys baked in: visor=$([ -n "$VISOR_KEY" ] && echo yes || echo no), autodev=$([ -n "$AUTODEV_KEY" ] && echo yes || echo no)"
+          else
+            echo "::warning::No VISOR_KEY or AUTODEV_KEY secret is set; this DMG will use demo listings until a key is added in Settings."
+          fi
+
+      - name: Build the DMG (Intel + Apple silicon)
+        run: npx electron-builder --mac dmg --universal --publish never
+
+      - name: Remove the keys file
+        if: always()
+        run: rm -f electron/keys.local.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gridline-mac-dmg
+          path: release/*.dmg
+          if-no-files-found: error
+          retention-days: 30
