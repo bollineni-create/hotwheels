@@ -21,6 +21,12 @@ The first time, it asks for your Visor and auto.dev keys so you get real listing
 
 After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It keeps itself up to date: each time you open or switch to it, and every 15 minutes while it's open, it pulls the latest version of the `main` branch from GitHub into `~/hotwheels`. Changes to the pages show up in the open window within a second. If the update changed the Mac app itself (`app/macos/`), Gridline rebuilds, reinstalls and reopens itself. Edits you make to the HTML, CSS or JS in `~/hotwheels` also show up right away. If the folder moves, the app falls back to the copy built into it.
 
+### Give it to family: a DMG with your keys built in
+
+To hand someone a finished app with your API keys already inside, so they never see a Terminal or a key: open the repository on GitHub, go to **Settings → Secrets and variables → Actions** and add `VISOR_KEY` and/or `AUTODEV_KEY`. Then open the **Actions** tab, choose **Build Mac DMG** and press **Run workflow**. A few minutes later, download the `Gridline-mac-dmg` artifact from the run and send the `.dmg` inside it (AirDrop, Messages, a shared drive). They open it, drag Gridline to Applications, and the first time they right-click the app and choose **Open** because it is unsigned. The build works on both Intel and Apple-silicon Macs.
+
+Only people with access to this repository can download the artifact, so the keys stay private, but anyone who has the `.dmg` can use the keys inside it: share it only with people you trust. Unlike the one-line installer above, this copy does not update itself; run the workflow again and send a new `.dmg` for a new version.
+
 ## Run it as an Electron app
 
 Requires [Node.js](https://nodejs.org) 18 or newer.
