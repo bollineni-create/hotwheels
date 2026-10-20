@@ -567,6 +567,17 @@
       .slice(0, limit || 8);
   }
 
+  // Time capsules: used cars with a small fraction of the miles their age implies (about 12,000 a
+  // year), fewest miles for their age first: [{ l, expectedMiles, share }].
+  function timeCapsuleCars(listings, currentYear, limit) {
+    return listings
+      .filter((l) => l.condition !== 'New' && currentYear - l.year >= 5)
+      .map((l) => { const expectedMiles = (currentYear - l.year) * 12000; return { l, expectedMiles, share: l.miles / expectedMiles }; })
+      .filter((x) => x.share <= 0.35)
+      .sort((a, b) => a.share - b.share)
+      .slice(0, limit || 4);
+  }
+
   function recentDrops(listings, withinDays) {
     return listings
       .map((l) => ({ l, c: lastChange(l) }))
@@ -812,7 +823,7 @@
     median, mean, groupBy, linearFit, fit2, buildFairValue, specModel, applySpecs, liftOf, priceOn, lastChange, haversineMiles,
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
-    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops, makeMomentum, trimVelocity, timeCapsule,
+    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, timeCapsuleCars, recentDrops, makeMomentum, trimVelocity, timeCapsule,
     huntDiff, huntStats, rarityLabel,
     localMarket, bestDeals, worthTheDrive, localVsNational, marketCities, distOf, FUEL_PER_MILE,
   };

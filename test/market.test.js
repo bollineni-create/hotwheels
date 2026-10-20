@@ -415,6 +415,18 @@ test('make momentum compares the last 30 days of sales with the 30 before', () =
   assert.equal(Object.values(top.byState).reduce((s, x) => s + x.now, 0), now, 'states add up to the make');
 });
 
+test('time capsules are older cars with a fraction of the usual miles', () => {
+  const caps = Market.timeCapsuleCars(listings, 2026, 4);
+  assert.equal(caps.length, 4);
+  for (const { l, share, expectedMiles } of caps) {
+    assert.ok(l.condition !== 'New' && 2026 - l.year >= 5, 'used and at least five years old');
+    assert.ok(share <= 0.35 && Math.abs(share - l.miles / expectedMiles) < 1e-9);
+    assert.equal(expectedMiles, (2026 - l.year) * 12000);
+  }
+  for (let i = 1; i < caps.length; i++) assert.ok(caps[i - 1].share <= caps[i].share, 'fewest miles for their age first');
+  assert.ok(Market.rareSpecs(listings, Market.colorStats(listings), 4).length === 4);
+});
+
 test('trim velocity pairs the fastest and slowest trims of a model', () => {
   const { sold } = generateInventory();
   const rows = Market.trimVelocity(sold, 20);

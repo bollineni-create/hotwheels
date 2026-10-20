@@ -613,49 +613,61 @@
 
   function setView(name, html) {
     view = { name };
+    if (name !== 'home') stopPanelCycle();
     app.innerHTML = html;
     document.querySelectorAll('.main-nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
     document.body.dataset.view = name;
   }
 
-  /* ----- Home: categories ----- */
+  /* ----- Home: sections and the market carousel ----- */
 
-  // The home page's categories, in order: each is a section with its own heading, a spot in the
-  // strip under the search box, and previous/next pills to flip between them.
-  // `callout` marks the market-insight categories: every heading carries a callout pill to each of them.
+  // The home page: "What the market's doing" is a carousel of panels under one heading, National
+  // Trends (the week's four callout cards), Rare Specs and Time Capsules, that the ‹ › pills turn in
+  // place. The sections below it each have their own heading. The strip under the search box lists
+  // the panels and the sections.
   const HOME_CATS = [
-    { id: 'insights', title: 'What the market’s doing', short: 'This Week', callout: true },
+    { id: 'insights', title: 'What the market’s doing', short: 'This Week' },
     { id: 'local', title: 'Your market', short: 'Your Market' },
-    { id: 'trends', title: 'National trends', short: 'National Trends', callout: true },
-    { id: 'capsules', title: 'Time capsules', short: 'Time Capsules', callout: true },
-    { id: 'rare-specs', title: 'Rare specs', short: 'Rare Specs', callout: true },
+    { id: 'trends', title: 'The whole market', short: 'Whole Market' },
+    { id: 'rewind', title: 'Rewind the market', short: 'Rewind' },
     { id: 'browse', title: 'Browse the market', short: 'Browse' },
   ];
-  // The categories the page can show right now: a live source skips the ones that need the demo's sales history or spec data.
+  const PANELS = [
+    { id: 'national', route: 'national', label: () => (isLive() && homeZip() ? 'Local Trends' : 'National Trends') },
+    { id: 'rare', route: 'rare-specs', label: () => 'Rare Specs' },
+    { id: 'capsules', route: 'capsules', label: () => 'Time Capsules' },
+  ];
+  const PANEL_MS = 9000; // how long a panel shows before the next comes around on its own
+  const PANEL = { id: 'national', auto: true, hover: false, raf: 0 };
+
+  // The sections the page can show right now: a live source skips the ones that need the demo's sales history.
   function homeCats() {
     return HOME_CATS.filter((c) => {
       if (c.id === 'local') return !!homeZip();
-      if (c.id === 'trends' || c.id === 'rare-specs') return !isLive();
-      if (c.id === 'capsules') return !isLive() || can('snapshots');
+      if (c.id === 'trends') return !isLive();
+      if (c.id === 'rewind') return !isLive() || can('snapshots');
       return true;
     });
   }
-  // A category's heading row: title and eyebrow on the left; on the right, anything extra plus a callout
-  // pill for each of the other market-insight categories: This Week, National Trends, Time Capsules and
-  // Rare Specs (‹ for the ones above, › for the ones below). Your Market and Browse stay in the strip.
+  // The panels the carousel can show: rare specs need the demo's spec data; live time capsules come from Visor's listings.
+  function homePanels() {
+    return PANELS.filter((p) => p.id === 'national' || (p.id === 'rare' ? !isLive() : !isLive() || SOURCE() === 'visor'));
+  }
+  const panelById = (id) => homePanels().find((p) => p.id === id) || homePanels()[0];
+
+  // A section's heading row: title and eyebrow on the left, anything extra on the right.
   function catHead(cats, id, o) {
-    const i = Math.max(0, cats.findIndex((c) => c.id === id));
-    const cat = cats[i];
-    const pill = (c, k) => `<a class="cat-pill" href="#/${c.id}" data-action="jump" data-target="${c.id}" aria-label="${k < i ? 'Up to' : 'Down to'}: ${esc(c.short)}">${k < i ? '<span aria-hidden="true">‹</span> ' : ''}${esc(c.short)}${k > i ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
-    const callouts = cats.map((c, k) => (k === i || !c.callout ? '' : pill(c, k))).join('');
+    const cat = cats.find((c) => c.id === id) || HOME_CATS.find((c) => c.id === id);
     return `<div class="insight-head cat-head">
         <div><h2>${(o && o.title) || esc(cat.title)}</h2>${o && o.eyebrow ? `<p class="eyebrow">${o.eyebrow}</p>` : ''}</div>
-        <div class="cat-switch">${(o && o.extra) || ''}${callouts}</div>
+        ${o && o.extra ? `<div class="cat-switch">${o.extra}</div>` : ''}
       </div>`;
   }
-  const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${cats.map((c) => `<a href="#/${c.id}" data-action="jump" data-target="${c.id}" data-cat="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
+  const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${
+    homePanels().map((p) => `<a href="#/${p.route}" data-action="panel" data-panel="${p.id}" data-cat="${p.id}">${esc(p.label())}</a>`).join('')
+    + cats.filter((c) => c.id !== 'insights').map((c) => `<a href="#/${c.id}" data-action="jump" data-target="${c.id}" data-cat="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
 
-  // Highlight the category you're reading in the strip as you scroll.
+  // Highlight the section you're reading in the strip as you scroll (the carousel's panel while you're on it).
   function syncCatNav() {
     const links = document.querySelectorAll('.cat-nav a[data-cat]');
     if (!links.length) return;
@@ -663,6 +675,7 @@
     let active = null;
     document.querySelectorAll('section.cat').forEach((sec) => { if (sec.offsetTop <= line) active = sec.id; });
     if (!active) active = document.querySelector('section.cat')?.id;
+    if (active === 'insights') active = panelById(PANEL.id).id;
     links.forEach((a) => a.classList.toggle('active', a.dataset.cat === active));
   }
   let catTick = false;
@@ -671,6 +684,77 @@
     catTick = true;
     requestAnimationFrame(() => { catTick = false; syncCatNav(); });
   }, { passive: true });
+
+  /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
+
+  // The heading row. The pills name the panels either side of this one in the ring; while the next
+  // panel is due to come around on its own, its pill wears a ring that fills up.
+  function marketHeadHtml() {
+    const panels = homePanels();
+    const n = panels.length, i = panels.indexOf(panelById(PANEL.id));
+    const pill = (p, dir) => `<a class="cat-pill${dir > 0 ? ' next' : ''}" href="#/${p.route}" data-action="panel" data-panel="${p.id}" aria-label="${dir < 0 ? 'Previous' : 'Next'}: ${esc(p.label())}">${dir < 0 ? '<span aria-hidden="true">‹</span> ' : ''}${esc(p.label())}${dir > 0 ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    const pills = (n > 2 ? pill(panels[(i + n - 1) % n], -1) : '') + (n > 1 ? pill(panels[(i + 1) % n], 1) : '');
+    const eyebrow = isLive()
+      ? `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`
+      : `Week of ${esc(weekOf)}`;
+    const extra = !isLive() ? '' : homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>';
+    return `<div class="insight-head cat-head">
+        <div><h2>What the market’s doing</h2><p class="eyebrow">${eyebrow}</p></div>
+        <div class="cat-switch">${extra}${pills}</div>
+      </div>`;
+  }
+
+  function marketPanelHtml() {
+    const id = panelById(PANEL.id).id;
+    if (id === 'rare') return rarePanelHtml();
+    if (id === 'capsules') return isLive() ? `<div class="insight-grid" id="live-capsules">${loadingHtml(`Looking for time capsules ${scopeShort()}…`)}</div>` : capsulePanelHtml();
+    return isLive() ? `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>` : weeklyGridHtml();
+  }
+
+  // Show a panel in place, without touching the rest of the page.
+  function showPanel(id) {
+    PANEL.id = panelById(id).id;
+    const head = document.getElementById('market-head'), body = document.getElementById('market-panel');
+    if (!head || !body) return;
+    head.innerHTML = marketHeadHtml();
+    body.innerHTML = marketPanelHtml();
+    fillPanelLive();
+    syncCatNav();
+    startPanelCycle();
+  }
+  // Live data fills whichever panel is showing (and the browse grid); repeats within 30 minutes are free.
+  function fillPanelLive() {
+    if (!isLive()) return;
+    fillLiveInsights();
+    if (document.getElementById('live-capsules')) fillLiveCapsules();
+  }
+
+  // The next panel comes around on its own every PANEL_MS, a ring filling on its pill, until you pick
+  // a panel yourself. The clock waits while the pointer or focus is on the section or the tab is
+  // hidden, and never runs for people who asked for reduced motion.
+  function startPanelCycle() {
+    stopPanelCycle();
+    if (!PANEL.auto || homePanels().length < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let elapsed = 0, last = performance.now();
+    const tick = (now) => {
+      if (view.name !== 'home') return;
+      if (!document.hidden && !PANEL.hover) elapsed += now - last;
+      last = now;
+      const pill = document.querySelector('#market-head .cat-pill.next');
+      if (pill) { pill.classList.add('auto'); pill.style.setProperty('--ring', `${Math.min(100, (elapsed / PANEL_MS) * 100).toFixed(1)}%`); }
+      if (elapsed >= PANEL_MS) {
+        const panels = homePanels();
+        showPanel(panels[(panels.indexOf(panelById(PANEL.id)) + 1) % panels.length].id);
+        return;
+      }
+      PANEL.raf = requestAnimationFrame(tick);
+    };
+    PANEL.raf = requestAnimationFrame(tick);
+  }
+  function stopPanelCycle() {
+    if (PANEL.raf) cancelAnimationFrame(PANEL.raf);
+    PANEL.raf = 0;
+  }
 
   const signedPct = (v, digits) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${pct(Math.abs(v), digits)}`;
   const soldLabel = (l) => (l.sold.daysAgo === 0 ? 'sold today' : `sold ${l.sold.daysAgo} days ago`);
@@ -696,7 +780,7 @@
           </div>`;
   }
 
-  function weeklyHtml(cats) {
+  function weeklyGridHtml() {
     const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
     const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR, RET_YEARS).slice(0, 3);
     const years = Array.from({ length: RET_YEARS }, (_, k) => CURRENT_YEAR - RET_YEARS + k);
@@ -806,7 +890,7 @@
       <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
     </article>`;
 
-    return catHead(cats, 'insights', { eyebrow: `Week of ${esc(weekOf)}` }) + `<div class="insight-grid">${retentionCard}${trimCard}${momentumCard}${arrivalsCard}</div>`;
+    return `<div class="insight-grid">${retentionCard}${trimCard}${momentumCard}${arrivalsCard}</div>`;
   }
 
   /* ----- National trends: the whole market, computed from every listing ----- */
@@ -891,7 +975,7 @@
       <p class="muted">Cars for sale nationwide each day, with the median asking price · ${num(inv.sold30)} sold in the last 30 days</p></header>
       ${Charts.trend(inv.series, { aria: 'Cars for sale nationwide over the last 90 days' })}
       <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div>
-      <a class="card-cta" href="#/capsules" data-action="jump" data-target="capsules">Open a time capsule of the market ↓</a>
+      <a class="card-cta" href="#/rewind" data-action="jump" data-target="rewind">Rewind the market to an earlier day ↓</a>
     </article>`;
 
     const states_n = new Set(LISTINGS.map((l) => l.state)).size;
@@ -899,11 +983,11 @@
       `<div class="insight-grid">${trendCard}${mapCard}${moverCard}${fastCard}${dropsCard}${valueCard}</div>`;
   }
 
-  /* ----- Time capsules: the market as it stood on an earlier day ----- */
+  /* ----- Rewind the market: as it stood on an earlier day ----- */
 
   const CAPSULES = [[7, '1 week ago'], [30, '1 month ago'], [90, '3 months ago']];
 
-  function capsulesHtml(cats) {
+  function rewindHtml(cats) {
     const caps = CAPSULES.map(([d, label]) => Object.assign(Market.timeCapsule(LISTINGS, SOLD, d, { minGroup: 25 }), { label }));
     const cls = (v, lowGood) => (Math.abs(v) < 0.005 ? '' : (lowGood ? v < 0 : v > 0) ? 'good' : 'warn');
     const cards = caps.map((c) => {
@@ -933,53 +1017,95 @@
           <b class="vs-num ${c}">${signedPct(m.change)}</b></a></li>`;
       }).join('')}</ul>
     </article>`;
-    return catHead(cats, 'capsules', { eyebrow: 'The whole market frozen as it stood 1 week, 1 month and 3 months ago: every car then for sale, at that day’s asking price. Any search can be run on any of those days.' }) +
+    return catHead(cats, 'rewind', { eyebrow: 'The whole market frozen as it stood 1 week, 1 month and 3 months ago: every car then for sale, at that day’s asking price. Any search can be run on any of those days.' }) +
       `<div class="capsule-grid">${cards}</div>${vsCard ? `<div class="insight-grid">${vsCard}</div>` : ''}`;
   }
 
-  // With live data, the capsules are doors into the source's daily snapshots rather than numbers computed here.
-  function liveCapsulesHtml(cats) {
+  // With live data, the rewind cards are doors into the source's daily snapshots rather than numbers computed here.
+  function liveRewindHtml(cats) {
     const scope = homeScope();
-    return catHead(cats, 'capsules', { eyebrow: `${esc(srcName())} keeps a daily snapshot of every listing. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
+    return catHead(cats, 'rewind', { eyebrow: `${esc(srcName())} keeps a daily snapshot of every listing. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
       `<div class="capsule-grid">${CAPSULES.map(([d, label]) => `<a class="card insight capsule link" href="${searchHref(Object.assign({ when: String(d) }, scope))}">
         <p class="capsule-when">${esc(label)}</p><h3>${esc(dateDaysAgo(d))}</h3>
         <p class="muted">Every car for sale ${esc(scopeText())} that day, at that day’s asking price.</p>
         <span class="card-cta">Open this capsule →</span></a>`).join('')}</div>`;
   }
 
-  /* ----- Rare specs ----- */
+  /* ----- Rare Specs and Time Capsules: a card per car ----- */
 
-  function rareHtml(cats) {
-    const rare = Market.rareSpecs(LISTINGS, rarity, 10);
-    const btns = `<div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-dir="1" aria-label="Scroll right">›</button></div>`;
-    return catHead(cats, 'rare-specs', { title: '💎 Rare specs', eyebrow: 'Unusual color and option combinations: few exist anywhere in the country.', extra: btns }) +
-      `<div class="scroller" id="rare-scroller">${rare.map(({ l, r }) => `<article class="card rare-card">
-        <a class="card-link" href="#/car/${l.id}" aria-label="${esc(title(l))}"></a>
-        <div class="card-art" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex)}</div>
-        <div class="card-body">
-          <h4>${esc(title(l))}</h4>
-          <p class="card-sub">${conditionBadge(l)} ${esc(l.trim)} · ${kMiles(l.miles)}</p>
-          <p class="price">${money(l.price)} <small class="muted">· ${esc(days(l.daysListed))}</small></p>
-          <p class="muted small">Of the ${num(r.total)} ${esc(l.model)}s for sale nationwide</p>
-          <dl class="rarity">
-            <div><dt>Exterior</dt><dd><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</dd><span class="of">1 of ${r.extCount}</span></div>
-            <div><dt>Interior</dt><dd>${esc(l.intColor)}</dd><span class="of">1 of ${r.intCount}</span></div>
-            <div><dt>Options</dt><dd>${money(r.optionsTotal)}</dd><span class="of">${pct(r.optionsVsAvg)} above avg</span></div>
-          </dl>
-        </div></article>`).join('')}</div>`;
+  // A car card for those panels: the title, a line of facts, the car (its photos with live data, else
+  // its drawing), how many of the model are for sale, and three stat cells, the notable ones marked 💎.
+  function specCard(l, kind, cells, note) {
+    const href = `#/car/${l.id}`;
+    const facts = [conditionBadge(l), esc(l.trim), `${num(l.miles)} miles`, money(l.price),
+      l.daysListed == null ? null : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`].filter(Boolean);
+    const photos = (l.photos || []).slice(0, 4);
+    const art = photos.length
+      ? `<div class="spec-photos n${photos.length}">${photos.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join('')}</div>`
+      : `<div class="spec-art" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}` })}</div>`;
+    return `<article class="card spec-card">
+      <header class="spec-head">
+        <h3><a href="${href}">${esc(title(l))}</a></h3>
+        <a class="spec-tag" href="${href}">${kind === 'rare' ? '💎 Rare Spec' : '🕰️ Time Capsule'}</a>
+        <p class="spec-facts">${facts.join(' <span class="sep">|</span> ')}</p>
+      </header>
+      <a class="spec-media" href="${href}" aria-label="${esc(title(l))} ${esc(l.trim)}">${art}</a>
+      <p class="spec-of">${note}</p>
+      <dl class="spec-stats">${cells.map((c) => `<div${c.hi ? ' class="hi"' : ''}><dt>${esc(c.label)}${c.hi ? ' <span class="gem" aria-label="rare">💎</span>' : ''}</dt><dd>${c.value}</dd><small>${c.sub}</small></div>`).join('')}</dl>
+    </article>`;
+  }
+  // The three cells from the demo's spec data: paint and interior counts within the model, and the
+  // options value against the model's average. A count is rare at 7 or fewer and a tenth of the model.
+  function rarityCells(l, r) {
+    const rare = (c) => c != null && c <= 7 && c / Math.max(1, r.total) <= 0.1;
+    return [
+      { label: 'Exterior Color', value: `1 of ${num(r.extCount)}`, sub: esc(l.extColor), hi: rare(r.extCount) },
+      { label: 'Interior Color', value: `1 of ${num(r.intCount)}`, sub: esc(l.intColor), hi: rare(r.intCount) },
+      { label: 'Installed options', value: money(r.optionsTotal),
+        sub: !r.optionsTotal ? 'No factory options' : r.total < 5 ? 'Few comparable builds' : r.optionsVsAvg >= 0 ? `${pct(r.optionsVsAvg)} more than avg` : `${pct(-r.optionsVsAvg)} less than avg`,
+        hi: r.optionsTotal > 0 && r.optionsVsAvg >= 0.5 },
+    ];
+  }
+  const specGrid = (cards, empty) => `<div class="insight-grid spec-grid">${cards.join('') || `<p class="muted">${empty}</p>`}</div>`;
+  const usualMiles = (share) => `${pct(share)} of the usual miles`;
+
+  function rarePanelHtml() {
+    return specGrid(Market.rareSpecs(LISTINGS, rarity, 4).map(({ l, r }) => specCard(l, 'rare', rarityCells(l, r), `Of the ${num(r.total)} for sale nationwide`)), 'No rare specs right now.');
+  }
+  function capsulePanelHtml() {
+    return specGrid(Market.timeCapsuleCars(LISTINGS, CURRENT_YEAR, 4).map(({ l, share }) => {
+      const r = rarity(l);
+      return specCard(l, 'capsules', rarityCells(l, r), `Of the ${num(r.total)} for sale nationwide <span class="sep">|</span> ${num(l.miles)} miles in ${plural(CURRENT_YEAR - l.year, 'year')}, ${usualMiles(share)}`);
+    }), 'No time capsules right now.');
+  }
+  // With Visor, time capsules are the lowest-mileage older used cars listed in your market: one request.
+  async function fillLiveCapsules() {
+    const grid = document.getElementById('live-capsules');
+    if (!grid) return;
+    try {
+      const bp = Live.toParams(Object.assign(Market.emptyFilters(), homeScope()), liveCtx());
+      const years = Array.from({ length: 32 }, (_, k) => CURRENT_YEAR - 5 - k); // model years 5 to 36 years old
+      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', year: years.join(','), max_mileage: 60000, sort: 'miles', limit: 24 }));
+      if (!grid.isConnected) return;
+      const cars = (res.data || []).map(Live.normalize).filter((l) => l.year && l.miles > 0);
+      cars.forEach((l) => LIVE_SEEN.set(l.id, l));
+      const picks = cars.map((l) => { const age = Math.max(1, CURRENT_YEAR - l.year); return { l, age, share: l.miles / (age * 12000) }; })
+        .filter((x) => x.share <= 0.35).sort((a, b) => a.share - b.share).slice(0, 4);
+      grid.innerHTML = picks.map(({ l, age, share }) => specCard(l, 'capsules', [
+        { label: 'Miles', value: num(l.miles), sub: usualMiles(share), hi: true },
+        { label: 'Model year', value: String(l.year), sub: `${plural(age, 'year')} old`, hi: false },
+        { label: 'Asking', value: money(l.price), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
+      ], `${num(l.miles)} miles in ${plural(age, 'year')} <span class="sep">|</span> ${esc(whereText(l))}`)).join('')
+        || `<p class="muted">No time capsules listed ${esc(scopeText())} right now${homeZip() ? ': widen the radius above to look further' : ''}.</p>`;
+    } catch (e) {
+      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+    }
   }
 
   // Live cards cover the market around your home ZIP (the box at the top, or Settings) or, with none set, the whole country.
   const homeScope = () => (homeZip() ? { near: homeZip(), radius: homeRadius() } : {});
   const scopeText = () => (homeZip() ? `within ${homeRadius()} miles of ${placeLabel(homeZip())}` : 'nationwide');
   const scopeShort = () => (homeZip() ? 'near you' : 'nationwide');
-
-  function liveInsightsShell(cats) {
-    return catHead(cats, 'insights', {
-      eyebrow: `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`,
-      extra: homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>',
-    }) + `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
-  }
 
   // Models you've favorited or opened lately, most often first, skipping any a hunt already covers.
   function interestModels(hunts) {
@@ -1046,7 +1172,7 @@
         Promise.all(hunts.map((x) => Live.summary(huntFilters(x), ctx).catch(() => null))),
         Promise.all(interests.map((m) => Live.summary(Object.assign(Market.emptyFilters(), scope, { model: [m.key] }), ctx).catch(() => null))),
       ]);
-      if (!grid.isConnected) return;
+      if (grid && !grid.isConnected) return;
       const od = overview.data || {}, sd = sold.data || {};
       const active = od.total || 0, sold30 = sd.total || 0;
       const m = (b, k) => (b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
@@ -1124,13 +1250,13 @@
           <ul class="price-bars">${priceBuckets.map((b) => `<li><a href="${searchHref(Object.assign({ priceMin: Math.round(b.min), priceMax: Math.round(b.max) }, scope))}" title="${moneyK(b.min)}–${moneyK(b.max)}: ${num(b.count)} for sale (${pct(b.count / Math.max(1, active), 1)})"><span>${moneyK(b.min)}–${moneyK(b.max)}</span><i style="width:${Math.round((b.count / maxBucket) * 100)}%"></i><b>${num(b.count)}</b></a></li>`).join('')}</ul></article>`;
 
       // Your market across the top, then the two long lists side by side, then deals next to prices.
-      grid.innerHTML = `${yourCard}${makesCard}${fastCard}${dealsCard}${priceCard}`;
+      if (grid) grid.innerHTML = `${yourCard}${makesCard}${fastCard}${dealsCard}${priceCard}`;
       if (browseEl) {
         browseEl.innerHTML = modelRows.map((b) => `<a class="browse-item" href="${searchHref(Object.assign({ model: b.value }, scope))}"><b>${esc(b.value)}</b><small>${plural(b.count, 'car')}${m(b, 'price.median') != null ? ` · median ${money(m(b, 'price.median'))}` : ''}</small></a>`).join('')
           || `<p class="muted">Nothing listed ${esc(where)} right now.</p>`;
       }
     } catch (e) {
-      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+      if (grid && grid.isConnected) grid.innerHTML = liveErrorHtml(e);
       if (browseEl) browseEl.innerHTML = '<p class="muted">Live counts aren’t available right now.</p>';
     }
   }
@@ -1408,18 +1534,22 @@
     const zip = homeZip();
     const cats = homeCats();
     const has = (id) => cats.some((c) => c.id === id);
+    PANEL.id = panelById(PANEL.id).id;
     setView('home', `
       ${homeTopHtml()}
       ${catNavHtml(cats)}
-      <section class="section cat" id="insights">${isLive() ? liveInsightsShell(cats) : weeklyHtml(cats)}</section>
+      <section class="section cat" id="insights"><div id="market-head">${marketHeadHtml()}</div><div id="market-panel">${marketPanelHtml()}</div></section>
       ${localSectionHtml()}
       ${has('trends') ? `<section class="section cat" id="trends">${trendsHtml(cats)}</section>` : ''}
-      ${has('capsules') ? `<section class="section cat" id="capsules">${isLive() ? liveCapsulesHtml(cats) : capsulesHtml(cats)}</section>` : ''}
-      ${has('rare-specs') ? `<section class="section cat" id="rare-specs">${rareHtml(cats)}</section>` : ''}
+      ${has('rewind') ? `<section class="section cat" id="rewind">${isLive() ? liveRewindHtml(cats) : rewindHtml(cats)}</section>` : ''}
       <section class="section cat" id="browse">${browseHtml(cats)}</section>`);
     mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…' });
-    if (isLive()) { fillLiveInsights(); if (zip) fillLiveLocal(); }
+    const carousel = document.getElementById('insights');
+    for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
+    fillPanelLive();
+    if (isLive() && zip) fillLiveLocal();
     syncCatNav();
+    startPanelCycle();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
     if (scrollTo) requestAnimationFrame(() => { document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }); });
     else window.scrollTo(0, 0);
@@ -2993,6 +3123,11 @@
       renderSettings();
     } else if (a === 'near-home') {
       updateFilters((f) => { f.near = homeZip(); f.radius = homeRadius(); });
+    } else if (a === 'panel') {
+      e.preventDefault();
+      PANEL.auto = false;
+      showPanel(el.dataset.panel);
+      if (el.closest('.cat-nav')) document.getElementById('insights')?.scrollIntoView({ behavior: 'smooth' });
     } else if (a === 'jump') {
       e.preventDefault();
       document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: 'smooth' });
@@ -3258,6 +3393,11 @@
     const params = new URLSearchParams(qs || '');
     document.getElementById('header-search').hidden = !parts.length;
     if (!parts.length) return renderHome(null, params);
+    if (parts.length === 1 && PANELS.some((p) => p.route === parts[0])) {
+      PANEL.id = PANELS.find((p) => p.route === parts[0]).id;
+      PANEL.auto = false;
+      return renderHome('insights');
+    }
     if (parts.length === 1 && HOME_CATS.some((c) => c.id === parts[0])) return renderHome(parts[0]);
     if (parts[0] === 'search') return renderSearch(params);
     if (parts[0] === 'car') return renderCar(parts[1], params);

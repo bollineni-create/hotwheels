@@ -263,6 +263,9 @@
   function generateInventory(opts) {
     const o = Object.assign({ seed: 20261019, count: 3200, soldCount: 7000, currentYear: 2026 }, opts);
     const rand = mulberry32(o.seed);
+    // A separate stream turns a few older cars into time capsules (garaged more than driven), so
+    // every other listing stays exactly as it was.
+    const rand4 = mulberry32(o.seed ^ 0x27d4eb2f);
     const dealers = new Map();
     const listings = [];
 
@@ -300,6 +303,8 @@
       else {
         const perYear = 9000 + rand() * 7000;
         miles = Math.max(800, Math.round((age + 0.4) * perYear * (0.55 + rand() * 0.9)));
+        // About 3% of cars five or more years old were driven a few hundred to two thousand miles a year.
+        if (age >= 5 && rand4() < 0.03) miles = Math.max(400, Math.round(age * (250 + rand4() * 1750)));
       }
 
       const palette = PALETTES[m.make];
