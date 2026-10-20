@@ -793,35 +793,6 @@
 
       <section class="section" id="insights">${isLive() ? liveInsightsShell() : insightsHtml()}</section>
 
-      <section class="section pitch">
-        <h2 class="center">Built to help you buy a car, not to help a dealer sell one.</h2>
-        <div class="pitch-grid">
-          <div class="card pitch-them">
-            <h3>Typical listing sites</h3>
-            <p class="muted">are built for <b>dealers</b>, by</p>
-            <ul class="x-list">
-              <li>Selling your contact info as “leads”</li>
-              <li>Ranking paid placements above better cars</li>
-              <li>Hiding price history and time on the lot</li>
-              <li>Opaque “great deal” badges you can’t check</li>
-              <li>Filters that happily return zero results</li>
-            </ul>
-          </div>
-          <div class="card pitch-us">
-            <h3>Gridline</h3>
-            <p class="muted">is built for <b>you</b>, the buyer — every pro tool included</p>
-            <ul class="feature-list">
-              <li><span>💬</span><div><b>Search the way you talk</b><p>“4x4 trucks under 50k miles near Denver” or “RAV4 hybrid without sunroof”.</p></div></li>
-              <li><span>🧩</span><div><b>Filter by what’s actually on the car</b><p>Installed options, top features, upfitter, assembly plant, MSRP and VIN patterns — include or exclude.</p></div></li>
-              <li><span>⏳</span><div><b>Sold cars and the market over time</b><p>See what sold and how fast, or rewind the market a week, a month or three months.</p></div></li>
-              <li><span>🧮</span><div><b>Transparent fair value & Deal Check</b><p>Every price compared with the same car, and any deal broken into price, fees, add-ons and trade.</p></div></li>
-              <li><span>🏁</span><div><b>Leaderboard & comparables</b><p>Where a car ranks among its true peers — same trim, nearby, similar MSRP.</p></div></li>
-              <li><span>📄</span><div><b>Window sticker, seller history, pricing breakdown</b><p>What it left the factory with, where it was listed before, and what the ad leaves out.</p></div></li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
       <section class="section browse">
         <h2>Browse the market</h2>${isLive() ? '<p class="muted small">Counts below are from the demo sample; each link searches live listings.</p>' : ''}
         <div class="browse-grid">
