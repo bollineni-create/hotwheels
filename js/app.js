@@ -57,11 +57,28 @@
 
   /* ---------- Persistence ---------- */
 
+  const CITY_ZIP = {
+    'Haverhill, MA': '01830', 'Boston, MA': '02108', 'Elmsford, NY': '10523', 'Albany, NY': '12207', 'Pawtucket, RI': '02860', 'Hartford, CT': '06103',
+    'Newark, NJ': '07102', 'Philadelphia, PA': '19107', 'Pittsburgh, PA': '15222', 'Baltimore, MD': '21202', 'Hampton, VA': '23669', 'Richmond, VA': '23219',
+    'Raleigh, NC': '27601', 'Charlotte, NC': '28202', 'Charleston, SC': '29401', 'Buford, GA': '30518', 'Atlanta, GA': '30303', 'Orlando, FL': '32801',
+    'Tampa, FL': '33602', 'Miami, FL': '33130', 'Nashville, TN': '37203', 'Birmingham, AL': '35203', 'Columbus, OH': '43215', 'Cleveland, OH': '44113',
+    'Detroit, MI': '48226', 'Indianapolis, IN': '46204', 'Louisville, KY': '40202', 'Schaumburg, IL': '60173', 'Chicago, IL': '60601', 'Milwaukee, WI': '53202',
+    'Minneapolis, MN': '55401', 'Des Moines, IA': '50309', 'St. Louis, MO': '63101', 'Kansas City, MO': '64106', 'Omaha, NE': '68102', 'Dallas, TX': '75201',
+    'Houston, TX': '77002', 'Austin, TX': '78701', 'Amarillo, TX': '79101', 'Oklahoma City, OK': '73102', 'New Orleans, LA': '70112', 'Little Rock, AR': '72201',
+    'Denver, CO': '80202', 'Salt Lake City, UT': '84101', 'Albuquerque, NM': '87102', 'Phoenix, AZ': '85004', 'Las Vegas, NV': '89101', 'Boise, ID': '83702',
+    'Seattle, WA': '98101', 'Portland, OR': '97204', 'Sacramento, CA': '95814', 'San Jose, CA': '95113', 'Los Altos, CA': '94022', 'Thousand Oaks, CA': '91360',
+    'San Diego, CA': '92101', 'Anchorage, AK': '99501', 'Honolulu, HI': '96813', 'Burlington, VT': '05401', 'Portland, ME': '04101', 'Billings, MT': '59101',
+  };
+
+
   const STORE_KEY = 'gridline:v1';
   const store = (() => {
     let s = { saved: [], favs: {}, compare: [], recent: [], theme: null, prefs: {} };
     try { s = Object.assign(s, JSON.parse(localStorage.getItem(STORE_KEY)) || {}); } catch (e) { /* private mode */ }
-    s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo', huntEvery: 360 }, s.prefs);
+    s.prefs = Object.assign({ homeCity: null, homeZip: null, homeRadius: 100, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo', huntEvery: 360 }, s.prefs);
+    // Older saves kept a demo city as home; carry it over to that city's ZIP code.
+    if (!s.prefs.homeZip && s.prefs.homeCity && CITY_ZIP[s.prefs.homeCity]) s.prefs.homeZip = CITY_ZIP[s.prefs.homeCity];
+    if (!Geo.isZip(s.prefs.homeZip) || !Geo.lookup(s.prefs.homeZip)) s.prefs.homeZip = null;
     s.liveCars = s.liveCars || {};
     if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
     // A desktop build with a built-in key starts on live data, preferring Visor (fuller data) over auto.dev.
@@ -77,9 +94,14 @@
     };
   })();
   const prefs = () => store.get().prefs;
+  // A place to measure from: a ZIP code ("94022") or a demo city ("Denver, CO"), as [name, state, lat, lng].
+  const placeOf = (near) => (Geo.isZip(near) ? Geo.place(near) : cityByName(near));
+  const placeLabel = (near) => (Geo.isZip(near) ? `${Geo.label(Geo.lookup(near), { short: true })} ${near}` : near);
+  const homeZip = () => prefs().homeZip || null;
+  const homeRadius = () => Number(prefs().homeRadius) || 100;
   const CTX = {
-    delta, cityByName,
-    get origin() { return prefs().homeCity ? cityByName(prefs().homeCity) : null; },
+    delta, cityByName: placeOf,
+    get origin() { return homeZip() ? Geo.place(homeZip()) : null; },
   };
 
   /* ---------- Live data (auto.dev or Visor API) ---------- */
@@ -93,24 +115,12 @@
   // What the active live source can do (null in demo mode = everything).
   const liveCaps = () => (isLive() ? Live.caps() : null);
   const can = (cap) => { const c = liveCaps(); return !c || !!c[cap]; };
-  const CITY_ZIP = {
-    'Haverhill, MA': '01830', 'Boston, MA': '02108', 'Elmsford, NY': '10523', 'Albany, NY': '12207', 'Pawtucket, RI': '02860', 'Hartford, CT': '06103',
-    'Newark, NJ': '07102', 'Philadelphia, PA': '19107', 'Pittsburgh, PA': '15222', 'Baltimore, MD': '21202', 'Hampton, VA': '23669', 'Richmond, VA': '23219',
-    'Raleigh, NC': '27601', 'Charlotte, NC': '28202', 'Charleston, SC': '29401', 'Buford, GA': '30518', 'Atlanta, GA': '30303', 'Orlando, FL': '32801',
-    'Tampa, FL': '33602', 'Miami, FL': '33130', 'Nashville, TN': '37203', 'Birmingham, AL': '35203', 'Columbus, OH': '43215', 'Cleveland, OH': '44113',
-    'Detroit, MI': '48226', 'Indianapolis, IN': '46204', 'Louisville, KY': '40202', 'Schaumburg, IL': '60173', 'Chicago, IL': '60601', 'Milwaukee, WI': '53202',
-    'Minneapolis, MN': '55401', 'Des Moines, IA': '50309', 'St. Louis, MO': '63101', 'Kansas City, MO': '64106', 'Omaha, NE': '68102', 'Dallas, TX': '75201',
-    'Houston, TX': '77002', 'Austin, TX': '78701', 'Amarillo, TX': '79101', 'Oklahoma City, OK': '73102', 'New Orleans, LA': '70112', 'Little Rock, AR': '72201',
-    'Denver, CO': '80202', 'Salt Lake City, UT': '84101', 'Albuquerque, NM': '87102', 'Phoenix, AZ': '85004', 'Las Vegas, NV': '89101', 'Boise, ID': '83702',
-    'Seattle, WA': '98101', 'Portland, OR': '97204', 'Sacramento, CA': '95814', 'San Jose, CA': '95113', 'Los Altos, CA': '94022', 'Thousand Oaks, CA': '91360',
-    'San Diego, CA': '92101', 'Anchorage, AK': '99501', 'Honolulu, HI': '96813', 'Burlington, VT': '05401', 'Portland, ME': '04101', 'Billings, MT': '59101',
-  };
   const DEMO_MAKES = [...new Set(DATA.models.map((m) => m.make))];
   const LIVE_EXPECTED = new Map();
   const LIVE_EXPLAIN = new Map();
   const LIVE_SEEN = new Map();
   let LIVE_VOCAB = null, LIVE_KNOWN = null;
-  const liveCtx = () => ({ cityByName, zipFor: (c) => CITY_ZIP[c] || null, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
+  const liveCtx = () => ({ cityByName: placeOf, zipFor: (c) => (Geo.isZip(c) ? c : CITY_ZIP[c] || null), home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
   const vocab = () => (isLive() && LIVE_VOCAB) || VOCAB;
 
   async function ensureLiveVocab() {
@@ -272,7 +282,7 @@
     if (f.msrpMin != null) parts.push(`MSRP over ${money(f.msrpMin)}`);
     if (f.msrpMax != null) parts.push(`MSRP under ${money(f.msrpMax)}`);
     if (f.milesMax != null) parts.push(`< ${kMiles(f.milesMax)}`);
-    if (f.near) parts.push(`within ${f.radius} mi of ${f.near}`);
+    if (f.near) parts.push(`within ${f.radius} mi of ${placeLabel(f.near)}`);
     if (f.state.length) parts.push(`in ${f.state.join(', ')}`);
     if (f.dropsOnly) parts.push('with price cuts');
     if (f.belowMarket) parts.push('below market');
@@ -414,6 +424,7 @@
       <a class="card-link" href="${href}" aria-label="${esc(title(l) + ' ' + l.trim + ', ' + money(l.price))}"></a>
       <div class="card-art${l.photos && l.photos[0] ? ' has-photo' : ''}" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}` })}
         ${l.photos && l.photos[0] ? `<img class="card-photo" src="${esc(l.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('has-photo');this.remove()">` : ''}
+        ${opts && opts.ribbon ? `<span class="ribbon">${esc(opts.ribbon)}</span>` : ''}
         <div class="card-art-top">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && l.status !== 'On lot' && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private', 'b-private') : ''}${upfitBadge(l)}</div>
         <div class="card-art-actions">${favButton(l)}</div>
       </div>
@@ -450,6 +461,13 @@
       if (compact.length === 17) out.push({ icon: '⌁', label: `Decode VIN ${compact}`, sub: 'Check digit, model year, plant, manufacturer', href: `#/vin/${compact}` });
       else out.push({ icon: '#', label: `VINs starting ${compact}`, sub: 'Search by VIN prefix', href: searchHref({ vin: compact }) });
     }
+
+    const zip = /^\d{5}(?:-\d{4})?$/.test(q) ? q.slice(0, 5) : null;
+    const zg = zip && Geo.lookup(zip);
+    if (zg) {
+      out.push({ icon: '◎', label: `Cars near ${Geo.label(zg, { short: true })} ${zip}`, sub: `Within ${homeRadius()} miles of this ZIP code`, href: searchHref({ near: zip, radius: homeRadius() }) });
+      out.push({ icon: '⌂', label: `Make ${zip} my market`, sub: 'Deals near you on the home page, distances on every car', href: `#/?zip=${zip}` });
+    } else if (zip) out.push({ icon: '◎', label: `${zip} isn’t a US ZIP code`, sub: 'Check the number and try again', href: '#/' });
 
     // Plain-English: "red convertibles under 40k with leather seats"
     const parsed = NLQ.parse(q, vocab());
@@ -548,13 +566,14 @@
   const nlQuick = (text) => nlHref(NLQ.parse(text, VOCAB));
   // The "near …" example uses your home city once one is set.
   const quickList = () => {
-    const home = prefs().homeCity;
+    const home = homeZip();
     const trucks = NLQ.parse('4x4 trucks under 50k miles', VOCAB);
     trucks.filters.near = home || 'Denver, CO';
+    if (home) trucks.filters.radius = homeRadius();
     return [
       { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
       { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
-      { label: `4x4 trucks under 50k miles near ${home ? home.split(',')[0] : 'Denver'}`, href: nlHref(trucks) },
+      { label: `4x4 trucks under 50k miles near ${home ? Geo.lookup(home).place : 'Denver'}`, href: nlHref(trucks) },
       { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
       { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
       { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
@@ -714,17 +733,14 @@
       ${rareHtml}`;
   }
 
-  // Live cards cover the market around your home city (Settings) or, with none set, the whole country.
-  const HOME_RADIUS = 150;
-  const homeScope = () => (prefs().homeCity ? { near: prefs().homeCity, radius: HOME_RADIUS } : {});
-  const scopeText = () => (prefs().homeCity ? `within ${HOME_RADIUS} miles of ${prefs().homeCity}` : 'nationwide');
-  const scopeShort = () => (prefs().homeCity ? 'near you' : 'nationwide');
+  // Live cards cover the market around your home ZIP (the box at the top, or Settings) or, with none set, the whole country.
+  const homeScope = () => (homeZip() ? { near: homeZip(), radius: homeRadius() } : {});
+  const scopeText = () => (homeZip() ? `within ${homeRadius()} miles of ${placeLabel(homeZip())}` : 'nationwide');
+  const scopeShort = () => (homeZip() ? 'near you' : 'nationwide');
 
   function liveInsightsShell() {
-    const home = prefs().homeCity;
     return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(scopeText())}</p></div>
-        <label class="scope-pick"><span class="muted small">Show the market</span>
-          <select data-pref="homeCity" aria-label="Market area"><option value="">Nationwide</option>${CITY_NAMES.map((c) => `<option value="${esc(c)}" ${home === c ? 'selected' : ''}>near ${esc(c)}</option>`).join('')}</select></label></div>
+        ${homeZip() ? `<div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === homeRadius()}">${r} mi</button>`).join('')}</div>` : '<p class="muted small">Type a ZIP code above to see the market near you.</p>'}</div>
       <div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>`;
   }
 
@@ -848,14 +864,14 @@
           <a class="card-cta" href="#/saved">${yours.length ? 'All hunts and favorites →' : 'Hunts and favorites →'}</a></article>`;
 
       const fastCard = `<article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest ${esc(scopeShort())}</h3>
-          <p class="muted">Median days from listing to sale over the last 30 days, models with ${minSales}+ sales${scoped ? ` within ${HOME_RADIUS} miles` : ''}${typicalDays != null ? ` · a typical model takes ${plural(Math.round(typicalDays), 'day')}` : ''}</p></header>
+          <p class="muted">Median days from listing to sale over the last 30 days, models with ${minSales}+ sales${scoped ? ` within ${homeRadius()} miles` : ''}${typicalDays != null ? ` · a typical model takes ${plural(Math.round(typicalDays), 'day')}` : ''}</p></header>
           ${fastest.length ? `<ol class="hbars sold">${fastest.map((b) => {
             const days = m(b, 'days_on_market.median'), price = m(b, 'price.median');
             const sub = [plural(b.count, 'sale'), price != null ? 'median ' + money(price) : null].filter(Boolean).join(' · ');
             return `<li><a href="${searchHref(Object.assign({ model: b.value, when: 'sold' }, scope))}" title="${esc(b.value)}: sells in ${plural(Math.round(days), 'day')} · ${esc(sub)}">
               <span class="hb-label"><b>${esc(b.value)}</b><small>${esc(sub)}</small></span>
               <span class="hb-track"><i style="width:${((days / maxDays) * 100).toFixed(1)}%"></i></span>
-              <b class="hb-val">${plural(Math.round(days), 'day')}</b></a></li>`; }).join('')}</ol>` : `<p class="muted">Not enough sales ${esc(scopeShort())} in the last 30 days to rank models.${scoped ? ' Switch to Nationwide above to see the whole market.' : ''}</p>`}
+              <b class="hb-val">${plural(Math.round(days), 'day')}</b></a></li>`; }).join('')}</ol>` : `<p class="muted">Not enough sales ${esc(scopeShort())} in the last 30 days to rank models.${scoped ? ' Widen the radius above to see more of the market.' : ''}</p>`}
           <a class="card-cta" href="${searchHref(Object.assign({ when: 'sold' }, scope))}">Browse recently sold cars ${esc(scopeShort())} →</a></article>`;
 
       const dealsCard = `<article class="card insight"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars ${esc(scopeShort())}</h3><p class="muted">Live listings ${esc(where)}, MSRP over $20,000</p></header>
@@ -882,25 +898,254 @@
     return d <= -0.025 ? 'd-great' : d <= -0.008 ? 'd-good' : d < 0.008 ? 'd-fair' : d < 0.025 ? 'd-high' : 'd-over';
   }
 
-  function renderHome(scrollTo) {
+  /* ----- Home: your market, from a ZIP code ----- */
+
+  const RADII = [25, 50, 100, 250];
+  const WIDE = 500; // the larger market around you, in miles
+  const POPULAR_MARKETS = [['Los Angeles', '90012'], ['New York', '10001'], ['Chicago', '60601'], ['Dallas', '75201'], ['Houston', '77002'], ['Atlanta', '30303'],
+    ['Miami', '33130'], ['Phoenix', '85004'], ['Seattle', '98101'], ['Denver', '80202'], ['Boston', '02108'], ['Bay Area', '94022']];
+  const HOME = { cond: 'All', seq: 0 };
+
+  // Save a ZIP as home. Returns false (with a toast) when it isn't a US ZIP code.
+  function setHomeZip(raw, opts) {
+    const zip = String(raw || '').trim().slice(0, 5);
+    const g = Geo.lookup(zip);
+    if (!g) {
+      toast(zip ? `${zip} isn’t a US ZIP code` : 'Type a 5-digit ZIP code');
+      return false;
+    }
+    const changed = zip !== homeZip();
+    store.update((s) => { s.prefs.homeZip = zip; });
+    if (changed && !(opts && opts.quiet)) toast(`Your market is now ${Geo.label(g, { short: true })}`);
+    // Pin the exact place when the network is there; the built-in table knows the area.
+    Geo.refine(zip).then((exact) => {
+      if (!exact || exact.approx || homeZip() !== zip) return;
+      document.querySelectorAll('[data-home-place]').forEach((el) => { el.textContent = Geo.label(exact, { short: true }); });
+      if (view.name === 'home' && Math.abs(exact.lat - g.lat) + Math.abs(exact.lng - g.lng) > 0.05) renderLocal();
+    });
+    return true;
+  }
+
+  function zipFormHtml(kind) {
+    const zip = homeZip();
+    const g = zip ? Geo.lookup(zip) : null;
+    return `<form class="zip-form" data-zip-form="${kind}" aria-label="Your ZIP code">
+      <label class="zip-field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>
+        <input id="zip-input" type="text" inputmode="numeric" autocomplete="postal-code" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="ZIP code" value="${esc(zip || '')}">
+        <span class="zip-place" data-home-place>${g ? esc(Geo.label(g, { short: true })) : ''}</span>
+      </label>
+      <button class="btn primary" type="submit">${zip ? 'Update' : 'Show my market'}</button>
+      <button class="btn ghost" type="button" data-action="locate" title="Use my current location">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>Near me</button>
+    </form>`;
+  }
+
+  const dealCond = (c) => (c === 'New' ? 'New' : c === 'Used' ? 'Used' : 'All');
+
+  // Everything the local section shows, from a pool of cars (demo inventory or live results).
+  function localData(zip, radius, pool, wide) {
+    const origin = Geo.place(zip);
+    const lm = Market.localMarket(pool, origin, radius, expected);
+    const all = wide ? pool.concat(wide.filter((l) => !pool.includes(l))) : pool;
+    return {
+      origin, lm,
+      deals: Market.bestDeals(lm.local, expected, { limit: 10, condition: HOME.cond, currentYear: CURRENT_YEAR }),
+      drive: Market.worthTheDrive(all, origin, radius, WIDE, expected, { limit: 6, currentYear: CURRENT_YEAR }),
+      vs: Market.localVsNational(all, origin, radius, { limit: 8 }),
+      cities: Market.marketCities(all, origin, radius, expected).filter((c) => c.miles != null && c.miles <= WIDE),
+      cuts: Market.recentDrops(lm.local, 7).slice(0, 6),
+    };
+  }
+
+  const compareLine = (local, nat, fmt, lowIsGood) => {
+    if (local == null || nat == null) return '';
+    const d = local / nat - 1;
+    if (Math.abs(d) < 0.015) return `<small>About the US ${fmt}</small>`;
+    const good = lowIsGood ? d < 0 : d > 0;
+    return `<small class="${good ? 'good' : 'warn'}">${pct(Math.abs(d))} ${d < 0 ? 'under' : 'over'} the US ${fmt}</small>`;
+  };
+
+  function dealsScrollerHtml(d, zip, radius) {
+    const conds = ['All', 'Used', 'New'];
+    return `<div class="row-head">
+        <div class="seg" role="group" aria-label="Condition">${conds.map((c) => `<button type="button" data-action="deal-cond" data-cond="${c}" aria-pressed="${HOME.cond === c}">${c}</button>`).join('')}</div>
+        <div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-target="deals-scroller" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-target="deals-scroller" data-dir="1" aria-label="Scroll right">›</button></div>
+      </div>
+      ${d.deals.length ? `<div class="scroller deals-scroller" id="deals-scroller">${d.deals.map((x, i) => `<div class="reveal" style="--i:${i}">${listingCard(x.l, { noCompare: true, ribbon: `#${i + 1} · ${money(x.saving)} below fair value` })}</div>`).join('')}</div>`
+        : `<p class="muted empty-note">No ${HOME.cond === 'All' ? '' : HOME.cond.toLowerCase() + ' '}cars priced clearly below fair value within ${radius} miles right now. Widen the radius or check “Worth the drive”.</p>`}`;
+  }
+
+  function localHtml(d, zip, radius, live) {
+    const { lm, origin } = d;
+    const st = lm.stats, nat = lm.national;
+    const g = Geo.lookup(zip);
+    const head = `<div class="insight-head local-head">
+        <div><h2>Your market: <span class="place" data-home-place>${esc(Geo.label(g, { short: true }))}</span></h2>
+          <p class="eyebrow">${live ? `Live from ${esc(srcName())} · ` : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}</p></div>
+        <div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === radius}">${r} mi</button>`).join('')}</div>
+      </div>`;
+    const strip = `<dl class="market-strip reveal">
+        <div><dt>Cars for sale</dt><dd>${num(live && lm.total != null ? lm.total : st.count)}</dd>${nat.count ? `<small>${pct(((live && lm.total != null ? lm.total : st.count) / nat.count), 1)} of the US market</small>` : ''}</div>
+        <div><dt>Median asking</dt><dd>${money(st.medianPrice)}</dd>${compareLine(st.medianPrice, nat.medianPrice, 'median', true)}</div>
+        <div><dt>Median days listed</dt><dd>${st.medianDays != null ? plural(Math.round(st.medianDays), 'day') : '—'}</dd>${compareLine(st.medianDays, nat.medianDays, 'pace', true)}</div>
+        <div><dt>Priced below market</dt><dd>${st.belowShare != null ? pct(st.belowShare) : '—'}</dd>${nat.belowShare != null ? `<small>US: ${pct(nat.belowShare)}</small>` : ''}</div>
+        <div><dt>Price cuts this week</dt><dd>${num(st.cuts)}</dd><small>${live ? 'In the newest listings' : `Across ${plural(st.dealers, 'seller')}`}</small></div>
+      </dl>`;
+    const dealsCard = `<article class="card insight local-deals wide reveal">
+        <header><h3>${badge('Deals', 'b-deal')} Best deals near you</h3><p class="muted">Cars priced furthest below their fair value within ${radius} miles. Fair value counts the year, miles, trim and spec of ${live ? 'the cars for sale near you' : 'every car on the market'}, not a dealer’s badge.</p></header>
+        <div id="deals-body">${dealsScrollerHtml(d, zip, radius)}</div>
+        <a class="card-cta" href="${searchHref(Object.assign({ near: zip, radius, sort: 'best' }, live ? {} : { belowMarket: 1 }))}">See every car near you, best price first →</a>
+      </article>`;
+    const groups = d.cities.map((c) => ({
+      city: c.city, lat: c.lat, lng: c.lng, count: c.count, cls: `${deltaClass(c.delta)}${c.inside ? ' inside' : ' outside'}`,
+      title: `${c.city}: ${plural(c.count, 'car')}, ${Math.round(c.miles)} mi away${c.delta != null ? `, prices ${pct(Math.abs(c.delta), 1)} ${c.delta < 0 ? 'below' : 'above'} fair value` : ''}`,
+    }));
+    const mapCard = `<article class="card insight local-map reveal">
+        <header><h3>Where the cars are</h3><p class="muted">Inside your ${radius}-mile radius, and the ${num(WIDE)}-mile market around it. Color is how a city prices against fair value; click one to search there.</p></header>
+        ${Charts.localMap(groups.map((g, i) => Object.assign(g, { inside: d.cities[i].inside })), { center: [origin[2], origin[3]], rings: [radius, WIDE], aria: `Map of cars for sale around ${zip}` })}
+        <div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span><span><i class="key home"></i>You</span></div>
+      </article>`;
+    const vsCard = `<article class="card insight local-vs reveal">
+        <header><h3>What your market charges</h3><p class="muted">Median used asking price near you vs. ${live ? 'the wider market' : 'the whole US'}, for the models with the most cars nearby.</p></header>
+        ${d.vs.length ? `<ul class="vs-list">${d.vs.map((r) => {
+          const v = Math.max(-1, Math.min(1, r.diff / 0.25));
+          const cls = r.diff <= -0.03 ? 'good' : r.diff >= 0.03 ? 'warn' : '';
+          return `<li><a href="${searchHref({ model: r.model, near: zip, radius, condition: ['Used', 'Certified'] })}">
+            <span class="vs-model"><b>${esc(r.model)}</b><small>${plural(r.local, 'car')} near you · ${money(r.localMedian)} vs ${money(r.nationalMedian)}</small></span>
+            <span class="vs-bar" aria-hidden="true"><i class="${cls}" style="left:${v < 0 ? 50 + v * 50 : 50}%;width:${Math.abs(v) * 50}%"></i></span>
+            <b class="vs-num ${cls}">${r.diff > 0 ? '+' : r.diff < 0 ? '−' : ''}${pct(Math.abs(r.diff))}</b></a></li>`;
+        }).join('')}</ul>` : '<p class="muted">Not enough cars of one model nearby to compare yet. Widen the radius.</p>'}
+      </article>`;
+    const driveCard = `<article class="card insight local-drive wide reveal">
+        <header><h3>${badge(`${radius}–${num(WIDE)} mi`, 'b-status')} Worth the drive</h3><p class="muted">Cars outside your radius that still come out ahead after the round-trip fuel (about ${Math.round(Market.FUEL_PER_MILE * 100)}¢ a mile) and the best deal on the same model near you.</p></header>
+        ${d.drive.length ? `<ol class="drive-list">${d.drive.map((x, i) => `<li class="reveal" style="--i:${i}"><a href="#/car/${x.l.id}">
+            <span class="drive-art" style="--paint:${esc(x.l.extHex)}">${Charts.car(x.l.body, x.l.extHex, { label: `${x.l.extColor} ${x.l.model}` })}</span>
+            <span class="drive-main"><b>${esc(title(x.l))} ${esc(x.l.trim)}</b><small>${esc(x.l.city)}, ${esc(x.l.state)} · ${num(x.miles)} mi away · ${kMiles(x.l.miles)} · ${money(x.l.price)}</small></span>
+            <span class="drive-math"><b class="good">${money(x.saving)} below fair value</b><small>− ${money(x.fuel)} fuel there and back${x.nearbyBest ? ` − ${money(x.nearbyBest)} best nearby` : ''}</small><b class="net">${money(x.net)} ahead</b></span>
+          </a></li>`).join('')}</ol>` : `<p class="muted empty-note">Nothing between ${radius} and ${num(WIDE)} miles beats what you can already get nearby.</p>`}
+      </article>`;
+    const cutsCard = `<article class="card insight local-cuts reveal">
+        <header><h3>${badge('↓', 'b-drop')} Price cuts near you this week</h3></header>
+        ${d.cuts.length ? `<ul class="rank-list">${d.cuts.map(({ l, c }) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${esc(l.city)}, ${esc(l.state)}${lm.distance.get(l.id) != null ? ` · ${num(lm.distance.get(l.id))} mi` : ''} · ${c.daysAgo <= 1 ? 'today' : c.daysAgo + ' days ago'}</small></span>
+            <span class="r"><b class="drop">↓ ${money(-c.delta)}</b><small>now ${money(c.to)}</small></span></a></li>`).join('')}</ul>` : '<p class="muted">No cuts in the last 7 days within your radius.</p>'}
+        <a class="card-cta" href="${searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' })}">All price cuts near you →</a>
+      </article>`;
+    return `${head}${strip}<div class="local-grid">${dealsCard}${mapCard}${vsCard}${driveCard}${cutsCard}</div>`;
+  }
+
+  function localSectionHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    if (!zip) return '';
+    if (isLive()) return `<section class="section local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip} from ${srcName()}…`)}</div></section>`;
+    return `<section class="section local" id="local"><div id="local-body">${localHtml(localData(zip, radius, LISTINGS), zip, radius, false)}</div></section>`;
+  }
+
+  // Redraw the local section in place (radius change, exact location found).
+  function renderLocal() {
+    const sec = document.getElementById('local');
+    if (!sec) return renderHome();
+    sec.outerHTML = localSectionHtml();
+    if (isLive()) fillLiveLocal();
+  }
+
+  async function fillLiveLocal() {
+    const zip = homeZip(), radius = homeRadius();
+    const seq = ++HOME.seq;
+    const body = () => document.getElementById('local-body');
+    if (!zip || !body()) return;
+    const ctx = liveCtx();
+    const near = (r) => Object.assign(Market.emptyFilters(), { near: zip, radius: r, sort: 'newest' });
+    try {
+      await ensureLiveVocab();
+      const [local, wide, national] = await Promise.all([
+        Live.search(near(radius), ctx, {}),
+        Live.search(near(Math.min(WIDE, 500)), ctx, { lite: true }).catch(() => ({ results: [] })),
+        Live.count({ ex: {} }, ctx).catch(() => null),
+      ]);
+      if (seq !== HOME.seq || !body()) return;
+      const pool = [...new Map(local.results.concat(wide.results).map((l) => [l.id, l])).values()];
+      for (const l of pool) LIVE_SEEN.set(l.id, l);
+      const fv = Live.fairValueFrom(pool, CURRENT_YEAR);
+      for (const l of pool) setLiveValue(fv, l);
+      const d = localData(zip, radius, local.results, wide.results);
+      d.lm.total = local.total;
+      if (local.stats) {
+        if (local.stats.medianPrice) d.lm.stats.medianPrice = local.stats.medianPrice;
+        if (local.stats.avgDays != null) d.lm.stats.medianDays = local.stats.avgDays;
+      }
+      d.lm.national = { count: national, medianPrice: null, medianDays: null, belowShare: null };
+      body().innerHTML = localHtml(d, zip, radius, true);
+    } catch (e) {
+      if (seq === HOME.seq && body()) body().innerHTML = liveErrorHtml(e);
+    }
+  }
+
+  function locateMe(btn) {
+    if (!navigator.geolocation) return toast('This browser can’t share your location. Type your ZIP code instead.');
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Locating…';
+    const done = () => { btn.disabled = false; btn.innerHTML = label; };
+    navigator.geolocation.getCurrentPosition((pos) => {
+      done();
+      const g = Geo.nearest(pos.coords.latitude, pos.coords.longitude);
+      if (!g) return toast('Couldn’t match your location to a US ZIP code.');
+      setHomeZip(g.zip, { quiet: true });
+      toast(`You’re near ${Geo.label(g, { short: true })}`);
+      renderHome('local');
+    }, (err) => {
+      done();
+      toast(err.code === 1 ? 'Location access was denied. Type your ZIP code instead.' : 'Couldn’t get your location. Type your ZIP code instead.');
+    }, { timeout: 8000, maximumAge: 600000 });
+  }
+
+  function renderHome(scrollTo, params) {
+    if (params && params.get('zip')) {
+      setHomeZip(params.get('zip'), { quiet: true });
+      history.replaceState(null, '', '#/');
+      scrollTo = scrollTo || 'local';
+    }
+    const zip = homeZip(), radius = homeRadius();
     const states = new Set(LISTINGS.map((l) => l.state)).size;
-    const featured = (Market.rareSpecs(LISTINGS, rarity, 1)[0] || { l: LISTINGS[0] }).l;
     const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
     const popular = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
+    let feature;
+    const top = zip && !isLive() ? Market.bestDeals(Market.localMarket(LISTINGS, Geo.place(zip), radius, expected).local, expected, { limit: 1, currentYear: CURRENT_YEAR })[0] : null;
+    if (top) {
+      const l = top.l;
+      feature = `<a class="hero-feature" href="#/car/${l.id}" style="--paint:${esc(l.extHex)}">
+          ${Charts.car(l.body, l.extHex, { cls: 'hero-car' })}
+          <span class="hero-caption"><b>Best deal near you · ${esc(title(l))} ${esc(l.trim)}</b><small>${money(l.price)} · ${money(top.saving)} below fair value · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi` : ''}</small></span>
+        </a>`;
+    } else if (zip) {
+      feature = `<div class="hero-feature" aria-hidden="true">${Charts.car('SUV', '#2367b2', { cls: 'hero-car' })}</div>`;
+    } else {
+      feature = `<div class="hero-feature markets-panel">
+          <h3>Or start from a big market</h3>
+          <div class="market-chips">${POPULAR_MARKETS.map(([n, z]) => `<button class="chip-link" type="button" data-action="set-zip" data-zip="${z}">${esc(n)} <span class="muted">${z}</span></button>`).join('')}</div>
+          <p class="muted small">Your ZIP stays on this device. It sets the home page, the distance on every car and the “Distance from home” sort.</p>
+        </div>`;
+    }
+    const localQuick = zip ? [
+      { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
+      { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
+      { label: 'Price cuts near me', href: searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' }), demoOnly: true },
+    ].filter((q) => !isLive() || !q.demoOnly) : [];
     setView('home', `
-      <section class="hero">
+      <section class="hero${zip ? ' has-zip' : ''}">
         <div class="hero-grid" aria-hidden="true"></div>
         <div class="hero-inner">
-          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}${prefs().homeCity ? ` · near ${esc(prefs().homeCity)}` : ''}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
-          <h1>See the whole market.<span>Not just pages of listings.</span></h1>
+          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}${zip ? ` · near ${esc(Geo.label(Geo.lookup(zip), { short: true }))}` : ''}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
+          <h1>${zip ? 'The best deals around you.' : 'See the best car deals around you.'}<span>${zip ? `And the ones worth a drive from <span data-home-place>${esc(Geo.label(Geo.lookup(zip), { short: true }))}</span>.` : 'Type your ZIP code. Gridline ranks every car near you by how far its price sits below fair value, then looks at the wider market for ones worth the drive.'}</span></h1>
+          ${zipFormHtml('home')}
           <div id="hero-search"></div>
-          <div class="quick"><span class="muted">Try</span>${quickFor().slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
+          <div class="quick"><span class="muted">Try</span>${localQuick.concat(quickFor()).slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
         </div>
-        ${isLive() ? `<div class="hero-feature" aria-hidden="true">${Charts.car('Coupe', '#2367b2', { cls: 'hero-car' })}</div>` : `<a class="hero-feature" href="#/car/${featured.id}" style="--paint:${esc(featured.extHex)}">
-          ${Charts.car(featured.body, featured.extHex, { cls: 'hero-car' })}
-          <span class="hero-caption"><b>${esc(title(featured))} in ${esc(featured.extColor)}</b><small>${money(featured.price)} · ${esc(featured.city)}, ${esc(featured.state)}</small></span>
-        </a>`}
+        ${feature}
       </section>
+
+      ${localSectionHtml()}
 
       <section class="section" id="insights">${isLive() ? liveInsightsShell() : insightsHtml()}</section>
 
@@ -909,12 +1154,13 @@
         ${isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
           ${popular.map(([key, g]) => {
             const used = g.filter((l) => l.condition !== 'New');
-            return `<a class="browse-item" href="${searchHref({ model: key })}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
+            return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
           }).join('')}
         </div>`}
       </section>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg' });
-    if (isLive()) fillLiveInsights();
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: zip ? `Try “manual miata under 30k near ${zip}”` : 'Try “red convertibles under 40k near 80202”' });
+    if (isLive()) { fillLiveInsights(); if (zip) fillLiveLocal(); }
+    if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
     if (scrollTo) requestAnimationFrame(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }));
     else window.scrollTo(0, 0);
   }
@@ -1169,8 +1415,10 @@
         </fieldset>
         ${facetList('year', facets, { limit: 6, sort: (a, b) => b.value - a.value })}
         <fieldset class="facet"><legend><span>Location</span></legend>
-          <select id="near" data-near>
-            <option value="">Anywhere in the US</option>
+          <form class="zip-mini" data-zip-form="search"><input type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="ZIP code" value="${Geo.isZip(f.near) ? esc(f.near) : ''}" data-focus-key="zip-near"><button class="btn" type="submit">Go</button></form>
+          ${Geo.isZip(f.near) ? `<p class="f-note">${esc(Geo.label(Geo.lookup(f.near)))}</p>` : homeZip() && !f.near ? `<button type="button" class="link-btn f-note" data-action="near-home">Near me · ${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))} ${esc(homeZip())}</button>` : ''}
+          <select id="near" data-near aria-label="Demo market">
+            <option value="">${S.live ? 'Anywhere in the US' : 'Or pick a demo market'}</option>
             ${CITY_NAMES.map((c) => `<option ${f.near === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
           </select>
           ${f.near ? `<label class="radius"><span>Within <b>${f.radius} mi</b></span><input type="range" id="radius" min="25" max="1000" step="25" value="${f.radius}" data-num="radius"></label>` : ''}
@@ -1241,7 +1489,7 @@
     if (f.msrpMin != null) chips.push({ label: `MSRP over ${money(f.msrpMin)}`, k: 'msrpMin' });
     if (f.msrpMax != null) chips.push({ label: `MSRP under ${money(f.msrpMax)}`, k: 'msrpMax' });
     if (f.milesMax != null) chips.push({ label: `Under ${kMiles(f.milesMax)}`, k: 'milesMax' });
-    if (f.near) chips.push({ label: `${f.radius} mi of ${f.near}`, k: 'near' });
+    if (f.near) chips.push({ label: `${f.radius} mi of ${placeLabel(f.near)}`, k: 'near' });
     if (f.dropsOnly) chips.push({ label: 'Has price cuts', k: 'dropsOnly' });
     if (f.belowMarket) chips.push({ label: 'Below market', k: 'belowMarket' });
     if (f.noAccidents) chips.push({ label: 'No accidents', k: 'noAccidents' });
@@ -1416,7 +1664,7 @@
         title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(g.map((l) => l.price)))}`,
       };
     });
-    const c = S.f.near ? cityByName(S.f.near) : null;
+    const c = S.f.near ? placeOf(S.f.near) : null;
     return `<div class="card map-card"><div class="viz-head"><h3>Map</h3><span class="muted small">Circle size is the number of cars; color is the median price vs. market. Click a city to search around it.</span></div>
       ${Charts.usMap(groups, { center: c ? [c[2], c[3]] : null, radius: S.f.near ? S.f.radius : null, aria: 'Map of matching cars by city' })}
       <div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div></div>
@@ -2361,8 +2609,10 @@
       </div>
       <h2 class="sec-title">Display</h2>
       <div class="card settings">
-        <label class="set-row"><span><b>Home location</b><small>Used for distances on every listing and the “Distance from home” sort.</small></span>
-          <select data-pref="homeCity"><option value="">Not set</option>${CITY_NAMES.map((c) => `<option ${p.homeCity === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+        <div class="set-row"><span><b>Home ZIP code</b><small>Sets your market on the home page, the distance on every listing and the “Distance from home” sort.${homeZip() ? ` Now <b data-home-place>${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))}</b> ${esc(homeZip())}.` : ' Stays on this device.'}</small></span>
+          <form class="zip-mini" data-zip-form="settings"><input type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="Home ZIP code" value="${esc(homeZip() || '')}"><button class="btn primary" type="submit">Save</button>${homeZip() ? '<button class="btn ghost" type="button" data-action="clear-zip">Clear</button>' : ''}</form></div>
+        <label class="set-row"><span><b>Market radius</b><small>How far around your ZIP the home page looks for deals. “Worth the drive” looks out to ${num(WIDE)} miles.</small></span>
+          <select data-pref="homeRadius">${RADII.map((r) => `<option value="${r}" ${homeRadius() === r ? 'selected' : ''}>${r} miles</option>`).join('')}</select></label>
         <label class="set-row"><span><b>Show on listings</b><small>Seller name or the car’s location.</small></span>
           <select data-pref="showDealer"><option value="0" ${!p.showDealer ? 'selected' : ''}>Location</option><option value="1" ${p.showDealer ? 'selected' : ''}>Seller name</option></select></label>
         <label class="set-row"><span><b>Compact cards</b><small>Fit more cars on screen.</small></span>
@@ -2452,7 +2702,29 @@
       if (el.dataset.doc === 'sticker') showDoc(stickerHtml(l), `Window sticker · ${title(l)} ${l.trim}`);
       else showDoc(buildSheetHtml(l), `Build sheet · ${title(l)} ${l.trim}`);
     } else if (a === 'scroll') {
-      document.getElementById('rare-scroller').scrollBy({ left: Number(el.dataset.dir) * 320, behavior: 'smooth' });
+      document.getElementById(el.dataset.target || 'rare-scroller')?.scrollBy({ left: Number(el.dataset.dir) * 320, behavior: 'smooth' });
+    } else if (a === 'radius') {
+      store.update((s) => { s.prefs.homeRadius = Number(el.dataset.r); });
+      if (isLive()) renderHome(el.closest('#local') ? 'local' : 'insights');
+      else renderLocal();
+    } else if (a === 'deal-cond') {
+      HOME.cond = dealCond(el.dataset.cond);
+      const zip = homeZip(), radius = homeRadius();
+      const bodyEl = document.getElementById('deals-body');
+      if (bodyEl && zip) {
+        const pool = isLive() ? [...LIVE_SEEN.values()].filter((l) => !l.sold) : LISTINGS;
+        bodyEl.innerHTML = dealsScrollerHtml(localData(zip, radius, pool), zip, radius);
+      }
+    } else if (a === 'locate') {
+      locateMe(el);
+    } else if (a === 'set-zip') {
+      if (setHomeZip(el.dataset.zip)) renderHome('local');
+    } else if (a === 'clear-zip') {
+      store.update((s) => { s.prefs.homeZip = null; s.prefs.homeCity = null; });
+      toast('Home ZIP cleared');
+      renderSettings();
+    } else if (a === 'near-home') {
+      updateFilters((f) => { f.near = homeZip(); f.radius = homeRadius(); });
     } else if (a === 'jump') {
       e.preventDefault();
       document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: 'smooth' });
@@ -2555,6 +2827,21 @@
   });
 
   app.addEventListener('submit', (e) => {
+    const zipForm = e.target.dataset && e.target.dataset.zipForm;
+    if (zipForm) {
+      e.preventDefault();
+      const raw = e.target.querySelector('input').value;
+      if (zipForm === 'search') {
+        const zip = raw.trim();
+        if (!zip) return updateFilters((f) => { if (Geo.isZip(f.near)) f.near = null; });
+        if (!Geo.lookup(zip)) return toast(`${zip} isn’t a US ZIP code`);
+        return updateFilters((f) => { f.near = zip; f.radius = f.radius && f.radius !== 150 ? f.radius : homeRadius(); });
+      }
+      if (!setHomeZip(raw)) return;
+      if (zipForm === 'settings') renderSettings();
+      else renderHome('local');
+      return;
+    }
     const prov = e.target.dataset && e.target.dataset.provider;
     if (!prov) return;
     e.preventDefault();
@@ -2594,6 +2881,7 @@
   }
 
   function onMapCity(city) {
+    if (view.name !== 'search') { location.hash = searchHref({ near: city, radius: 100 }); return; }
     updateFilters((f) => {
       f.near = city;
       f.radius = f.radius && f.radius !== 150 ? f.radius : 100;
@@ -2605,7 +2893,7 @@
     if (t.dataset.pref) {
       const k = t.dataset.pref;
       store.update((s) => {
-        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : k === 'huntEvery' ? Number(t.value) : t.value || null;
+        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : k === 'huntEvery' || k === 'homeRadius' ? Number(t.value) : t.value || null;
         if (k === 'dataSource') s.prefs.sourceChosen = true;
       });
       if (k === 'dataSource') {
@@ -2614,9 +2902,6 @@
         applyModeUi();
         renderSettings();
         toast(t.value === 'demo' ? 'Using demo data' : isLive() ? `Live data from ${srcName()}` : `Add your ${Live.info(t.value).name} API key to use live data`);
-      } else if (k === 'homeCity' && view.name === 'home') {
-        renderHome('insights');
-        toast(t.value ? `Showing the market near ${t.value}` : 'Showing the whole country');
       } else toast('Saved');
       return;
     }
@@ -2703,7 +2988,7 @@
     const parts = path.split('/').filter(Boolean);
     const params = new URLSearchParams(qs || '');
     document.getElementById('header-search').hidden = !parts.length;
-    if (!parts.length) return renderHome();
+    if (!parts.length) return renderHome(null, params);
     if (parts[0] === 'insights') return renderHome('insights');
     if (parts[0] === 'search') return renderSearch(params);
     if (parts[0] === 'car') return renderCar(parts[1], params);
