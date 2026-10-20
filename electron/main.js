@@ -68,7 +68,7 @@ function createWindow() {
     title: 'Gridline',
     show: false,
     icon: path.join(ROOT, 'assets/icons/icon-512.png'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0b0f16' : '#f6f7f9',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : '#f6f7f9',
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

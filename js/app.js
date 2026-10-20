@@ -639,14 +639,16 @@
       return true;
     });
   }
-  // A category's heading row: title and eyebrow on the left, anything extra plus previous/next pills on the right.
+  // A category's heading row: title and eyebrow on the left; on the right, anything extra plus a callout
+  // pill for every other category (‹ for the ones above, › for the ones below).
   function catHead(cats, id, o) {
     const i = Math.max(0, cats.findIndex((c) => c.id === id));
-    const cat = cats[i], prev = cats[(i - 1 + cats.length) % cats.length], next = cats[(i + 1) % cats.length];
-    const pill = (c, dir) => `<a class="cat-pill" href="#/${c.id}" data-action="jump" data-target="${c.id}" aria-label="${dir === 'prev' ? 'Previous' : 'Next'}: ${esc(c.short)}">${dir === 'prev' ? '<span aria-hidden="true">‹</span> ' : ''}${esc(c.short)}${dir === 'next' ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    const cat = cats[i];
+    const pill = (c, k) => `<a class="cat-pill" href="#/${c.id}" data-action="jump" data-target="${c.id}" aria-label="${k < i ? 'Up to' : 'Down to'}: ${esc(c.short)}">${k < i ? '<span aria-hidden="true">‹</span> ' : ''}${esc(c.short)}${k > i ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    const callouts = cats.map((c, k) => (k === i ? '' : pill(c, k))).join('');
     return `<div class="insight-head cat-head">
         <div><h2>${(o && o.title) || esc(cat.title)}</h2>${o && o.eyebrow ? `<p class="eyebrow">${o.eyebrow}</p>` : ''}</div>
-        <div class="cat-switch">${(o && o.extra) || ''}${cats.length > 1 ? pill(prev, 'prev') + pill(next, 'next') : ''}</div>
+        <div class="cat-switch">${(o && o.extra) || ''}${callouts}</div>
       </div>`;
   }
   const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${cats.map((c) => `<a href="#/${c.id}" data-action="jump" data-target="${c.id}" data-cat="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
@@ -681,10 +683,19 @@
     const tv = Market.trimVelocity(SOLD, 20)[0];
 
     const retentionCard = ret.length ? `<article class="card insight">
-      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in value kept over 4 years</h3>
-      <p class="muted">${CURRENT_YEAR - 4} to ${CURRENT_YEAR - 1} model years · under 75k miles · average list price vs. original MSRP</p></header>
-      ${Charts.retentionBars(ret.map((r) => ({ title: `${r.make} ${r.model}`, sub: `MSRP ${money(r.msrp)} → avg ${money(r.avgList)}`, values: r.byAge })))}
-      <div class="legend">${[1, 2, 3, 4].map((y) => `<span><i class="key ret-${y}"></i>Year ${y}</span>`).join('')}</div>
+      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in residual value over 4 years</h3>
+      <p class="muted">${CURRENT_YEAR - 4} to ${CURRENT_YEAR - 1} <span class="sep">|</span> Under 75k miles</p></header>
+      <div class="ret-bars">
+        <div class="ret-head"><span></span><span><b>Avg list price</b> ${money(ret[0].avgList)}</span></div>
+        ${ret.map((r) => `<div class="ret-row">
+          <div class="ret-label"><b>${esc(r.make)} ${esc(r.model)}</b><small>MSRP ${money(r.msrp)} <span class="sep">|</span> Avg list ${money(r.avgList)} <span class="sep">|</span> ${kMiles(r.avgMiles)}</small></div>
+          <div class="ret-track" role="img" aria-label="${esc(r.make)} ${esc(r.model)}: ${r.byAge.map((v, k) => `year ${k + 1} ${Math.round(v * 100)}%`).join(', ')} of MSRP">
+            <span class="ret-fill">${r.byAge.map((v, k) => `<i class="ret-${k + 1}" style="width:${(Math.min(1, v) * 100).toFixed(1)}%"><span class="sr-only">Year ${k + 1}: ${Math.round(v * 100)}%</span></i>`).join('')}</span>
+            <b>${Math.round(r.byAge[r.byAge.length - 1] * 100)}%</b>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="legend boxed">${[1, 2, 3, 4].map((y) => `<span><i class="key ret-${y}"></i>Year ${y}</span>`).join('')}</div>
       <a class="card-cta" href="${searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1] })}">Shop ${CURRENT_YEAR - 4}–${CURRENT_YEAR - 1} compact SUVs →</a>
     </article>` : '';
 
@@ -692,22 +703,32 @@
     if (tv) {
       const key = `${tv.make} ${tv.model}`;
       const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
-      const row = (t, cls) => `<div class="trim-row ${cls}"><i class="key"></i><span class="trim-name"><b>${esc(t.trim)}</b><small>${plural(t.n, 'sale')} · median ${money(t.price)}</small></span><b class="trim-days">${plural(Math.round(t.days), 'day')}</b></div>`;
+      // A strip of dots from fast (teal) to slow (orange) across the model's range of days to sell, with each trim's pace marked.
+      const N = 32, max = tv.slow.days * 1.12;
+      const slot = (d) => Math.max(0, Math.min(N - 1, Math.round((d / max) * (N - 1))));
+      const marks = new Map([[slot(tv.fast.days), tv.fast], [slot(tv.slow.days), tv.slow]]);
+      const dots = Array.from({ length: N }, (_, k) => {
+        const m = marks.get(k);
+        if (m) return `<i class="mark" title="${esc(m.trim)}: ${plural(Math.round(m.days), 'day')}"></i>`;
+        return `<i class="${paceClass((k / (N - 1)) * max / tv.days - 1)}"></i>`;
+      }).join('');
+      const row = (t) => `<div class="trim-row"><i class="key mark"></i><span class="trim-name"><b>${esc(t.trim)}</b> <small>(${num(t.n)} sold)</small></span><b class="trim-days">${plural(Math.round(t.days), 'day')}</b></div>`;
       trimCard = `<article class="card insight">
-        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(tv.fast.trim)} models sell ${Math.round(tv.gap)} days faster than the ${esc(tv.slow.trim)} trim</h3>
-        <p class="muted">Median days from listing to sale over the last 120 days · ${plural(tv.n, 'sale')} nationwide · a typical ${esc(tv.model)} takes ${plural(Math.round(tv.days), 'day')}</p></header>
-        <div class="split-map">
+        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(tv.fast.trim) ? `${tv.fast.trim} models` : `${tv.fast.trim}s`)} sell ${Math.round(tv.gap)} days faster than ${esc(tv.slow.trim)} models</h3>
+        <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(tv.n, 'sale')} nationwide</p></header>
+        <div class="split-map trim">
           <div class="trim-vs">
-            ${row(tv.fast, 'fast')}
-            <div class="trim-track" aria-hidden="true"><i class="fast" style="width:${((tv.fast.days / tv.slow.days) * 100).toFixed(1)}%"></i><i class="slow" style="width:100%"></i></div>
-            ${row(tv.slow, 'slow')}
+            <p class="muted">Avg days to sell</p>
+            <div class="days-dots" aria-hidden="true">${dots}</div>
+            ${row(tv.fast)}
+            ${row(tv.slow)}
             ${tv.trims.length > 2 ? `<p class="muted small">${tv.trims.slice(1, -1).map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ')}</p>` : ''}
           </div>
-          ${Charts.geoMap((st) => {
+          <div class="map-paper">${Charts.geoMap((st) => {
             const d = tv.byState[st];
             if (!d || d.n < 5) return null;
             return { cls: paceClass(d.days / tv.days - 1), title: `${st}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: st, when: 'sold', sort: 'sold-fastest' }) };
-          }, { aria: `States shaded by how fast ${key}s sell` })}
+          }, { aria: `States shaded by how fast ${key}s sell` })}</div>
         </div>
         <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
         <a class="card-cta" href="${searchHref({ model: key, when: 'sold', sort: 'sold-fastest' })}">Every ${esc(tv.model)} sold, fastest first →</a>
@@ -721,32 +742,38 @@
       const chgClass = (d) => (d == null ? 'up-2' : d >= 0.25 ? 'up-3' : d >= 0.1 ? 'up-2' : d > 0.02 ? 'up-1' : d > -0.02 ? 'flat' : d > -0.1 ? 'down-1' : d > -0.25 ? 'down-2' : 'down-3');
       momentumCard = `<article class="card insight">
         <header><h3>${badge('Used', 'b-used')} ${esc(mv.make)} sales ${rose ? 'rose' : 'fell'} ${pct(Math.abs(mv.change))} in the last month</h3>
-        <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month · ` : ''}${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before</p></header>
+        <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month <span class="sep">|</span> ` : ''}${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before</p></header>
         <div class="split-map">
           <ul class="momentum-list">${mv.models.slice(0, 5).map((m) => `<li><a href="${searchHref({ model: `${mv.make} ${m.model}`, when: 'sold', sort: 'sold-recent' })}"><span>${esc(m.model)}</span><b>${num(m.now)}</b><i class="chg ${m.change == null || m.change >= 0 ? 'up' : 'down'}">${m.change == null ? 'new' : signedPct(m.change, 1)}</i></a></li>`).join('')}</ul>
-          ${Charts.geoMap((st) => {
+          <div class="map-paper">${Charts.geoMap((st) => {
             const d = mv.byState[st];
             if (!d || d.now + d.before < 4) return null;
             return { cls: chgClass(d.change), title: `${st}: ${plural(d.now, 'sale')} this month vs. ${num(d.before)} before${d.change != null ? ` (${signedPct(d.change)})` : ''}`, href: searchHref({ make: mv.make, state: st, when: 'sold', sort: 'sold-recent' }) };
-          }, { aria: `States shaded by the change in ${mv.make} sales` })}
+          }, { aria: `States shaded by the change in ${mv.make} sales` })}</div>
         </div>
         <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
         <a class="card-cta" href="${searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' })}">Every ${esc(mv.make)} sold this month →</a>
       </article>`;
     }
 
+    const ICON = {
+      lot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5"/></svg>',
+      transit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18l-2 4H5z"/><path d="M5 17V9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8"/><path d="M12 6V3M9 3h6"/></svg>',
+      production: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="20" height="7" rx="2"/><path d="M6 16v2M18 16v2M6 9l1.5-4h9L18 9M6 12.5h2M16 12.5h2"/></svg>',
+    };
+    const statusChip = (st) => `<span class="chip status">${st === 'In transit' ? ICON.transit : st === 'In production' ? ICON.production : ICON.lot}${esc(st)}</span>`;
     const arrivalsCard = `<article class="card insight">
       <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving</h3></header>
       <div class="arrivals">
         <dl class="stat-stack">
           <div class="stat-head">${num(arr.total)} for sale nationwide</div>
-          <div><dt>On lot</dt><dd>${num(arr.byStatus['On lot'])}</dd></div>
-          <div><dt>In transit</dt><dd>${num(arr.byStatus['In transit'])}</dd></div>
-          <div><dt>In production</dt><dd>${num(arr.byStatus['In production'])}</dd></div>
+          <div><dt>${ICON.lot} On lot</dt><dd>${num(arr.byStatus['On lot'])}</dd></div>
+          <div><dt>${ICON.production} Production</dt><dd>${num(arr.byStatus['In production'])}</dd></div>
+          <div><dt>${ICON.transit} Transit</dt><dd>${num(arr.byStatus['In transit'])}</dd></div>
         </dl>
         <div class="mini-list">
           <div class="mini-list-head"><span class="pulse" aria-hidden="true"></span> Recent arrivals</div>
-          <ul>${arr.recent.slice(0, 6).map((l) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${esc(l.status)}</small></span></a></li>`).join('')}</ul>
+          <ul>${arr.recent.slice(0, 6).map((l) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${badge('New', 'b-new')} <span class="sep">|</span> ${kMiles(l.miles)} <span class="sep">|</span> ${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${statusChip(l.status)}</small></span></a></li>`).join('')}</ul>
         </div>
       </div>
       <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
