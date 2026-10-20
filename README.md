@@ -119,6 +119,8 @@ Where live listings work:
 
 Keys are stored only on your device and are never written into the code or uploaded. Gridline names the data source on every live page, as the providers' terms require.
 
+With Visor connected, the home page's "What the market's doing" cards are about *your* market rather than a national summary: pick a home city there (or in Settings) and every card covers the 150 miles around it: cars for sale with days of supply and median asking price, the models selling fastest, the biggest new-car discounts, and the "Browse the market" grid with live counts. A **Your market** card follows the hunts you've saved and the models you've favorited or opened, showing how many are for sale right now and how that's changed since you saved the hunt. The page uses three requests for the cards plus one per followed hunt or model, and repeats within 30 minutes are free.
+
 When a source can't provide something, Gridline hides that control instead of showing empty results. On the free auto.dev plan, sold history, past dates, installed options and upfitters, dealer fees, velocity and exclude filters are hidden, and auto.dev has no free-text search, so describe the car in the main search box instead.
 
 To develop without using real requests, run the stand-in APIs (`node test/mock-autodev.js`, key `ad_test_key`; `node test/mock-visor.js`, key `vis_test_key`) and start Gridline with `AUTODEV_API_BASE=http://127.0.0.1:8798 VISOR_API_BASE=http://127.0.0.1:8799 npm start`.

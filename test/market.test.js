@@ -360,3 +360,33 @@ test('fair value learns what a manual is worth instead of calling it overpriced'
   const paints = new Set(pool.filter((l) => l.condition !== 'New').flatMap((l) => (fv.explain(l) || { adjustments: [] }).adjustments).filter((a) => a.key === 'extColor').map((a) => a.value));
   assert.ok(paints.size <= 3, [...paints].join(', '));
 });
+
+test('live home page sizes the market near home, and a hunt, in one request each', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const Live = require('../js/live.js');
+  const server = http.createServer(handle).listen(0);
+  const { cities } = generateInventory();
+  const prevBase = Live.PROVIDERS.visor.base;
+  Live.PROVIDERS.visor.base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } }; // a built-in key, as in the desktop app
+  try {
+    Live.setProvider('visor');
+    const ctx = { cityByName: (n) => cities.find((c) => `${c[0]}, ${c[1]}` === n) || null, makes: ['Toyota'], known: null };
+    const near = await Live.summary(Object.assign(Market.emptyFilters(), { near: 'Denver, CO', radius: 150 }), ctx);
+    const all = await Live.summary(Market.emptyFilters(), ctx);
+    assert.ok(near.total > 0 && near.total < all.total, `${near.total} near Denver of ${all.total}`);
+    assert.ok(near.medianPrice > 0 && near.medianDays >= 0 && near.medianMiles >= 0);
+    assert.equal(all.total, listings.length);
+    // A hunt's count matches counting the synthetic market by hand.
+    const hunt = await Live.summary(Object.assign(Market.emptyFilters(), { model: ['Toyota RAV4'], priceMax: 30000 }), ctx);
+    assert.equal(hunt.total, listings.filter((l) => l.make === 'Toyota' && l.model === 'RAV4' && l.price <= 30000).length);
+    // Sold cars near home, for days of supply.
+    const sold = await Live.summary(Object.assign(Market.emptyFilters(), { near: 'Denver, CO', radius: 150 }), ctx, { inventory_status: 'sold', sold_within_days: 30 });
+    assert.ok(sold.total > 0 && sold.total < near.total);
+  } finally {
+    server.close();
+    Live.PROVIDERS.visor.base = prevBase;
+    delete globalThis.gridlineDesktop;
+  }
+});
