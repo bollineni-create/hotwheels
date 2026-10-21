@@ -93,15 +93,19 @@
   // few requests are in flight at a time, identical ones in flight share a single fetch, and a
   // "rate limit exceeded" reply pauses everything for the seconds it names and then tries again.
   const MAX_INFLIGHT = 3;
-  const RETRIES = 2;
-  let inflightCount = 0, pausedUntil = 0;
+  const RETRIES = 6;
+  const SPACING_MS = 250; // at most four requests start a second, under Visor's per-second limit
+  let inflightCount = 0, pausedUntil = 0, nextStart = 0;
   const waiting = [];
   const inflight = new Map();
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   async function slot() {
     while (inflightCount >= MAX_INFLIGHT) await new Promise((resolve) => waiting.push(resolve));
     inflightCount++;
-    const wait = pausedUntil - Date.now();
+    // Each request starts its own spacing after the last one, and after any pause a 429 asked for.
+    const start = Math.max(Date.now(), pausedUntil, nextStart);
+    nextStart = start + SPACING_MS;
+    const wait = start - Date.now();
     if (wait > 0) await sleep(wait);
   }
   function free() {
@@ -146,7 +150,8 @@
       }
       const err = (json && (typeof json.error === 'object' ? json.error : { message: json.error, code: json.code })) || {};
       if (r.status === 429 && attempt < RETRIES) {
-        const ms = retrySeconds(r, err.message) * 1000;
+        // Wait what Visor names, longer on each retry, so a burst of cards settles instead of failing.
+        const ms = retrySeconds(r, err.message) * 1000 * (attempt + 1);
         pausedUntil = Math.max(pausedUntil, Date.now() + ms);
         await sleep(ms);
         continue;

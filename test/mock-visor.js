@@ -89,6 +89,9 @@ const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'mo
   features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state',
   availability_status: 'availability_status' };
 
+const RATE = Number(process.env.MOCK_RATE) || 0;
+const recent = [];
+
 function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const send = (status, body) => {
@@ -97,6 +100,13 @@ function handle(req, res) {
   };
   if ((req.headers.authorization || '') !== `Bearer ${KEY}`) {
     return send(401, { error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key.' } });
+  }
+  // MOCK_RATE=n answers like Visor's rate limiter when more than n requests arrive within a second.
+  if (RATE) {
+    const t = Date.now();
+    while (recent.length && t - recent[0] > 1000) recent.shift();
+    recent.push(t);
+    if (recent.length > RATE) return send(429, { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'Rate limit exceeded. Retry after 1 seconds.' } });
   }
   const q = url.searchParams;
   const p = url.pathname;
@@ -107,7 +117,8 @@ function handle(req, res) {
     const field = { days_on_market: 'days_on_market', price: 'price', miles: 'miles', msrp: 'msrp', discount: 'discount_from_msrp', distance: 'distance_miles', listed_at: 'listed_at' }[sort.replace('-', '')];
     pool = [...pool].sort((a, b) => ((a[field] ?? 0) > (b[field] ?? 0) ? 1 : (a[field] ?? 0) < (b[field] ?? 0) ? -1 : 0) * (desc ? -1 : 1));
     const limit = Math.min(100, Number(q.get('limit')) || 50), offset = Number(q.get('offset')) || 0;
-    const page = pool.slice(offset, offset + limit).map(strip);
+    const withHistory = (q.get('include') || '').split(',').includes('price_history');
+    const page = pool.slice(offset, offset + limit).map((r) => Object.assign(strip(r), withHistory ? { price_history: r._price_history } : {}));
     return send(200, { data: page, pagination: { limit, offset, total: pool.length, next_offset: offset + limit < pool.length ? offset + limit : null }, meta: {} });
   }
   if (p === '/v1/facets') {
