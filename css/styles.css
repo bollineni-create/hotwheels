@@ -206,7 +206,6 @@ button, input, select { font: inherit; color: inherit; }
 .cat-nav a:hover { text-decoration: none; background: var(--surface-2); color: var(--text); }
 .cat-nav a.active { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
 section.cat { scroll-margin-top: 108px; }
-section.cat + section.cat { border-top: 1px solid var(--border); }
 .cat-head { align-items: center; flex-wrap: wrap; }
 .cat-head h2 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); letter-spacing: -.035em; line-height: 1.1; }
 .cat-head .eyebrow { margin: 6px 0 0; max-width: 70ch; }
