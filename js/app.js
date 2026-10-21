@@ -130,10 +130,10 @@
   const liveCtx = () => ({ cityByName: placeOf, zipFor: (c) => (Geo.isZip(c) ? c : CITY_ZIP[c] || null), home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
   const vocab = () => (isLive() && LIVE_VOCAB) || VOCAB;
 
-  async function ensureLiveVocab() {
+  async function ensureLiveVocab(opts) {
     if (LIVE_KNOWN) return;
     try {
-      LIVE_KNOWN = await Live.vocabulary();
+      LIVE_KNOWN = await Live.vocabulary(opts);
       LIVE_VOCAB = NLQ.build({
         models: DATA.models.concat(LIVE_KNOWN.models.filter((m) => !MODEL_KEYS.some((k) => k.endsWith(' ' + m))).map((m) => ({ make: '', model: m, trims: [] }))),
         makes: LIVE_KNOWN.makes, cities: DATA.cities, currentYear: CURRENT_YEAR,
@@ -753,7 +753,8 @@
       last = now;
       const pill = document.querySelector('#market-head .cat-pill.next');
       if (pill) { pill.classList.add('auto'); pill.style.setProperty('--ring', `${Math.min(100, (elapsed / PANEL_MS) * 100).toFixed(1)}%`); }
-      if (elapsed >= PANEL_MS) {
+      // A panel still computing its cards stays until they're in.
+      if (elapsed >= PANEL_MS && !document.querySelector('#market-panel .loading-card')) {
         const panels = homePanels();
         showPanel(panels[(panels.indexOf(panelById(PANEL.id)) + 1) % panels.length].id);
         return;
@@ -1142,7 +1143,7 @@
         const slot = grid.querySelector(`[data-slot="${k}"]`);
         if (slot && slot.isConnected) slot.outerHTML = `<article class="card insight">${liveErrorHtml(e)}</article>`;
       });
-      fill('inv', () => Live.inventoryTrend(Market.emptyFilters(), ctx).then((inv) => inventoryCardHtml(inv, { daily: false })));
+      fill('inv', () => Live.inventoryTrend(Market.emptyFilters(), ctx, LATER).then((inv) => inventoryCardHtml(inv, { daily: false })));
       fill('map', liveStateMapCard);
       fill('mover', liveMoverCard);
       fill('fast', liveFastCard);
@@ -1164,7 +1165,7 @@
   // in each state against the country's (one facets request). It compares like with like better than
   // a plain median price, which follows each state's mix of cars.
   async function liveStateMapCard() {
-    const r = await vfacet({ inventory_type: 'used,certified', year: USED_YEARS() }, 'state', { metrics: 'discount_from_msrp.mean' });
+    const r = await vfacet({ inventory_type: 'used,certified', year: USED_YEARS() }, 'state', { metrics: 'discount_from_msrp.mean' }, LATER);
     const rows = facetRows(r, 'state').filter((b) => metricOf(b, 'discount_from_msrp.mean') != null);
     if (!rows.length) return '';
     const share = (b) => 1 + metricOf(b, 'discount_from_msrp.mean');
@@ -1183,8 +1184,8 @@
     const base = { inventory_type: 'used,certified', year: String(year) };
     const snap = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
     const [now, then] = await Promise.all([
-      vfacet(base, 'model', { facet_value_limit: 25, metrics: 'price.median' }),
-      vfacet(Object.assign({}, base, { snapshot_date: snap }), 'model', { facet_value_limit: 40, metrics: 'price.median' }),
+      vfacet(base, 'model', { facet_value_limit: 25, metrics: 'price.median' }, LATER),
+      vfacet(Object.assign({}, base, { snapshot_date: snap }), 'model', { facet_value_limit: 40, metrics: 'price.median' }, LATER),
     ]);
     const before = new Map(facetRows(then, 'model').map((b) => [String(b.value), b]));
     const moved = (min) => facetRows(now, 'model').filter((b) => b.count >= min && before.has(String(b.value)) && metricOf(b, 'price.median') && metricOf(before.get(String(b.value)), 'price.median'))
@@ -1194,7 +1195,7 @@
     const pick = moved(40) || moved(15);
     if (!pick) return '';
     const mp = Object.assign({}, base, { model: pick.model, limit: 100 });
-    const [a, b] = await Promise.all([Live.request('/v1/listings', mp), Live.request('/v1/listings', Object.assign({}, mp, { snapshot_date: snap }))]);
+    const [a, b] = await Promise.all([Live.request('/v1/listings', mp, null, LATER), Live.request('/v1/listings', Object.assign({}, mp, { snapshot_date: snap }), null, LATER)]);
     const pts = (r) => (r.data || []).map(Live.normalize).filter((l) => l.price > 0 && l.miles > 0).map((l) => [l.miles, l.price]);
     const nowPts = pts(a), thenPts = pts(b);
     const fNow = Market.linearFit(nowPts), fThen = Market.linearFit(thenPts);
@@ -1208,8 +1209,8 @@
   // of each are for sale now (one), for days of supply.
   async function liveFastCard() {
     const [sold, active] = await Promise.all([
-      vfacet(soldParams({}, 45), 'model', { facet_value_limit: 60, metrics: 'days_on_market.median' }),
-      vfacet({}, 'model', { facet_value_limit: 100 }),
+      vfacet(soldParams({}, 45), 'model', { facet_value_limit: 60, metrics: 'days_on_market.median' }, LATER),
+      vfacet({}, 'model', { facet_value_limit: 100 }, LATER),
     ]);
     const forSale = new Map(facetRows(active, 'model').map((b) => [String(b.value), b.count]));
     const fast = facetRows(sold, 'model').filter((b) => b.count >= 100 && metricOf(b, 'days_on_market.median') != null)
@@ -1218,10 +1219,10 @@
     return fastCardHtml(fast, { where: 'models with 100+ sales nationwide' });
   }
 
-  // Price cuts this week: used listings two to eight weeks old with their price history (one request),
-  // the biggest cuts in the last 7 days among them.
+  // Price cuts this week: used listings two to eight weeks old with their price history (one request,
+  // the same one for an hour so repeats are free), the biggest cuts in the last 7 days among them.
   async function liveDropsCard() {
-    const r = await Live.request('/v1/listings', { inventory_type: 'used,certified', listed_after: new Date(Date.now() - 56 * 864e5).toISOString().slice(0, 19) + 'Z', sort: '-days_on_market', limit: 100, include: 'price_history' });
+    const r = await Live.request('/v1/listings', { inventory_type: 'used,certified', listed_after: new Date(Date.now() - 56 * 864e5).toISOString().slice(0, 13) + ':00:00Z', sort: '-days_on_market', limit: 100, include: 'price_history' }, null, LATER);
     const cars = (r.data || []).map(Live.normalize);
     cars.forEach((l) => LIVE_SEEN.set(l.id, l));
     const drops = Market.recentDrops(cars, 7);
@@ -1232,8 +1233,8 @@
   // 80k miles (one request to find them, one each), each priced against a fair value fit to its model.
   async function liveValueCard(ctx) {
     const base = { inventory_type: 'used,certified', year: USED_YEARS(), max_mileage: 80000 };
-    const models = facetRows(await vfacet(base, 'model', { facet_value_limit: 4 }), 'model');
-    const pages = await Promise.all(models.map((b) => Live.request('/v1/listings', Object.assign({}, base, { model: b.value, limit: 100 }))));
+    const models = facetRows(await vfacet(base, 'model', { facet_value_limit: 4 }, LATER), 'model');
+    const pages = await Promise.all(models.map((b) => Live.request('/v1/listings', Object.assign({}, base, { model: b.value, limit: 100 }), null, LATER)));
     const pool = pages.flatMap((r) => (r.data || []).map(Live.normalize)).filter((l) => l.price > 0);
     // Each car against its own trim (an F-150 XL against XLs, not Platinums): the fit runs on copies
     // keyed by model and trim, and trims with fewer than ten cars are left out.
@@ -1499,7 +1500,7 @@
     }
     if (browseEl) {
       try {
-        const models = await Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' }));
+        const models = await Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' }), null, ON_PAGE);
         const m = (x, k) => (x.metrics && Number.isFinite(x.metrics[k]) ? x.metrics[k] : null);
         const modelRows = Live.bucketsOf(models.data && models.data.facets && models.data.facets.model).filter((x) => x.count > 0).sort((x, y) => y.count - x.count);
         if (browseEl.isConnected) {
@@ -1517,7 +1518,10 @@
   // Facet buckets with their metrics unwrapped, from a /v1/facets response.
   const facetRows = (r, name) => Live.bucketsOf(r && r.data && r.data.facets && r.data.facets[name]).filter((b) => b.count > 0);
   const metricOf = (b, k) => (b && b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
-  const vfacet = (params, facet, extra) => Live.request('/v1/facets', Object.assign({}, params, { facets: facet, facet_value_limit: 60 }, extra || {}));
+  const vfacet = (params, facet, extra, opts) => Live.request('/v1/facets', Object.assign({}, params, { facets: facet, facet_value_limit: 60 }, extra || {}), null, opts);
+  // The whole-market section sits below the fold, so its requests wait behind the cards on screen.
+  const LATER = { priority: Live.PRIORITY.later };
+  const ON_PAGE = { priority: Live.PRIORITY.page };
   const soldParams = (bp, days) => Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: days });
   // "near Kissimmee, FL" with a home ZIP, else "nationwide".
   const nearText = () => (homeZip() ? `near ${Geo.label(Geo.lookup(homeZip()), { short: true })}` : 'nationwide');
@@ -1550,9 +1554,15 @@
   async function liveRetentionCard(bp, scope, ctx) {
     const makes = [...new Set(COMPACT_SUVS.map(([mk]) => mk))].join(',');
     const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
-      const byYear = await Promise.all(Array.from({ length: RET_YEARS }, (_, k) => vfacet(Object.assign({}, lv.params, {
+      const yearOf = (k) => vfacet(Object.assign({}, lv.params, {
         make: makes, year: String(CURRENT_YEAR - 1 - k), inventory_type: 'used,certified', max_mileage: 75000,
-      }), 'model', { facet_value_limit: 100, metrics: 'price.mean,msrp.mean,miles.mean' })));
+      }), 'model', { facet_value_limit: 100, metrics: 'price.mean,msrp.mean,miles.mean' });
+      const priced = (b) => metricOf(b, 'price.mean') && metricOf(b, 'msrp.mean');
+      // The oldest year first: a market without three of these models at that age can't make the
+      // card, and finds out for one request instead of three.
+      const oldest = await yearOf(RET_YEARS - 1);
+      if (facetRows(oldest, 'model').filter((b) => priced(b) && COMPACT_SUVS.some(([, model]) => model.toLowerCase() === String(b.value).toLowerCase())).length < 3) return null;
+      const byYear = (await Promise.all(Array.from({ length: RET_YEARS - 1 }, (_, k) => yearOf(k)))).concat([oldest]);
       const out = [];
       for (const [make, model] of COMPACT_SUVS) {
         const at = byYear.map((r) => facetRows(r, 'model').find((b) => String(b.value).toLowerCase() === model.toLowerCase()));
@@ -1575,8 +1585,9 @@
   async function liveTrimCard(bp, scope, ctx) {
     const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
       const sold = soldParams(lv.params, 120);
-      const models = facetRows(await vfacet(sold, 'model', { facet_value_limit: 12 }), 'model').slice(0, 6);
       const minN = lv.kind === 'nation' ? 20 : 5;
+      // Only models with enough sales for two trims to measure, so a small market costs one request, not seven.
+      const models = facetRows(await vfacet(sold, 'model', { facet_value_limit: 12 }), 'model').filter((mb) => mb.count >= 2 * minN).slice(0, 6);
       const picks = await Promise.all(models.map(async (mb) => {
         const trims = facetRows(await vfacet(Object.assign({}, sold, { model: mb.value }), 'trim', { facet_value_limit: 20, metrics: 'days_on_market.median' }), 'trim')
           .map((b) => ({ trim: String(b.value), n: b.count, days: metricOf(b, 'days_on_market.median') }))
@@ -1866,10 +1877,10 @@
     if (!body()) return;
     const ctx = liveCtx();
     try {
-      await ensureLiveVocab();
+      await ensureLiveVocab(ON_PAGE);
       let html;
       try {
-        const rows = (await Live.facetMetrics(Market.emptyFilters(), ctx, 'state')).filter((r) => r.value && r.count);
+        const rows = (await Live.facetMetrics(Market.emptyFilters(), ctx, 'state', ON_PAGE)).filter((r) => r.value && r.count);
         const by = new Map(rows.map((r) => [String(r.value).toUpperCase(), r]));
         const hi = Math.max(1, ...rows.map((r) => r.count));
         html = Charts.geoMap((st) => {
@@ -1917,11 +1928,11 @@
     const ctx = liveCtx();
     const near = (r) => Object.assign(Market.emptyFilters(), { near: zip, radius: r, sort: 'newest' });
     try {
-      await ensureLiveVocab();
+      await ensureLiveVocab(ON_PAGE);
       const [local, wide, national] = await Promise.all([
-        Live.search(near(radius), ctx, {}),
-        Live.search(near(Math.min(WIDE, 500)), ctx, { lite: true }).catch(() => ({ results: [] })),
-        Live.count({ ex: {} }, ctx).catch(() => null),
+        Live.search(near(radius), ctx, ON_PAGE),
+        Live.search(near(Math.min(WIDE, 500)), ctx, Object.assign({ lite: true }, ON_PAGE)).catch(() => ({ results: [] })),
+        Live.count({ ex: {} }, ctx, null, ON_PAGE).catch(() => null),
       ]);
       if (seq !== HOME.seq || !body()) return;
       const pool = [...new Map(local.results.concat(wide.results).map((l) => [l.id, l])).values()];
