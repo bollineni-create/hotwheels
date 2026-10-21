@@ -51,7 +51,7 @@ function filter(q) {
     pool = Market.snapshot(listings, sold, d).map(record);
   } else pool = ACTIVE;
   const eq = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', body_type: 'body_type', fuel_type: 'fuel_type', drivetrain: 'drivetrain', transmission: 'transmission',
-    base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color', state: 'state', dealer_type: 'dealer_type', assembly_location: '_assembly' };
+    base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color', state: 'state', dealer_type: 'dealer_type', assembly_location: '_assembly', availability_status: 'availability_status' };
   for (const [p, field] of Object.entries(eq)) {
     const inc = list(q, p), exc = list(q, 'exclude_' + p);
     if (inc) pool = pool.filter((r) => inc.includes(String(r[field]).toLowerCase()));
@@ -86,7 +86,8 @@ const pctl = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort
 const stat = (arr) => (arr.length ? { min: Math.min(...arr), max: Math.max(...arr), mean: arr.reduce((a, b) => a + b, 0) / arr.length, median: pctl(arr, 0.5) } : null);
 const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', year: 'year', body_type: 'body_type', fuel_type: 'fuel_type',
   drivetrain: 'drivetrain', transmission: 'transmission', base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color',
-  features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state' };
+  features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state',
+  availability_status: 'availability_status' };
 
 function handle(req, res) {
   const url = new URL(req.url, 'http://x');
