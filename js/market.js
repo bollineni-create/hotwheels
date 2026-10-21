@@ -839,7 +839,7 @@
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
     arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, timeCapsuleCars, recentDrops, makeMomentum, trimVelocity, timeCapsule,
-    huntDiff, huntStats, rarityLabel,
+    huntDiff, huntStats, rarityLabel, linearFit,
     localMarket, bestDeals, worthTheDrive, localVsNational, marketCities, distOf, FUEL_PER_MILE,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

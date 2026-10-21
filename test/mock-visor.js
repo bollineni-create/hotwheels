@@ -117,7 +117,8 @@ function handle(req, res) {
     const field = { days_on_market: 'days_on_market', price: 'price', miles: 'miles', msrp: 'msrp', discount: 'discount_from_msrp', distance: 'distance_miles', listed_at: 'listed_at' }[sort.replace('-', '')];
     pool = [...pool].sort((a, b) => ((a[field] ?? 0) > (b[field] ?? 0) ? 1 : (a[field] ?? 0) < (b[field] ?? 0) ? -1 : 0) * (desc ? -1 : 1));
     const limit = Math.min(100, Number(q.get('limit')) || 50), offset = Number(q.get('offset')) || 0;
-    const page = pool.slice(offset, offset + limit).map(strip);
+    const withHistory = (q.get('include') || '').split(',').includes('price_history');
+    const page = pool.slice(offset, offset + limit).map((r) => Object.assign(strip(r), withHistory ? { price_history: r._price_history } : {}));
     return send(200, { data: page, pagination: { limit, offset, total: pool.length, next_offset: offset + limit < pool.length ? offset + limit : null }, meta: {} });
   }
   if (p === '/v1/facets') {
