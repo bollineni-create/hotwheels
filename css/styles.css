@@ -366,6 +366,7 @@ section.cat + section.cat { border-top: 1px solid var(--border); }
 .trim-vs .trim-days { font-size: 1.05rem; font-weight: 700; }
 /* A map drawn on paper: light land on any surface, so the shaded states read like a printed atlas. */
 .map-paper { min-width: 0; }
+.map-paper .map-note { margin: 4px 0 0; text-align: center; }
 .map-paper .geo { fill: #ffffff; stroke: #c3c7cf; stroke-width: .9; }
 .map-paper .geo.geo-empty { fill: #f4f5f7; }
 .map-paper .usmap.geo .map-land { stroke: #c3c7cf; }

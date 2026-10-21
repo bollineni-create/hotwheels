@@ -846,17 +846,19 @@
     });
   }
 
-  function weeklyGridHtml() {
-    const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
-    const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR, RET_YEARS).slice(0, 3);
-    const years = Array.from({ length: RET_YEARS }, (_, k) => CURRENT_YEAR - RET_YEARS + k);
-    const momentum = Market.makeMomentum(SOLD, 30, 20);
-    const mv = momentum.find((m) => m.models.length >= 3 && m.now >= 50) || momentum[0];
-    const tv = Market.trimVelocity(SOLD, 20)[0];
+  // The week's four cards. Each builder takes the numbers it draws, so the demo (computed from every
+  // listing) and a live source (computed from facet requests around your market) share one look.
+  // o.scope adds the market to every link, o.where names it ("nationwide" or "near Kissimmee, FL").
+  const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
 
-    const retentionCard = ret.length ? `<article class="card insight">
+  // Residual value: ret is [{ make, model, byAge, msrp, avgList, avgMiles }], best keeper first.
+  function retentionCardHtml(ret, o) {
+    if (!ret.length) return '';
+    const years = Array.from({ length: RET_YEARS }, (_, k) => CURRENT_YEAR - RET_YEARS + k);
+    const shop = searchHref(Object.assign(o.models ? { model: ret.map((r) => `${r.make} ${r.model}`) } : { q: 'Compact SUV' }, { condition: ['Used', 'Certified'], year: years }, o.scope || {}));
+    return `<article class="card insight">
       <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in residual value over ${RET_YEARS} years</h3>
-      <p class="muted">${years[0]} to ${years[years.length - 1]} <span class="sep">|</span> Under 75k miles</p></header>
+      <p class="muted">${years[0]} to ${years[years.length - 1]} <span class="sep">|</span> Under 75k miles${o.where ? ` <span class="sep">|</span> ${esc(o.where)}` : ''}</p></header>
       <div class="ret-bars">
         ${ret.map((r) => `<div class="ret-row">
           <div class="ret-label"><b>${esc(r.make)} ${esc(r.model)}</b><small>MSRP ${money(r.msrp)} <span class="sep">|</span> Avg list ${money(r.avgList)} <span class="sep">|</span> ${milesText(r.avgMiles)}</small></div>
@@ -864,118 +866,147 @@
         </div>`).join('')}
       </div>
       <div class="legend boxed">${years.map((_, k) => `<span><i class="key ret-${k + 1}"></i>Year ${k + 1}</span>`).join('')}</div>
-      <a class="card-cta" href="${searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: years })}">Shop ${years[0]}–${years[years.length - 1]} compact SUVs →</a>
-      ${openCorner(searchHref({ q: 'Compact SUV', condition: ['Used', 'Certified'], year: years }), 'Shop these compact SUVs')}
-    </article>` : '';
+      <a class="card-cta" href="${shop}">Shop ${years[0]}–${years[years.length - 1]} compact SUVs${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(shop, 'Shop these compact SUVs')}
+    </article>`;
+  }
 
-    let trimCard = '';
-    if (tv) {
-      const key = `${tv.make} ${tv.model}`;
-      // Like Visor's "in Texas": the state where the same two trims are furthest apart, when each sold
-      // there at least five times; else the whole country.
-      const st = tv.states[0] || null;
-      const sc = st || tv;
-      const where = st ? stateName(st.state) : null;
-      const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
-      // A strip of pills across the model's range of days to sell, with each trim's pace marked: green up
-      // to the fastest trim, yellow to orange between the two, red past the slowest.
-      const N = 25, max = sc.slow.days * 1.12;
-      const slot = (d) => Math.max(0, Math.min(N - 1, Math.round((d / max) * (N - 1))));
-      const sf = slot(sc.fast.days), ss = Math.max(slot(sc.slow.days), sf + 1);
-      const marks = new Map([[sf, { t: sc.fast, cls: 'mark-fast' }], [ss, { t: sc.slow, cls: 'mark-slow' }]]);
-      const dots = Array.from({ length: N }, (_, k) => {
-        const m = marks.get(k);
-        if (m) return `<i class="${m.cls}" title="${esc(m.t.trim)}: ${plural(Math.round(m.t.days), 'day')}"></i>`;
-        const f = (k - sf) / (ss - sf);
-        return `<i class="${k < sf ? 'p1' : k > ss ? (k - ss <= 2 ? 'p5' : 'p6') : f < 0.34 ? 'p2' : f < 0.67 ? 'p3' : 'p4'}"></i>`;
-      }).join('');
-      const row = (t, cls) => `<div class="trim-row"><i class="key ${cls}"></i><span class="trim-name"><b>${esc(t.trim)}</b> <small>(${num(t.n)} sold)</small></span><b class="trim-days">${plural(Math.round(t.days), 'day')}</b></div>`;
-      const others = tv.trims.slice(1, -1);
-      const aside = st
-        ? `Nationwide: ${esc(tv.fast.trim)} ${Math.round(tv.fast.days)}d · ${esc(tv.slow.trim)} ${Math.round(tv.slow.days)}d`
-        : others.length ? others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ') : '';
-      const scopeF = st ? { state: st.state } : {};
-      // The map: with a state, that state county by county, each colored by how fast the model sold
-      // there (the counties load on first use; until then, and without them, the state's outline
-      // with its cities as dots); else every state shaded by how fast the model sells there.
-      TRIM_MAP = st ? { st, key, paceClass } : null;
-      const map = st
-        ? (stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass))
-        : Charts.geoMap((s) => {
-          const d = tv.byState[s];
-          if (!d || d.n < 5) return null;
-          return { cls: paceClass(d.days / tv.days - 1), title: `${s}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: s, when: 'sold', sort: 'sold-fastest' }) };
-        }, { aria: `States shaded by how fast ${key}s sell` });
-      trimCard = `<article class="card insight">
-        <header><h3>${badge(tv.condition, tv.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(sc.fast.trim) ? `${sc.fast.trim} models` : `${sc.fast.trim}s`)} sell ${Math.round(sc.gap)} days faster than ${esc(sc.slow.trim)} models${where ? ` in ${esc(where)}` : ''}</h3>
-        <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(sc.n, 'sale')} ${where ? `in ${esc(where)}` : 'nationwide'}</p></header>
-        <div class="trim-layout">
-          <div class="trim-vs">
-            <p class="muted">Avg days to sell</p>
-            <div class="days-dots" aria-hidden="true">${dots}</div>
-            ${row(sc.fast, 'mark-fast')}
-            ${row(sc.slow, 'mark-slow')}
-            ${aside ? `<p class="muted small">${aside}</p>` : ''}
-          </div>
-          <div class="map-paper${st ? ' state-map' : ''}"${st ? ` id="trim-map"` : ''}>${map}</div>
+  // Which trim sells faster: t is { make, model, condition, sc: { n, fast, slow, gap }, where, aside,
+  // map, mapId, scope }; sc is the market the headline is about (a state, your market or the country).
+  function trimCardHtml(t) {
+    const { sc } = t;
+    const key = `${t.make} ${t.model}`;
+    // A strip of pills across the model's range of days to sell, with each trim's pace marked: green up
+    // to the fastest trim, yellow to orange between the two, red past the slowest.
+    const N = 25, max = sc.slow.days * 1.12;
+    const slot = (d) => Math.max(0, Math.min(N - 1, Math.round((d / max) * (N - 1))));
+    const sf = slot(sc.fast.days), ss = Math.max(slot(sc.slow.days), sf + 1);
+    const marks = new Map([[sf, { t: sc.fast, cls: 'mark-fast' }], [ss, { t: sc.slow, cls: 'mark-slow' }]]);
+    const dots = Array.from({ length: N }, (_, k) => {
+      const m = marks.get(k);
+      if (m) return `<i class="${m.cls}" title="${esc(m.t.trim)}: ${plural(Math.round(m.t.days), 'day')}"></i>`;
+      const f = (k - sf) / (ss - sf);
+      return `<i class="${k < sf ? 'p1' : k > ss ? (k - ss <= 2 ? 'p5' : 'p6') : f < 0.34 ? 'p2' : f < 0.67 ? 'p3' : 'p4'}"></i>`;
+    }).join('');
+    const row = (x, cls) => `<div class="trim-row"><i class="key ${cls}"></i><span class="trim-name"><b>${esc(x.trim)}</b> <small>(${num(x.n)} sold)</small></span><b class="trim-days">${plural(Math.round(x.days), 'day')}</b></div>`;
+    const all = searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, t.scope || {}));
+    return `<article class="card insight">
+      <header><h3>${badge(t.condition, t.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(sc.fast.trim) ? `${sc.fast.trim} models` : `${sc.fast.trim}s`)} sell ${Math.round(sc.gap)} days faster than ${esc(sc.slow.trim)} models ${esc(t.where)}</h3>
+      <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(sc.n, 'sale')} ${esc(t.where)}</p></header>
+      <div class="trim-layout">
+        <div class="trim-vs">
+          <p class="muted">Avg days to sell</p>
+          <div class="days-dots" aria-hidden="true">${dots}</div>
+          ${row(sc.fast, 'mark-fast')}
+          ${row(sc.slow, 'mark-slow')}
+          ${t.aside ? `<p class="muted small">${t.aside}</p>` : ''}
         </div>
-        <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
-        <a class="card-cta" href="${searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, scopeF))}">Every ${esc(tv.model)} sold${where ? ` in ${esc(where)}` : ''}, fastest first →</a>
-        ${openCorner(searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, scopeF)), `Every ${tv.model} sold, fastest first`)}
-      </article>`;
-    }
+        <div class="map-paper${t.mapId ? ' state-map' : ''}"${t.mapId ? ` id="${t.mapId}"` : ''}>${t.map}</div>
+      </div>
+      <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
+      <a class="card-cta" href="${all}">Every ${esc(t.model)} sold ${esc(t.where)}, fastest first →</a>
+      ${openCorner(all, `Every ${t.model} sold, fastest first`)}
+    </article>`;
+  }
 
-    let momentumCard = '';
-    if (mv) {
-      const rose = mv.change >= 0;
-      const lead = mv.models.filter((m) => m.change != null && m.now >= 5).sort((a, b) => b.change - a.change)[0];
-      const chgClass = (d) => (d == null ? 'up-2' : d >= 0.25 ? 'up-3' : d >= 0.1 ? 'up-2' : d > 0.02 ? 'up-1' : d > -0.02 ? 'flat' : d > -0.1 ? 'down-1' : d > -0.25 ? 'down-2' : 'down-3');
-      const sales = `${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before`;
-      momentumCard = `<article class="card insight">
-        <header><h3>${badge('Used', 'b-used')} ${esc(mv.make)} sales ${rose ? 'rose' : 'fell'} ${pct(Math.abs(mv.change))} in the last month</h3>
-        <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month` : sales}</p></header>
-        <div class="split-map">
-          <div class="momentum">
-            <ul class="momentum-list">${mv.models.slice(0, 5).map((m) => `<li><a href="${searchHref({ model: `${mv.make} ${m.model}`, when: 'sold', sort: 'sold-recent' })}"><span>${esc(m.model)}</span><b>${num(m.now)}</b><i class="chg ${m.change == null || m.change >= 0 ? 'up' : 'down'}">${m.change == null ? 'new' : signedPct(m.change, 1)}</i></a></li>`).join('')}</ul>
-            ${lead ? `<p class="muted small">${sales}</p>` : ''}
-          </div>
-          <div class="map-paper">${Charts.geoMap((st) => {
-            const d = mv.byState[st];
-            if (!d || d.now + d.before < 4) return null;
-            return { cls: chgClass(d.change), title: `${st}: ${plural(d.now, 'sale')} this month vs. ${num(d.before)} before${d.change != null ? ` (${signedPct(d.change)})` : ''}`, href: searchHref({ make: mv.make, state: st, when: 'sold', sort: 'sold-recent' }) };
-          }, { aria: `States shaded by the change in ${mv.make} sales` })}</div>
+  // A make whose sales climbed (or fell): mv is { make, now, before, change, models, byState }.
+  function momentumCardHtml(mv, o) {
+    const rose = mv.change >= 0;
+    const lead = mv.models.filter((m) => m.change != null && m.now >= 5).sort((a, b) => (rose ? b.change - a.change : a.change - b.change))[0];
+    const chgClass = (d) => (d == null ? 'up-2' : d >= 0.25 ? 'up-3' : d >= 0.1 ? 'up-2' : d > 0.02 ? 'up-1' : d > -0.02 ? 'flat' : d > -0.1 ? 'down-1' : d > -0.25 ? 'down-2' : 'down-3');
+    const sales = `${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before${o.where ? ` ${esc(o.where)}` : ''}`;
+    const scope = o.scope || {};
+    const all = searchHref(Object.assign({ make: mv.make, when: 'sold', sort: 'sold-recent' }, scope));
+    return `<article class="card insight">
+      <header><h3>${badge(o.condition || 'Used', 'b-used')} ${esc(mv.make)} sales${o.near ? ` ${esc(o.near)}` : ''} ${Math.abs(mv.change) < 0.005 ? 'held steady' : `${rose ? 'rose' : 'fell'} ${pct(Math.abs(mv.change))}`} in the last month</h3>
+      <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month` : sales}</p></header>
+      <div class="split-map">
+        <div class="momentum">
+          <ul class="momentum-list">${mv.models.slice(0, 5).map((m) => `<li><a href="${searchHref(Object.assign({ model: `${mv.make} ${m.model}`, when: 'sold', sort: 'sold-recent' }, scope))}"><span>${esc(m.model)}</span><b>${num(m.now)}</b><i class="chg ${m.change == null || m.change >= 0 ? 'up' : 'down'}">${m.change == null ? 'new' : signedPct(m.change, 1)}</i></a></li>`).join('')}</ul>
+          ${lead ? `<p class="muted small">${sales}</p>` : ''}
         </div>
-        <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
-        <a class="card-cta" href="${searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' })}">Every ${esc(mv.make)} sold this month →</a>
-        ${openCorner(searchHref({ make: mv.make, when: 'sold', sort: 'sold-recent' }), `Every ${mv.make} sold this month`)}
-      </article>`;
-    }
+        <div class="map-paper">${Charts.geoMap((st) => {
+          const d = mv.byState[st];
+          if (!d || d.now + d.before < 4) return null;
+          return { cls: chgClass(d.change), title: `${st}: ${plural(d.now, 'sale')} this month vs. ${num(d.before)} before${d.change != null ? ` (${signedPct(d.change)})` : ''}`, href: searchHref({ make: mv.make, state: st, when: 'sold', sort: 'sold-recent' }) };
+        }, { aria: `States shaded by the change in ${mv.make} sales` })}${o.mapNote ? `<p class="muted small map-note">${esc(o.mapNote)}</p>` : ''}</div>
+      </div>
+      <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
+      <a class="card-cta" href="${all}">Every ${esc(mv.make)} sold this month${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(all, `Every ${mv.make} sold this month`)}
+    </article>`;
+  }
 
-    const ICON = {
-      lot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5"/></svg>',
-      transit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18l-2 4H5z"/><path d="M5 17V9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8"/><path d="M12 6V3M9 3h6"/></svg>',
-      production: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="20" height="7" rx="2"/><path d="M6 16v2M18 16v2M6 9l1.5-4h9L18 9M6 12.5h2M16 12.5h2"/></svg>',
-    };
-    const statusChip = (st) => `<span class="chip status">${st === 'In transit' ? ICON.transit : st === 'In production' ? ICON.production : ICON.lot}${esc(st)}</span>`;
-    const arrivalsCard = `<article class="card insight">
-      <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving</h3></header>
+  const ARRIVAL_ICON = {
+    lot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5"/></svg>',
+    transit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18l-2 4H5z"/><path d="M5 17V9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8"/><path d="M12 6V3M9 3h6"/></svg>',
+    production: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="20" height="7" rx="2"/><path d="M6 16v2M18 16v2M6 9l1.5-4h9L18 9M6 12.5h2M16 12.5h2"/></svg>',
+  };
+  // New-model arrivals: arr is { year, make, model, total, byStatus, recent }.
+  function arrivalsCardHtml(arr, o) {
+    const ICON = ARRIVAL_ICON;
+    const statusChip = (st) => (st ? `<span class="chip status">${st === 'In transit' ? ICON.transit : st === 'In production' ? ICON.production : ICON.lot}${esc(st)}</span>` : '');
+    const all = searchHref(Object.assign({ model: arr.make + ' ' + arr.model, year: arr.year, condition: 'New', sort: 'newest' }, o.scope || {}));
+    return `<article class="card insight">
+      <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving${o.near ? ` ${esc(o.near)}` : ''}</h3></header>
       <div class="arrivals">
         <dl class="stat-stack">
-          <div class="stat-head">${num(arr.total)} for sale nationwide</div>
+          <div class="stat-head">${num(arr.total)} for sale ${esc(o.where || 'nationwide')}</div>
           <div><dt>${ICON.lot} On lot</dt><dd>${num(arr.byStatus['On lot'])}</dd></div>
           <div><dt>${ICON.production} Production</dt><dd>${num(arr.byStatus['In production'])}</dd></div>
           <div><dt>${ICON.transit} Transit</dt><dd>${num(arr.byStatus['In transit'])}</dd></div>
         </dl>
         <div class="mini-list">
           <div class="mini-list-head"><span class="pulse-dots" aria-hidden="true"><i></i><i></i><i></i></span> Recent arrivals</div>
-          <ul>${arr.recent.slice(0, 4).map((l) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${badge('New', 'b-new')} <span class="sep">|</span> ${kMiles(l.miles)} <span class="sep">|</span> ${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${statusChip(l.status)}</small></span></a></li>`).join('')}</ul>
+          <ul>${arr.recent.slice(0, 4).map((l) => `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${badge('New', 'b-new')} <span class="sep">|</span> ${kMiles(l.miles)} <span class="sep">|</span> ${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${statusChip(l.status)}</small></span></a></li>`).join('')}</ul>
         </div>
       </div>
-      <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
-      ${openCorner(searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' }), `See all ${arr.year} ${arr.model}s`)}
+      <a class="card-cta" href="${all}">See all ${arr.year} ${esc(arr.model)}s${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(all, `See all ${arr.year} ${arr.model}s`)}
     </article>`;
+  }
 
-    return `<div class="insight-grid">${retentionCard}${trimCard}${momentumCard}${arrivalsCard}</div>`;
+  function weeklyGridHtml() {
+    const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
+    const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR, RET_YEARS).slice(0, 3);
+    const momentum = Market.makeMomentum(SOLD, 30, 20);
+    const mv = momentum.find((m) => m.models.length >= 3 && m.now >= 50) || momentum[0];
+    const tv = Market.trimVelocity(SOLD, 20)[0];
+
+    let trimCard = '';
+    TRIM_MAP = null;
+    if (tv) {
+      const key = `${tv.make} ${tv.model}`;
+      // Like Visor's "in Texas": the state where the same two trims are furthest apart, when each sold
+      // there at least five times; else the whole country.
+      const st = tv.states[0] || null;
+      const others = tv.trims.slice(1, -1);
+      // The map: with a state, that state county by county, each colored by how fast the model sold
+      // there (the counties load on first use; until then, and without them, the state's outline
+      // with its cities as dots); else every state shaded by how fast the model sells there.
+      TRIM_MAP = st ? { st, key, paceClass } : null;
+      trimCard = trimCardHtml({
+        make: tv.make, model: tv.model, condition: tv.condition, sc: st || tv,
+        where: st ? `in ${stateName(st.state)}` : 'nationwide',
+        aside: st
+          ? `Nationwide: ${esc(tv.fast.trim)} ${Math.round(tv.fast.days)}d · ${esc(tv.slow.trim)} ${Math.round(tv.slow.days)}d`
+          : others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · '),
+        map: st ? (stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass)) : nationalPaceMap(tv.byState, tv.days, key),
+        mapId: st ? 'trim-map' : null,
+        scope: st ? { state: st.state } : {},
+      });
+    }
+
+    return `<div class="insight-grid">${retentionCardHtml(ret, {})}${trimCard}${mv ? momentumCardHtml(mv, {}) : ''}${arrivalsCardHtml(arr, {})}</div>`;
+  }
+
+  // Every state shaded by how fast a model sells there against its pace nationwide.
+  function nationalPaceMap(byState, days, key) {
+    return Charts.geoMap((s) => {
+      const d = byState[s];
+      if (!d || d.n < 5 || d.days == null) return null;
+      return { cls: paceClass(d.days / days - 1), title: `${s}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: s, when: 'sold', sort: 'sold-fastest' }) };
+    }, { aria: `States shaded by how fast ${key}s sell` });
   }
 
   /* ----- National trends: the whole market, computed from every listing ----- */
@@ -1272,26 +1303,6 @@
   const scopeText = () => (homeZip() ? `within ${homeRadius()} miles of ${placeLabel(homeZip())}` : 'nationwide');
   const scopeShort = () => (homeZip() ? 'near you' : 'nationwide');
 
-  // Models you've favorited or opened lately, most often first, skipping any a hunt already covers.
-  function interestModels(hunts) {
-    const s = store.get();
-    // Hunts saved on live data store bare model names ("RAV4"), demo hunts "Toyota RAV4".
-    const covered = hunts.flatMap((x) => huntFilters(x).model.map((m) => m.toLowerCase()));
-    const isCovered = (key) => covered.some((m) => key.toLowerCase() === m || key.toLowerCase().endsWith(' ' + m));
-    const seen = new Map();
-    const add = (id, why, weight) => {
-      const l = carById(id);
-      if (!l || !l.make || !l.model) return;
-      const key = `${l.make} ${l.model}`;
-      const e = seen.get(key) || { key, why, w: 0 };
-      e.w += weight;
-      seen.set(key, e);
-    };
-    for (const id of Object.keys(s.favs)) add(id, 'In your favorites', 2);
-    for (const id of s.recent) add(id, 'Recently viewed', 1);
-    return [...seen.values()].filter((e) => !isCovered(e.key)).sort((a, b) => b.w - a.w);
-  }
-
   async function fillLiveInsights() {
     const grid = document.getElementById('live-insights');
     const ctx = liveCtx();
@@ -1314,116 +1325,209 @@
       }
       return;
     }
-    // Both captured now: if the area changes while this loads, the results stay off the new page.
+    // Visor: the same four cards as the demo, each computed from facet requests around your market
+    // (or the whole country with no ZIP set) and drawn as soon as its numbers are in; the browse grid
+    // takes one more request.
+    const scope = homeScope();
+    const bp = Live.toParams(Object.assign(Market.emptyFilters(), scope), ctx);
     const browseEl = document.getElementById('live-browse');
-    try {
-      const scope = homeScope();
-      const scoped = !!scope.near;
-      const where = scopeText();
-      const bp = Live.toParams(Object.assign(Market.emptyFilters(), scope), ctx);
-      const hunts = store.get().saved.slice(0, 3);
-      const interests = interestModels(hunts).slice(0, 2);
-      const stat = (st, n) => { const s = st && st[n]; return s ? (s.median ?? s.p50 ?? s.mean ?? null) : null; };
-      const metricNames = 'price.median,days_on_market.median';
-      // Visor computes metrics for one facet per request, so the market here takes three small ones
-      // (price buckets and the total, makes, models), then what sold here, new-car discounts here,
-      // and one per hunt and per model you follow. The live client keeps only a few in flight at once.
-      const [overview, makes, models, sold, deals, huntSums, interestSums] = await Promise.all([
-        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'price', facet_value_limit: 12 })),
-        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'make', facet_value_limit: 12, metrics: metricNames })),
-        Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' })),
-        Live.request('/v1/facets', Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: 30, facets: 'model', facet_value_limit: 60, metrics: metricNames })),
-        Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'new', sort: 'discount', limit: 4, min_msrp: 20000 })),
-        Promise.all(hunts.map((x) => Live.summary(huntFilters(x), ctx).catch(() => null))),
-        Promise.all(interests.map((m) => Live.summary(Object.assign(Market.emptyFilters(), scope, { model: [m.key] }), ctx).catch(() => null))),
-      ]);
-      if (grid && !grid.isConnected) return;
-      const od = overview.data || {}, sd = sold.data || {};
-      const active = od.total || 0, sold30 = sd.total || 0;
-      const m = (b, k) => (b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
-      const minSales = scoped ? 8 : 50;
-      const soldModels = Live.bucketsOf(sd.facets && sd.facets.model)
-        .filter((b) => b.count >= minSales && m(b, 'days_on_market.median') != null)
-        .sort((a, b) => m(a, 'days_on_market.median') - m(b, 'days_on_market.median'));
-      const fastest = soldModels.slice(0, 10);
-      const typicalDays = Market.median(soldModels.map((b) => m(b, 'days_on_market.median')));
-      const discountCars = (deals.data || []).map(Live.normalize);
-      discountCars.forEach((l) => LIVE_SEEN.set(l.id, l));
-      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
-      const modelRows = Live.bucketsOf(models.data && models.data.facets && models.data.facets.model).filter((b) => b.count > 0).sort((a, b) => b.count - a.count);
-      const maxMake = Math.max(1, ...makeRows.map((b) => b.count));
-      const maxDays = Math.max(1, ...fastest.map((b) => m(b, 'days_on_market.median')));
-      const perDay = sold30 ? sold30 / 30 : 0;
-      const supply = active && perDay ? active / perDay : null;
-      const medianAsk = stat(od.stats, 'price');
-      const priceBuckets = ((od.range_facets && od.range_facets.price && od.range_facets.price.buckets) || [])
-        .filter((b) => b.count > 0 && b.min != null && b.max != null);
-      const maxBucket = Math.max(1, ...priceBuckets.map((b) => b.count));
-
-      const makesCard = `<article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale ${esc(where)}</h3>
-          <p class="muted">Dealer listings tracked by ${esc(srcName())} right now, and how fast they are turning over</p></header>
-          <dl class="kpis live-kpis">
-            <div><dt>Sold, last 30 days</dt><dd>${num(sold30)}</dd></div>
-            <div><dt>${perDay >= 2 ? 'Sales a day' : 'Sales a week'}</dt><dd>${perDay >= 2 ? num(perDay) : num(perDay * 7)}</dd></div>
-            <div><dt>Days of supply</dt><dd>${supply ? num(supply) : '—'}</dd></div>
-            ${medianAsk != null ? `<div><dt>Median asking</dt><dd>${money(medianAsk)}</dd></div>` : ''}
-          </dl>
-          <h4 class="hbars-title">Cars for sale by make <span class="muted">· median asking price and days listed</span></h4>
-          <ol class="hbars">${makeRows.map((b) => {
-            const price = m(b, 'price.median'), days = m(b, 'days_on_market.median');
-            const sub = [price != null ? money(price) : null, days != null ? plural(Math.round(days), 'day') + ' listed' : null].filter(Boolean).join(' · ');
-            return `<li><a href="${searchHref(Object.assign({ make: b.value }, scope))}" title="${esc(b.value)}: ${num(b.count)} for sale${sub ? ' · ' + esc(sub) : ''}">
-              <span class="hb-label"><b>${esc(b.value)}</b><small>${esc(sub || '')}</small></span>
-              <span class="hb-track"><i style="width:${((b.count / maxMake) * 100).toFixed(1)}%"></i></span>
-              <b class="hb-val">${num(b.count)}</b></a></li>`; }).join('')}</ol>
-          <a class="card-cta" href="${searchHref(scope)}">Browse every listing ${esc(where)} →</a></article>`;
-
-      // Your market: one tile per hunt and per model you follow, in a slim card across the top of the
-      // grid, so it never sits stretched next to the long lists below.
-      const tile = (href, name, why, sum, notes) => `<a class="you-tile" href="${href}"><span class="you-name"><b>${name}</b><small>${why}</small></span>
-          <span class="you-stat"><b>${num(sum.total)} for sale</b><small>${notes.filter(Boolean).join(' · ') || '&nbsp;'}</small></span></a>`;
-      const huntTile = (x, sum) => {
-        const diff = x.count != null ? sum.total - x.count : 0;
-        return tile(`#/hunt/${esc(x.id)}`, esc(x.name), esc(describeFilters(huntFilters(x))), sum,
-          [diff ? `${diff > 0 ? '↑' : '↓'} ${num(Math.abs(diff))} since last check` : '', sum.medianPrice ? `median ${money(sum.medianPrice)}` : '']);
-      };
-      const modelTile = (mo, sum) => tile(searchHref(Object.assign({ model: mo.key }, scope)), esc(mo.key), `${esc(mo.why)} · ${scoped ? 'near you' : 'nationwide'}`, sum,
-        [sum.medianPrice ? `median ${money(sum.medianPrice)}` : '', sum.medianDays != null ? `${Math.round(sum.medianDays)} days listed` : '']);
-      const yours = hunts.map((x, i) => huntSums[i] && huntTile(x, huntSums[i])).concat(interests.map((mo, i) => interestSums[i] && modelTile(mo, interestSums[i]))).filter(Boolean);
-      const yourCard = `<article class="card insight wide you-card"><header><h3>${badge('You', 'b-you')} Your market</h3>
-          <p class="muted">${yours.length ? `The cars you’re hunting, favoriting and looking at, as the market stands right now.` : 'Save a hunt or favorite a car, and this card follows that market for you: how many are for sale, what they ask, and how that changes.'}</p></header>
-          ${yours.length ? `<div class="you-tiles">${yours.join('')}</div>` : `<div class="quick">${quickFor().slice(0, 3).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>`}
-          <a class="card-cta" href="#/saved">${yours.length ? 'All hunts and favorites →' : 'Hunts and favorites →'}</a></article>`;
-
-      const fastCard = `<article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest ${esc(scopeShort())}</h3>
-          <p class="muted">Median days from listing to sale over the last 30 days, models with ${minSales}+ sales${scoped ? ` within ${homeRadius()} miles` : ''}${typicalDays != null ? ` · a typical model takes ${plural(Math.round(typicalDays), 'day')}` : ''}</p></header>
-          ${fastest.length ? `<ol class="hbars sold">${fastest.map((b) => {
-            const days = m(b, 'days_on_market.median'), price = m(b, 'price.median');
-            const sub = [plural(b.count, 'sale'), price != null ? 'median ' + money(price) : null].filter(Boolean).join(' · ');
-            return `<li><a href="${searchHref(Object.assign({ model: b.value, when: 'sold' }, scope))}" title="${esc(b.value)}: sells in ${plural(Math.round(days), 'day')} · ${esc(sub)}">
-              <span class="hb-label"><b>${esc(b.value)}</b><small>${esc(sub)}</small></span>
-              <span class="hb-track"><i style="width:${((days / maxDays) * 100).toFixed(1)}%"></i></span>
-              <b class="hb-val">${plural(Math.round(days), 'day')}</b></a></li>`; }).join('')}</ol>` : `<p class="muted">Not enough sales ${esc(scopeShort())} in the last 30 days to rank models.${scoped ? ' Widen the radius above to see more of the market.' : ''}</p>`}
-          <a class="card-cta" href="${searchHref(Object.assign({ when: 'sold' }, scope))}">Browse recently sold cars ${esc(scopeShort())} →</a></article>`;
-
-      const dealsCard = `<article class="card insight${priceBuckets.length ? '' : ' wide'}"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars ${esc(scopeShort())}</h3><p class="muted">Live listings ${esc(where)}, MSRP over $20,000</p></header>
-          ${discountCars.length ? `<div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('')}</div>` : '<p class="muted">No discounted new cars listed here right now.</p>'}
-          <a class="card-cta" href="${searchHref(Object.assign({ condition: 'New', sort: 'discount', msrpMin: 20000 }, scope))}">See all new-car discounts ${esc(scopeShort())} →</a></article>`;
-
-      const priceCard = !priceBuckets.length ? '' : `<article class="card insight"><header><h3>What cars cost ${esc(scopeShort())}</h3>
-          <p class="muted">Every listing ${esc(where)} by asking price${medianAsk != null ? ` · half are listed under ${money(medianAsk)}` : ''} · tap a range to browse it</p></header>
-          <ul class="price-bars">${priceBuckets.map((b) => `<li><a href="${searchHref(Object.assign({ priceMin: Math.round(b.min), priceMax: Math.round(b.max) }, scope))}" title="${moneyK(b.min)}–${moneyK(b.max)}: ${num(b.count)} for sale (${pct(b.count / Math.max(1, active), 1)})"><span>${moneyK(b.min)}–${moneyK(b.max)}</span><i style="width:${Math.round((b.count / maxBucket) * 100)}%"></i><b>${num(b.count)}</b></a></li>`).join('')}</ul></article>`;
-
-      // Your market across the top, then the two long lists side by side, then deals next to prices.
-      if (grid) grid.innerHTML = `${yourCard}${makesCard}${fastCard}${dealsCard}${priceCard}`;
-      if (browseEl) {
-        browseEl.innerHTML = modelRows.map((b) => `<a class="browse-item" href="${searchHref(Object.assign({ model: b.value }, scope))}"><b>${esc(b.value)}</b><small>${plural(b.count, 'car')}${m(b, 'price.median') != null ? ` · median ${money(m(b, 'price.median'))}` : ''}</small></a>`).join('')
-          || `<p class="muted">Nothing listed ${esc(where)} right now.</p>`;
-      }
-    } catch (e) {
-      if (grid && grid.isConnected) grid.innerHTML = liveErrorHtml(e);
-      if (browseEl) browseEl.innerHTML = '<p class="muted">Live counts aren’t available right now.</p>';
+    if (grid) {
+      grid.innerHTML = ['ret', 'trim', 'momentum', 'arrivals'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml(`Computing ${scopeShort() === 'near you' ? 'your market' : 'the market'} from ${srcName()}…`)}</div>`).join('');
+      const fill = (k, make) => make().then((html) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (!slot || !slot.isConnected) return;
+        if (html) slot.outerHTML = html; else slot.remove();
+        if (k === 'trim') fillTrimMapIfShown();
+      }).catch((e) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (slot && slot.isConnected) slot.outerHTML = `<article class="card insight">${liveErrorHtml(e)}</article>`;
+      });
+      fill('ret', () => liveRetentionCard(bp, scope, ctx));
+      fill('trim', () => liveTrimCard(bp, scope, ctx));
+      fill('momentum', () => liveMomentumCard(bp, scope, ctx));
+      fill('arrivals', () => liveArrivalsCard(bp, scope));
     }
+    if (browseEl) {
+      try {
+        const models = await Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' }));
+        const m = (x, k) => (x.metrics && Number.isFinite(x.metrics[k]) ? x.metrics[k] : null);
+        const modelRows = Live.bucketsOf(models.data && models.data.facets && models.data.facets.model).filter((x) => x.count > 0).sort((x, y) => y.count - x.count);
+        if (browseEl.isConnected) {
+          browseEl.innerHTML = modelRows.map((x) => `<a class="browse-item" href="${searchHref(Object.assign({ model: x.value }, scope))}"><b>${esc(x.value)}</b><small>${plural(x.count, 'car')}${m(x, 'price.median') != null ? ` · median ${money(m(x, 'price.median'))}` : ''}</small></a>`).join('')
+            || `<p class="muted">Nothing listed ${esc(scopeText())} right now.</p>`;
+        }
+      } catch (e) {
+        if (browseEl.isConnected) browseEl.innerHTML = '<p class="muted">Live counts aren’t available right now.</p>';
+      }
+    }
+  }
+
+  /* ----- The week's four cards from Visor ----- */
+
+  // Facet buckets with their metrics unwrapped, from a /v1/facets response.
+  const facetRows = (r, name) => Live.bucketsOf(r && r.data && r.data.facets && r.data.facets[name]).filter((b) => b.count > 0);
+  const metricOf = (b, k) => (b && b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
+  const vfacet = (params, facet, extra) => Live.request('/v1/facets', Object.assign({}, params, { facets: facet, facet_value_limit: 60 }, extra || {}));
+  const soldParams = (bp, days) => Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: days });
+  // "near Kissimmee, FL" with a home ZIP, else "nationwide".
+  const nearText = () => (homeZip() ? `near ${Geo.label(Geo.lookup(homeZip()), { short: true })}` : 'nationwide');
+
+  // The compact SUVs the residual-value card compares (Visor has no segment, so they are named).
+  const COMPACT_SUVS = [['Toyota', 'RAV4'], ['Honda', 'CR-V'], ['Mazda', 'CX-5'], ['Mazda', 'CX-50'], ['Nissan', 'Rogue'], ['Hyundai', 'Tucson'], ['Kia', 'Sportage'],
+    ['Chevrolet', 'Equinox'], ['Subaru', 'Forester'], ['Ford', 'Escape'], ['Volkswagen', 'Tiguan'], ['Jeep', 'Compass'], ['Subaru', 'Crosstrek'], ['Ford', 'Bronco Sport']];
+
+  // The markets a card can be about, narrowest first: your radius, your state, the country. A card
+  // takes the first one with enough sales to say something, and names it.
+  function liveLevels(bp, scope, ctx) {
+    const out = [];
+    const home = homeZip() ? Geo.lookup(homeZip()) : null;
+    if (scope.near) out.push({ kind: 'near', params: bp, scope, where: nearText() });
+    if (home && home.state) out.push({ kind: 'state', state: home.state, params: Live.toParams(Object.assign(Market.emptyFilters(), { state: [home.state] }), ctx), scope: { state: home.state }, where: `in ${stateName(home.state)}` });
+    out.push({ kind: 'nation', params: Live.toParams(Market.emptyFilters(), ctx), scope: {}, where: 'nationwide' });
+    return out;
+  }
+  async function firstLevel(levels, compute) {
+    for (const lv of levels) {
+      const r = await compute(lv);
+      if (r) return Object.assign(r, { lv });
+    }
+    return null;
+  }
+
+  // Residual value: used compact SUVs under 75k miles at 1, 2 and 3 years old, average asking over
+  // average MSRP for each model (one facets request per model year), in the narrowest market with
+  // three models to compare.
+  async function liveRetentionCard(bp, scope, ctx) {
+    const makes = [...new Set(COMPACT_SUVS.map(([mk]) => mk))].join(',');
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      const byYear = await Promise.all(Array.from({ length: RET_YEARS }, (_, k) => vfacet(Object.assign({}, lv.params, {
+        make: makes, year: String(CURRENT_YEAR - 1 - k), inventory_type: 'used,certified', max_mileage: 75000,
+      }), 'model', { facet_value_limit: 100, metrics: 'price.mean,msrp.mean,miles.mean' })));
+      const out = [];
+      for (const [make, model] of COMPACT_SUVS) {
+        const at = byYear.map((r) => facetRows(r, 'model').find((b) => String(b.value).toLowerCase() === model.toLowerCase()));
+        const byAge = at.map((b) => (metricOf(b, 'price.mean') && metricOf(b, 'msrp.mean') ? metricOf(b, 'price.mean') / metricOf(b, 'msrp.mean') : null));
+        if (byAge.some((v) => v == null || v <= 0 || v > 1.5)) continue;
+        const oldest = at[RET_YEARS - 1];
+        out.push({ make, model, byAge, msrp: metricOf(oldest, 'msrp.mean'), avgList: metricOf(oldest, 'price.mean'), avgMiles: metricOf(oldest, 'miles.mean') || 0 });
+      }
+      return out.length >= 3 ? { ret: out.sort((x, y) => y.byAge[RET_YEARS - 1] - x.byAge[RET_YEARS - 1]).slice(0, 3) } : null;
+    });
+    if (!found) return '';
+    const { lv } = found;
+    return retentionCardHtml(found.ret, { scope: lv.scope, where: lv.kind === 'nation' ? 'Nationwide' : lv.where.replace(/^in /, ''), near: lv.kind === 'nation' ? '' : lv.where, models: true });
+  }
+
+  // Which trim sells faster: the models sold most over 120 days (one request), their trims' median
+  // days to sell (one request each for the top six), in the narrowest market where two trims of a
+  // model each sold enough to measure. Then that model's sales there for the county map (one
+  // request) and its trims nationwide (one); nationwide, its pace by state instead.
+  async function liveTrimCard(bp, scope, ctx) {
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      const sold = soldParams(lv.params, 120);
+      const models = facetRows(await vfacet(sold, 'model', { facet_value_limit: 12 }), 'model').slice(0, 6);
+      const minN = lv.kind === 'nation' ? 20 : 5;
+      const picks = await Promise.all(models.map(async (mb) => {
+        const trims = facetRows(await vfacet(Object.assign({}, sold, { model: mb.value }), 'trim', { facet_value_limit: 20, metrics: 'days_on_market.median' }), 'trim')
+          .map((b) => ({ trim: String(b.value), n: b.count, days: metricOf(b, 'days_on_market.median') }))
+          .filter((x) => x.days != null && x.n >= minN).sort((x, y) => x.days - y.days);
+        if (trims.length < 2) return null;
+        const fast = trims[0], slow = trims[trims.length - 1];
+        return slow.days - fast.days >= 1 ? { model: String(mb.value), trims, fast, slow, gap: slow.days - fast.days, n: trims.reduce((t, x) => t + x.n, 0) } : null;
+      }));
+      const tv = picks.filter(Boolean).sort((x, y) => y.gap - x.gap)[0];
+      return tv ? { tv } : null;
+    });
+    if (!found) return '';
+    const { tv, lv } = found;
+    const mp = Object.assign(soldParams(lv.params, 120), { model: tv.model });
+    const national = lv.kind !== 'nation';
+    const [cars, nat, states] = await Promise.all([
+      Live.request('/v1/listings', Object.assign({}, mp, { limit: 100 })),
+      national ? vfacet(Object.assign(soldParams({}, 120), { model: tv.model }), 'trim', { facet_value_limit: 20, metrics: 'days_on_market.median' }) : null,
+      national ? null : vfacet(mp, 'state', { metrics: 'days_on_market.median' }),
+    ]);
+    const list = (cars.data || []).map(Live.normalize).filter((l) => l.sold);
+    const make = ([...Market.groupBy(list, (l) => l.make)].sort((x, y) => y[1].length - x[1].length)[0] || [''])[0];
+    const condition = list.filter((l) => l.condition === 'New').length / Math.max(1, list.length) >= 0.5 ? 'New' : 'Used';
+    const key = `${make} ${tv.model}`.trim();
+    let map, mapId = null, aside = '';
+    TRIM_MAP = null;
+    if (national) {
+      // The state county by county: each county with sales colored by its pace against the market's.
+      const stCode = lv.state || Geo.lookup(homeZip()).state;
+      const inState = list.filter((l) => l.state === stCode && l.lat != null);
+      const st = {
+        state: stCode, n: inState.length, days: Market.median(inState.map((l) => l.sold.daysToSell)) || tv.fast.days,
+        cities: [...Market.groupBy(inState, (l) => l.city)].map(([city, g]) => ({ city, lat: g[0].lat, lng: g[0].lng, n: g.length, days: Market.median(g.map((l) => l.sold.daysToSell)) })),
+      };
+      TRIM_MAP = { st, key, paceClass };
+      map = stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass);
+      mapId = 'trim-map';
+      const nt = facetRows(nat, 'trim');
+      const nd = (t) => metricOf(nt.find((b) => String(b.value) === t), 'days_on_market.median');
+      if (nd(tv.fast.trim) != null && nd(tv.slow.trim) != null) aside = `Nationwide: ${esc(tv.fast.trim)} ${Math.round(nd(tv.fast.trim))}d · ${esc(tv.slow.trim)} ${Math.round(nd(tv.slow.trim))}d`;
+    } else {
+      const byState = {};
+      for (const b of facetRows(states, 'state')) byState[String(b.value).toUpperCase()] = { n: b.count, days: metricOf(b, 'days_on_market.median') };
+      map = nationalPaceMap(byState, Market.median(Object.values(byState).map((d) => d.days).filter((d) => d != null)), key);
+      aside = tv.trims.slice(1, -1).map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ');
+    }
+    return trimCardHtml({ make, model: tv.model, condition, sc: tv, where: lv.where, aside, map, mapId, scope: lv.scope });
+  }
+
+  // A make whose used sales climbed most: used sales by make over the last 30 and 60 days (two
+  // requests; the month before is the difference), in the narrowest market with enough sales, then
+  // that make's models there (two) and, for the map, its sales by state across the country (two).
+  async function liveMomentumCard(bp, scope, ctx) {
+    const pair = (params, facet) => Promise.all([vfacet(soldParams(params, 30), facet), vfacet(soldParams(params, 60), facet)])
+      .then(([a, b]) => {
+        const now = new Map(facetRows(a, facet).map((x) => [String(x.value), x.count]));
+        return facetRows(b, facet).map((x) => {
+          const n = now.get(String(x.value)) || 0, before = x.count - n;
+          return { value: String(x.value), now: n, before, change: before > 0 ? n / before - 1 : null };
+        });
+      });
+    const usedOf = (params) => Object.assign({}, params, { inventory_type: 'used,certified' });
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      const min = lv.kind === 'nation' ? 50 : 10;
+      const top = (await pair(usedOf(lv.params), 'make')).filter((x) => x.now >= min && x.before >= min && x.change != null).sort((x, y) => y.change - x.change)[0];
+      return top ? { top } : null;
+    });
+    if (!found) return '';
+    const { top, lv } = found;
+    const [models, states] = await Promise.all([pair(usedOf(Object.assign({}, lv.params, { make: top.value })), 'model'), pair(usedOf({ make: top.value }), 'state')]);
+    const byState = {};
+    for (const x of states) byState[x.value.toUpperCase()] = x;
+    const mv = { make: top.value, now: top.now, before: top.before, change: top.change, models: models.map((x) => ({ model: x.value, now: x.now, before: x.before, change: x.change })).sort((x, y) => y.now - x.now), byState };
+    return momentumCardHtml(mv, lv.kind === 'nation' ? {} : { scope: lv.scope, where: lv.where, near: lv.where, mapNote: `Used ${top.value} sales by state, nationwide` });
+  }
+
+  // New-model arrivals: next model year's new cars in your market by model (one request, this year's
+  // when there are none yet), the top model's cars by status (one) and its newest listings (one).
+  async function liveArrivalsCard(bp, scope) {
+    const newP = Object.assign({}, bp, { inventory_type: 'new' });
+    let year = CURRENT_YEAR + 1;
+    let top = facetRows(await vfacet(Object.assign({}, newP, { year: String(year) }), 'model', { facet_value_limit: 5 }), 'model')[0];
+    if (!top) {
+      year = CURRENT_YEAR;
+      top = facetRows(await vfacet(Object.assign({}, newP, { year: String(year) }), 'model', { facet_value_limit: 5 }), 'model')[0];
+    }
+    if (!top) return '';
+    const mp = Object.assign({}, newP, { year: String(year), model: top.value });
+    const [status, recent] = await Promise.all([
+      vfacet(mp, 'availability_status'),
+      Live.request('/v1/listings', Object.assign({}, mp, { limit: 4, fields: 'default,photo_urls' })),
+    ]);
+    const byStatus = { 'On lot': 0, 'In transit': 0, 'In production': 0 };
+    for (const b of facetRows(status, 'availability_status')) {
+      const k = { stock: 'On lot', transit: 'In transit', build: 'In production' }[String(b.value).toLowerCase()];
+      if (k) byStatus[k] += b.count;
+    }
+    const cars = (recent.data || []).map(Live.normalize);
+    cars.forEach((l) => LIVE_SEEN.set(l.id, l));
+    const make = (cars[0] && cars[0].make) || '';
+    return arrivalsCardHtml({ year, make, model: String(top.value), total: top.count, byStatus, recent: cars }, { scope, where: scope.near ? nearText() : 'nationwide', near: scope.near ? nearText() : '' });
   }
 
   function deltaClass(d) {
