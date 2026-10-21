@@ -12,6 +12,7 @@
   const PAGE = 100;
 
   const memCache = new Map();
+  const inflight = new Map(); // identical requests in flight, sharing one fetch
   let current = 'autodev';
   let sessionMicros = 0;
 
@@ -71,7 +72,10 @@
 
   async function rawFetch(prov, path, query, key) {
     const t = await transport();
-    if (t === 'desktop') return root.gridlineDesktop.apiFetch({ provider: prov, path, query, key });
+    if (t === 'desktop') {
+      const r = await root.gridlineDesktop.apiFetch({ provider: prov, path, query, key });
+      return Object.assign(r, { remaining60: remainingOf(r.remaining60) });
+    }
     let url, headers;
     if (t === 'proxy') {
       url = `/api/${prov}${path}${query ? '?' + query : ''}`;
@@ -86,73 +90,154 @@
     } catch (e) {
       throw new LiveError('blocked', `${PROVIDERS[prov].name} only accepts browser requests from its own website. Use the Gridline desktop app, or run \`npm start\` and open http://localhost:8080.`);
     }
-    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0, retryAfter: Number(res.headers.get('retry-after')) || 0 };
+    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0, retryAfter: Number(res.headers.get('retry-after')) || 0, remaining60: remainingOf(res.headers.get('x-ratelimit-remaining-60s')) };
   }
+  const remainingOf = (h) => (h == null || h === '' || !Number.isFinite(Number(h)) ? null : Number(h));
 
-  // The APIs allow a handful of requests a second, and a page can want a dozen at once. So: only a
-  // few requests are in flight at a time, identical ones in flight share a single fetch, and a
-  // "rate limit exceeded" reply pauses everything for the seconds it names and then tries again.
-  const MAX_INFLIGHT = 3;
+  // The APIs allow a handful of requests a second (Visor's usage tiers: 10, 40, 200 or 500 requests
+  // per 10 seconds, and 60, 120, 600 or 3,000 per minute), and a page can want sixty at once. So:
+  // requests wait in a queue and leave it by priority (the cards on screen first, the rest of the
+  // page next, sections off screen last), only a few are in flight at a time, identical ones in
+  // flight share a single fetch, and the pace stays under the account's tier. The tier is learned
+  // from the first "rate limit exceeded" reply (how many requests had gone out in the last 10 and
+  // 60 seconds says which tier refused) and remembered for a week, so later loads never burst into
+  // it; a refusal pauses everything for the seconds the API names and the request tries again.
+  const MAX_INFLIGHT = 4;
   const RETRIES = 6;
-  const SPACING_MS = 250; // at most four requests start a second, under Visor's per-second limit
-  let inflightCount = 0, pausedUntil = 0, nextStart = 0;
-  const waiting = [];
-  const inflight = new Map();
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  async function slot() {
-    while (inflightCount >= MAX_INFLIGHT) await new Promise((resolve) => waiting.push(resolve));
-    inflightCount++;
-    // Each request starts its own spacing after the last one, and after any pause a 429 asked for.
-    const start = Math.max(Date.now(), pausedUntil, nextStart);
-    nextStart = start + SPACING_MS;
-    const wait = start - Date.now();
-    if (wait > 0) await sleep(wait);
+  const SPACING_MS = 150; // between request starts, so a queue never arrives as one burst
+  const TIERS = [[10, 60], [40, 120], [200, 600], [500, 3000]]; // [per 10 s, per 60 s]
+  const TIER_TTL = 7 * 864e5;
+  const PRIORITY = { first: 0, page: 1, later: 2 };
+  const tierKey = (p) => `gridline:tier:${p}`;
+  const loadTier = (p) => safe(() => { const t = JSON.parse(localStorage.getItem(tierKey(p))); return t && t.cap10 && Date.now() - t.t < TIER_TTL ? t : null; }, null);
+  const lanes = {};
+  let seq = 0;
+  function lane(p) {
+    if (!lanes[p]) lanes[p] = { inflight: 0, pausedUntil: 0, nextStart: 0, sent: [], waiting: [], timer: null, caps: loadTier(p) };
+    return lanes[p];
   }
-  function free() {
-    inflightCount--;
-    const next = waiting.shift();
-    if (next) next();
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // The earliest moment one more request fits the tier's windows (the sent list holds the last 60 s).
+  function windowFree(L, now) {
+    if (!L.caps) return now;
+    let at = now;
+    const in10 = L.sent.filter((t) => now - t < 10000);
+    if (in10.length >= L.caps.cap10) at = Math.max(at, in10[in10.length - L.caps.cap10] + 10050);
+    if (L.sent.length >= L.caps.cap60) at = Math.max(at, L.sent[L.sent.length - L.caps.cap60] + 60050);
+    return at;
+  }
+  function pump(p) {
+    const L = lane(p);
+    if (L.timer) return;
+    while (L.inflight < MAX_INFLIGHT && L.waiting.length) {
+      const now = Date.now();
+      L.sent = L.sent.filter((t) => now - t < 60000);
+      const at = Math.max(now, L.pausedUntil, L.nextStart, windowFree(L, now));
+      if (at > now) {
+        L.timer = setTimeout(() => { L.timer = null; pump(p); }, at - now);
+        return;
+      }
+      L.inflight++;
+      L.nextStart = now + SPACING_MS;
+      L.sent.push(now);
+      L.waiting.shift().resolve();
+    }
+  }
+  function slot(p, priority) {
+    const L = lane(p);
+    return new Promise((resolve) => {
+      L.waiting.push({ priority, seq: seq++, resolve });
+      L.waiting.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
+      pump(p);
+    });
+  }
+  function free(p) {
+    lane(p).inflight--;
+    pump(p);
   }
   // Seconds to wait after a 429: the Retry-After header, else the "Retry after 9 seconds" in the message, else a guess.
   function retrySeconds(r, message) {
     const m = /retry after (\d+(?:\.\d+)?)/i.exec(message || '');
-    const s = r.retryAfter || (m ? Number(m[1]) : 0) || 3;
+    const s = r.retryAfter || (m ? Number(m[1]) : 0) || 2;
     return Math.min(20, Math.max(1, s));
   }
+  // A refusal says which tier the account is on: the highest one whose window the last requests
+  // overran. With none overrun, the API is counting more strictly than we are, so allow one fewer.
+  function learnTier(p) {
+    const L = lane(p), now = Date.now();
+    const n10 = L.sent.filter((t) => now - t < 10000).length, n60 = L.sent.length;
+    let caps = null;
+    for (const [c10, c60] of TIERS) if (n10 > c10 || n60 > c60) caps = { cap10: c10, cap60: c60 };
+    if (!caps) caps = { cap10: Math.max(3, Math.min(L.caps ? L.caps.cap10 : n10, n10) - 1), cap60: L.caps ? L.caps.cap60 : TIERS[0][1] };
+    else if (L.caps && L.caps.cap10 <= caps.cap10 && L.caps.cap60 <= caps.cap60) return; // already pacing at or under this tier
+    L.caps = Object.assign({ t: now }, caps);
+    safe(() => localStorage.setItem(tierKey(p), JSON.stringify(L.caps)));
+  }
+  const tier = (p) => lane(p || current).caps;
 
-  async function request(path, params, prov) {
+  // Replies are kept for 30 minutes (repeats within that are free), in memory and on disk, so the
+  // app's own restarts and other tabs reuse them. When the disk is full, expired entries go first,
+  // then the oldest half.
+  const CACHE_PREFIX = 'gv:';
+  const cacheGet = (key) => memCache.get(key) || safe(() => JSON.parse(localStorage.getItem(CACHE_PREFIX + key)), null);
+  function cachePut(key, entry) {
+    memCache.set(key, entry);
+    const body = JSON.stringify(entry);
+    if (safe(() => (localStorage.setItem(CACHE_PREFIX + key, body), true), false)) return;
+    evictCache(true);
+    safe(() => localStorage.setItem(CACHE_PREFIX + key, body));
+  }
+  function evictCache(makeRoom) {
+    safe(() => {
+      const now = Date.now(), live = [];
+      for (const k of Object.keys(localStorage)) {
+        if (!k.startsWith(CACHE_PREFIX)) continue;
+        const e = safe(() => JSON.parse(localStorage.getItem(k)), null);
+        if (!e || !(now - e.t < CACHE_TTL)) localStorage.removeItem(k); else live.push([k, e.t]);
+      }
+      if (makeRoom) for (const [k] of live.sort((a, b) => a[1] - b[1]).slice(0, Math.ceil(live.length / 2))) localStorage.removeItem(k);
+    });
+  }
+  const sweep = typeof setTimeout !== 'undefined' ? setTimeout(() => evictCache(false), 5000) : null;
+  if (sweep && sweep.unref) sweep.unref();
+
+  // opts.priority: PRIORITY.first for what's on screen (the default), .page for the rest of the
+  // page, .later for sections that aren't on screen yet.
+  async function request(path, params, prov, opts) {
     const p = prov || current;
     const key = getKey(p);
     if (!key) throw new LiveError('no_key', `Add your ${PROVIDERS[p].name} API key in Settings to use live data.`);
     const query = params ? new URLSearchParams(params).toString() : '';
     const cacheKey = p + path + '?' + query;
-    const hit = memCache.get(cacheKey) || safe(() => JSON.parse(sessionStorage.getItem('gv:' + cacheKey)), null);
+    const hit = cacheGet(cacheKey);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
     if (inflight.has(cacheKey)) return inflight.get(cacheKey);
-    const run = fetchJson(p, path, query, key, cacheKey);
+    const run = fetchJson(p, path, query, key, cacheKey, (opts && opts.priority) || PRIORITY.first);
     inflight.set(cacheKey, run);
     try { return await run; } finally { inflight.delete(cacheKey); }
   }
 
-  async function fetchJson(p, path, query, key, cacheKey) {
+  async function fetchJson(p, path, query, key, cacheKey, priority) {
+    const L = lane(p);
     for (let attempt = 0; ; attempt++) {
-      await slot();
+      await slot(p, priority);
       let r;
-      try { r = await rawFetch(p, path, query, key); } finally { free(); }
+      try { r = await rawFetch(p, path, query, key); } finally { free(p); }
       if (r.status !== 401 && r.status !== 403 && r.status !== 429) track(p, r.cost);
+      // Nearly out of this minute's requests: hold until the oldest one we sent falls out of the window.
+      if (r.remaining60 != null && r.remaining60 <= 1 && r.status !== 429) L.pausedUntil = Math.max(L.pausedUntil, (L.sent[0] || Date.now()) + 60050);
       let json = null;
       try { json = JSON.parse(r.body); } catch (e) { /* non-JSON error */ }
       if (r.status >= 200 && r.status < 300) {
-        const entry = { t: Date.now(), json };
-        memCache.set(cacheKey, entry);
-        safe(() => sessionStorage.setItem('gv:' + cacheKey, JSON.stringify(entry)));
+        cachePut(cacheKey, { t: Date.now(), json });
         return json;
       }
       const err = (json && (typeof json.error === 'object' ? json.error : { message: json.error, code: json.code })) || {};
       if (r.status === 429 && attempt < RETRIES) {
-        // Wait what Visor names, longer on each retry, so a burst of cards settles instead of failing.
-        const ms = retrySeconds(r, err.message) * 1000 * (attempt + 1);
-        pausedUntil = Math.max(pausedUntil, Date.now() + ms);
+        learnTier(p);
+        // Wait what the API names (longer when it keeps refusing this one), so a burst of cards settles instead of failing.
+        const ms = retrySeconds(r, err.message) * 1000 * Math.max(1, attempt);
+        L.pausedUntil = Math.max(L.pausedUntil, Date.now() + ms);
         await sleep(ms);
         continue;
       }
@@ -163,7 +248,7 @@
     }
   }
 
-  const vreq = (path, params) => request(path, params, 'visor');
+  const vreq = (path, params, opts) => request(path, params, 'visor', opts);
 
   /* ---------- Visor: filter mapping ---------- */
 
@@ -410,7 +495,7 @@
     if (SORT[f.sort]) listParams.sort = SORT[f.sort];
     if (listParams.sort === 'distance' && listParams.latitude == null) delete listParams.sort;
     const facetParams = Object.assign({}, base, { facets: FACET_NAMES.concat(['price', 'miles', 'days_on_market']).join(','), facet_value_limit: 60 });
-    const [list, fac] = await Promise.all([vreq('/v1/listings', listParams), o.offset || o.lite ? Promise.resolve(null) : vreq('/v1/facets', facetParams)]);
+    const [list, fac] = await Promise.all([vreq('/v1/listings', listParams, o), o.offset || o.lite ? Promise.resolve(null) : vreq('/v1/facets', facetParams, o)]);
     const results = (list.data || []).map(normalize);
     let facets = null, stats = null, total = list.pagination ? list.pagination.total : results.length;
     if (fac) {
@@ -425,7 +510,7 @@
       const own = Object.keys(PARAM).filter((k) => !['features', 'options'].includes(k) && (f[k] || []).length).slice(0, 4);
       await Promise.all(own.map(async (k) => {
         const pp = Object.assign(toParams(f, ctx, { skip: k }), { facets: PARAM[k], facet_value_limit: 60 });
-        const r = await vreq('/v1/facets', pp);
+        const r = await vreq('/v1/facets', pp, o);
         facets[k] = bucketsOf(r.data && r.data.facets && r.data.facets[PARAM[k]]).map((b) => ({ value: valueIn(k, b.value), label: b.label, count: b.count, avgPrice: null, avgDays: null, avgDiscount: null }));
       }));
       stats = fac.data && fac.data.stats;
@@ -441,18 +526,18 @@
   }
 
   // Per-value averages (price, days, discount) for one facet, for "sort values by".
-  async function visorFacetMetrics(f, ctx, key) {
+  async function visorFacetMetrics(f, ctx, key, opts) {
     const pp = Object.assign(toParams(f, ctx, { skip: key }), { facets: PARAM[key], facet_value_limit: 60, metrics: 'price.mean,days_on_market.mean,discount_from_msrp.mean' });
-    const r = await vreq('/v1/facets', pp);
+    const r = await vreq('/v1/facets', pp, opts);
     return bucketsOf(r.data && r.data.facets && r.data.facets[PARAM[key]]).map((b) => {
       const m = b.metrics || {};
       return { value: valueIn(key, b.value), count: b.count, avgPrice: m['price.mean'] ?? null, avgDays: m['days_on_market.mean'] ?? null, avgDiscount: m['discount_from_msrp.mean'] != null ? -m['discount_from_msrp.mean'] : null };
     });
   }
 
-  async function visorCount(f, ctx, extra) {
+  async function visorCount(f, ctx, extra, opts) {
     const pp = Object.assign(toParams(f, ctx), extra || {}, { facets: 'inventory_type', facet_value_limit: 1 });
-    const r = await vreq('/v1/facets', pp);
+    const r = await vreq('/v1/facets', pp, opts);
     return (r.data && r.data.total) || 0;
   }
 
@@ -470,14 +555,14 @@
   }
 
   // Cars for sale on a handful of past dates, for the inventory-over-time chart.
-  async function visorInventoryTrend(f, ctx) {
+  async function visorInventoryTrend(f, ctx, opts) {
     const days = [90, 75, 60, 45, 30, 15, 7, 0];
     const counts = await Promise.all(days.map((d) => {
       const g = Object.assign({}, f, { when: d ? String(d) : '0' });
       const pp = Object.assign(toParams(g, ctx), { facets: 'price', facet_value_limit: 1 });
-      return vreq('/v1/facets', pp).then((r) => ({ daysAgo: d, count: (r.data && r.data.total) || 0, median: statOf(r.data && r.data.stats, 'price', ['median', 'p50', 'mean']) }));
+      return vreq('/v1/facets', pp, opts).then((r) => ({ daysAgo: d, count: (r.data && r.data.total) || 0, median: statOf(r.data && r.data.stats, 'price', ['median', 'p50', 'mean']) }));
     }));
-    const sold30 = await visorCount(Object.assign({}, f, { when: '0' }), ctx, { inventory_status: 'sold', sold_within_days: 30 });
+    const sold30 = await visorCount(Object.assign({}, f, { when: '0' }), ctx, { inventory_status: 'sold', sold_within_days: 30 }, opts);
     return { series: counts, sold30 };
   }
 
@@ -492,8 +577,8 @@
     return { active: nActive, sold30, medianDaysToSell: medianDays, avgDaysToSell: medianDays, daysOfSupply: sold30 ? nActive / (sold30 / 30) : null, saleToList: null };
   }
 
-  async function visorListing(id) {
-    const r = await vreq(`/v1/listings/${encodeURIComponent(id)}`, { include: 'price_history,options' });
+  async function visorListing(id, opts) {
+    const r = await vreq(`/v1/listings/${encodeURIComponent(id)}`, { include: 'price_history,options' }, opts);
     return normalize(r.data);
   }
 
@@ -518,8 +603,8 @@
   }
 
   // Lists the values Visor knows for a few facets (makes, models, features), for search vocabulary.
-  async function visorVocabulary() {
-    const r = await vreq('/v1/facets', { facets: 'make,model,features,upfitter,body_type', facet_value_limit: 100 });
+  async function visorVocabulary(opts) {
+    const r = await vreq('/v1/facets', { facets: 'make,model,features,upfitter,body_type', facet_value_limit: 100 }, opts);
     const fx = (r.data && r.data.facets) || {};
     return {
       makes: bucketsOf(fx.make).map((b) => b.value),
@@ -830,7 +915,7 @@
   const call = (name) => (...args) => mod()[name](...args);
 
   const api = {
-    PROVIDERS, setProvider, provider, info, getKey, setKey, builtInKey, usage, costs, request, transport, LiveError,
+    PROVIDERS, setProvider, provider, info, getKey, setKey, builtInKey, usage, costs, request, transport, LiveError, PRIORITY, tier,
     caps: () => mod().caps, get SORT() { return mod().SORT; }, get PAGE() { return mod().PAGE; },
     toParams: (...a) => mod().toParams(...a),
     search: call('search'), facetMetrics: call('facetMetrics'), count: call('count'), summary: call('summary'), inventoryTrend: call('inventoryTrend'),

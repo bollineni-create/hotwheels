@@ -513,7 +513,7 @@ test('live requests are paced: a few in flight, duplicates shared, a rate-limit 
     ]);
     assert.equal(results.length, 8);
     assert.ok(results.every((r) => r.data && r.data.total > 0));
-    assert.ok(maxOpen <= 3, `at most 3 in flight, saw ${maxOpen}`);
+    assert.ok(maxOpen <= 4, `at most 4 in flight, saw ${maxOpen}`);
     assert.equal(hits, 8, 'seven distinct requests plus one retry');
     assert.equal(limited, 1);
     assert.ok(Date.now() - t0 >= 1000, 'waited out the retry-after');
@@ -525,5 +525,66 @@ test('live requests are paced: a few in flight, duplicates shared, a rate-limit 
     server.close();
     Live.PROVIDERS.visor.base = prevBase;
     delete globalThis.gridlineDesktop;
+  }
+});
+
+test('live requests go out by priority, the tier is learned from a refusal, and replies survive a restart', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  // A localStorage like the browser's, so the tier and the cache can be kept.
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k),
+    get length() { return store.size; }, key: (i) => [...store.keys()][i],
+  };
+  Object.defineProperty(globalThis.localStorage, 'keys', { value: () => [...store.keys()] });
+  const origKeys = Object.keys;
+  Object.keys = (o) => (o === globalThis.localStorage ? [...store.keys()] : origKeys(o));
+  const fresh = () => { delete require.cache[require.resolve('../js/live.js')]; return require('../js/live.js'); };
+  let Live = fresh();
+  const seen = [];
+  let refuse = false;
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    seen.push(u.searchParams.get('facets'));
+    if (refuse && seen.length === 12) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+      return res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Rate limit exceeded. Retry after 1 seconds.' } }));
+    }
+    setTimeout(() => handle(req, res), 120);
+  }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  Live.PROVIDERS.visor.base = base;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  try {
+    Live.setProvider('visor');
+    const facet = (n, prio, extra) => Live.request('/v1/facets', Object.assign({ facets: n, facet_value_limit: 5 }, extra || {}), null, { priority: prio });
+    // Six off-screen requests, then two for what's on screen: the first leaves at once, and the on-screen pair goes before the rest of the queue.
+    const later = ['make', 'model', 'body_type', 'trim', 'year', 'fuel_type'].map((n) => facet(n, Live.PRIORITY.later));
+    const first = ['state', 'drivetrain'].map((n) => facet(n, Live.PRIORITY.first));
+    await Promise.all(later.concat(first));
+    assert.deepEqual(seen, ['make', 'state', 'drivetrain', 'model', 'body_type', 'trim', 'year', 'fuel_type']);
+    assert.equal(Live.tier('visor'), null, 'no refusal yet, so no tier assumed');
+    // The twelfth request within ten seconds is refused: that's Tier 1 (10 per 10 s), remembered on the device.
+    refuse = true;
+    await Promise.all(['transmission', 'exterior_color', 'base_interior_color', 'dealer_type'].map((n) => facet(n, Live.PRIORITY.first)));
+    assert.equal(seen.length, 13, 'the refused request was sent again');
+    assert.deepEqual([Live.tier('visor').cap10, Live.tier('visor').cap60], [10, 60]);
+    assert.deepEqual(JSON.parse(store.get('gridline:tier:visor')).cap10, 10);
+    // Replies are on disk: a fresh client (a restart) answers from them without a request, and starts at the learned tier.
+    const before = seen.length;
+    Live = fresh();
+    Live.PROVIDERS.visor.base = base;
+    Live.setProvider('visor');
+    const again = await Live.request('/v1/facets', { facets: 'make', facet_value_limit: 5 });
+    assert.ok(again.data && again.data.total > 0);
+    assert.equal(seen.length, before, 'served from the cache');
+    assert.equal(Live.tier('visor').cap10, 10);
+  } finally {
+    server.close();
+    Object.keys = origKeys;
+    delete globalThis.localStorage;
+    delete globalThis.gridlineDesktop;
+    fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
   }
 });

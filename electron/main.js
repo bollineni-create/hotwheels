@@ -145,7 +145,7 @@ ipcMain.handle('api:fetch', async (event, req) => {
   }
   try {
     const res = await net.fetch(`${API_BASES[provider]}${apiPath}${query ? '?' + query : ''}`, { headers: { Authorization: `Bearer ${key || ''}` } });
-    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0 };
+    return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0, retryAfter: Number(res.headers.get('retry-after')) || 0, remaining60: res.headers.get('x-ratelimit-remaining-60s') };
   } catch (e) {
     return { status: 502, body: JSON.stringify({ error: { message: `Could not reach the listings API: ${e.message}` } }), cost: 0 };
   }

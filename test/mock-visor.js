@@ -90,24 +90,39 @@ const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'mo
   availability_status: 'availability_status' };
 
 const RATE = Number(process.env.MOCK_RATE) || 0;
+// MOCK_RATE10=n and MOCK_RATE60=n refuse like Visor's usage tiers (n requests per 10 and per 60 seconds);
+// MOCK_LATENCY=ms answers that many milliseconds late, like a real round trip.
+const RATE10 = Number(process.env.MOCK_RATE10) || 0, RATE60 = Number(process.env.MOCK_RATE60) || 0;
+const LATENCY = Number(process.env.MOCK_LATENCY) || 0;
 const recent = [];
+let served = 0, refused = 0;
 
 function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const send = (status, body) => {
-    res.writeHead(status, { 'Content-Type': 'application/json', 'X-Usage-Cost-Micros': status === 200 ? '2000' : '0' });
-    res.end(JSON.stringify(body));
+    const go = () => {
+      res.writeHead(status, { 'Content-Type': 'application/json', 'X-Usage-Cost-Micros': status === 200 ? '2000' : '0' });
+      res.end(JSON.stringify(body));
+    };
+    if (LATENCY) setTimeout(go, LATENCY); else go();
   };
+  if (url.pathname === '/__stats') return send(200, { served, refused });
   if ((req.headers.authorization || '') !== `Bearer ${KEY}`) {
     return send(401, { error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key.' } });
   }
   // MOCK_RATE=n answers like Visor's rate limiter when more than n requests arrive within a second.
-  if (RATE) {
-    const t = Date.now();
-    while (recent.length && t - recent[0] > 1000) recent.shift();
-    recent.push(t);
-    if (recent.length > RATE) return send(429, { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'Rate limit exceeded. Retry after 1 seconds.' } });
+  const t = Date.now();
+  while (recent.length && t - recent[0] > 60000) recent.shift();
+  recent.push(t);
+  const within = (ms) => recent.filter((x) => t - x <= ms).length;
+  if ((RATE && within(1000) > RATE) || (RATE10 && within(10000) > RATE10) || (RATE60 && within(60000) > RATE60)) {
+    refused++;
+    recent.pop(); // a refused request doesn't count against the window, as with Visor
+    res.setHeader('Retry-After', '1');
+    return send(429, { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'Rate limit exceeded. Retry after 1 seconds.' } });
   }
+  served++;
+  if (RATE60) res.setHeader('X-RateLimit-Remaining-60s', String(Math.max(0, RATE60 - within(60000))));
   const q = url.searchParams;
   const p = url.pathname;
   if (p === '/v1/listings') {
