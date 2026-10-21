@@ -628,10 +628,10 @@
 
   /* ----- Home: sections and the market carousel ----- */
 
-  // The home page: "What the market's doing" is a carousel of panels under one heading, National
-  // Trends (the week's four callout cards), Rare Specs and Time Capsules, that the ‹ › pills turn in
-  // place. The sections below it each have their own heading. The strip under the search box lists
-  // the panels and the sections.
+  // The home page: one big search box, then a strip of tabs, then the one tab you picked. The first
+  // three tabs are the panels of "What the market's doing": National Trends (the week's four callout
+  // cards), Rare Specs and Time Capsules, a carousel the ‹ › pills turn in place. The rest are
+  // sections of their own, each with its own heading. Only the selected tab is on the page.
   const HOME_CATS = [
     { id: 'insights', title: 'What the market’s doing', short: 'This Week' },
     { id: 'map', title: 'On the map', short: 'Map' },
@@ -664,6 +664,19 @@
   }
   const panelById = (id) => homePanels().find((p) => p.id === id) || homePanels()[0];
 
+  // The tab showing: a panel's id ('national', 'rare', 'capsules') shows the carousel on that panel;
+  // a section's id ('map', 'local', 'trends', 'rewind', 'browse') shows that section alone.
+  const TAB = { id: 'national' };
+  const tabIsPanel = (id) => PANELS.some((p) => p.id === id);
+  const tabRoute = (id) => (PANELS.find((p) => p.id === id) || {}).route || id;
+  // The tab a request can actually show: 'insights' means the carousel on its current panel, and a
+  // section or panel the data source can't fill falls back to the first panel.
+  function tabFor(id) {
+    if (id === 'insights') id = PANEL.id;
+    if (tabIsPanel(id)) return panelById(id).id;
+    return homeCats().some((c) => c.id === id && c.id !== 'insights') ? id : homePanels()[0].id;
+  }
+
   // A section's heading row: title and eyebrow on the left, anything extra on the right.
   function catHead(cats, id, o) {
     const cat = cats.find((c) => c.id === id) || HOME_CATS.find((c) => c.id === id);
@@ -673,26 +686,14 @@
       </div>`;
   }
   const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${
-    homePanels().map((p) => `<a href="#/${p.route}" data-action="panel" data-panel="${p.id}" data-cat="${p.id}">${esc(p.label())}</a>`).join('')
-    + cats.filter((c) => c.id !== 'insights').map((c) => `<a href="#/${c.id}" data-action="jump" data-target="${c.id}" data-cat="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
+    homePanels().map((p) => `<a href="#/${p.route}" data-action="tab" data-tab="${p.id}">${esc(p.label())}</a>`).join('')
+    + cats.filter((c) => c.id !== 'insights').map((c) => `<a href="#/${c.id}" data-action="tab" data-tab="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
 
-  // Highlight the section you're reading in the strip as you scroll (the carousel's panel while you're on it).
+  // Highlight the tab showing in the strip (the carousel's current panel while you're on it).
   function syncCatNav() {
-    const links = document.querySelectorAll('.cat-nav a[data-cat]');
-    if (!links.length) return;
-    const line = window.scrollY + 140;
-    let active = null;
-    document.querySelectorAll('section.cat').forEach((sec) => { if (sec.offsetTop <= line) active = sec.id; });
-    if (!active) active = document.querySelector('section.cat')?.id;
-    if (active === 'insights') active = panelById(PANEL.id).id;
-    links.forEach((a) => a.classList.toggle('active', a.dataset.cat === active));
+    const active = tabIsPanel(TAB.id) ? panelById(PANEL.id).id : TAB.id;
+    document.querySelectorAll('.cat-nav a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === active));
   }
-  let catTick = false;
-  window.addEventListener('scroll', () => {
-    if (view.name !== 'home' || catTick) return;
-    catTick = true;
-    requestAnimationFrame(() => { catTick = false; syncCatNav(); });
-  }, { passive: true });
 
   /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
 
@@ -723,6 +724,7 @@
   // Show a panel in place, without touching the rest of the page.
   function showPanel(id) {
     PANEL.id = panelById(id).id;
+    if (tabIsPanel(TAB.id)) TAB.id = PANEL.id;
     const head = document.getElementById('market-head'), body = document.getElementById('market-panel');
     if (!head || !body) return;
     head.innerHTML = marketHeadHtml();
@@ -745,7 +747,7 @@
   // hidden, and never runs for people who asked for reduced motion.
   function startPanelCycle() {
     stopPanelCycle();
-    if (!PANEL.auto || homePanels().length < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!PANEL.auto || !document.getElementById('market-panel') || homePanels().length < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let elapsed = 0, last = performance.now();
     const tick = (now) => {
       if (view.name !== 'home') return;
@@ -1095,7 +1097,7 @@
       <p class="muted">Cars for sale nationwide ${o.daily === false ? 'every two weeks' : 'each day'}, with the median asking price · ${num(inv.sold30)} sold in the last 30 days</p></header>
       ${Charts.trend(inv.series, { aria: 'Cars for sale nationwide over the last 90 days' })}
       <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div>
-      <a class="card-cta" href="#/rewind" data-action="jump" data-target="rewind">Rewind the market to an earlier day ↓</a>
+      <a class="card-cta" href="#/rewind" data-action="jump" data-target="rewind">Rewind the market to an earlier day →</a>
     </article>`;
   }
 
@@ -1126,8 +1128,8 @@
       `<div class="insight-grid">${inventoryCardHtml(inv, {})}${stateMapCardHtml(states, {})}${mv ? moverCardHtml(mv, {}) : ''}${fastCardHtml(fast, {})}${dropsCardHtml(drops, {})}${valueCardHtml(values, {})}</div>`;
   }
 
-  // Visor: the whole market's six cards, each drawn as soon as its requests are in. They start when the
-  // section nears the screen, so they don't compete with the cards above for Visor's rate limit.
+  // Visor: the whole market's six cards, each drawn as soon as its requests are in. They start once the
+  // section is on (or near) the screen.
   function fillLiveTrends() {
     const grid = document.getElementById('live-trends');
     if (!grid || grid.dataset.started) return;
@@ -1519,8 +1521,8 @@
   const facetRows = (r, name) => Live.bucketsOf(r && r.data && r.data.facets && r.data.facets[name]).filter((b) => b.count > 0);
   const metricOf = (b, k) => (b && b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
   const vfacet = (params, facet, extra, opts) => Live.request('/v1/facets', Object.assign({}, params, { facets: facet, facet_value_limit: 60 }, extra || {}), null, opts);
-  // The whole-market section sits below the fold, so its requests wait behind the cards on screen.
-  const LATER = { priority: Live.PRIORITY.later };
+  // The whole-market section is a tab of its own, so when it shows nothing else competes for the screen.
+  const LATER = { priority: Live.PRIORITY.page };
   const ON_PAGE = { priority: Live.PRIORITY.page };
   const soldParams = (bp, days) => Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: days });
   // "near Kissimmee, FL" with a home ZIP, else "nationwide".
@@ -1915,7 +1917,7 @@
   // Redraw the local section in place (radius change, exact location found).
   function renderLocal() {
     const sec = document.getElementById('local');
-    if (!sec) return renderHome();
+    if (!sec) return showTab('local');
     sec.outerHTML = localSectionHtml();
     if (isLive()) fillLiveLocal();
   }
@@ -1997,7 +1999,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>
           <span>Your market is <b data-home-place>${esc(Geo.label(g, { short: true }))}</b> <span class="muted">${esc(zip)} · within ${radius} mi</span></span>
           <button class="link-btn" type="button" data-action="edit-zip">Change</button>
-          <a class="link-btn" href="#/local" data-action="jump" data-target="local">Best deals near you ↓</a>
+          <a class="link-btn" href="#/local" data-action="jump" data-target="local">Best deals near you →</a>
         </div>`
       : `<div class="home-market open" id="home-market">
           ${zipFormHtml('home')}
@@ -2027,38 +2029,59 @@
       </div>`);
   }
 
-  function renderHome(scrollTo, params) {
+  // The selected tab's section: the carousel for a panel tab, else the section itself.
+  function tabHtml() {
+    const cats = homeCats(), id = TAB.id;
+    if (tabIsPanel(id)) return `<section class="section cat" id="insights"><div id="market-head">${marketHeadHtml()}</div><div id="market-panel">${marketPanelHtml()}</div></section>`;
+    if (id === 'map') return mapSectionHtml();
+    if (id === 'local') return localSectionHtml();
+    if (id === 'trends') return `<section class="section cat" id="trends">${trendsHtml(cats)}</section>`;
+    if (id === 'rewind') return `<section class="section cat" id="rewind">${isLive() ? liveRewindHtml(cats) : rewindHtml(cats)}</section>`;
+    return `<section class="section cat" id="browse">${browseHtml(cats)}</section>`;
+  }
+  // Wire up the tab just put on the page: pause the carousel under the pointer, fill it with live data, start the clock.
+  function mountTab() {
+    const carousel = document.getElementById('insights');
+    if (carousel) for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
+    fillPanelLive(); // the carousel's panel, or the browse grid
+    fillTrimMapIfShown();
+    if (isLive()) { fillLiveMap(); fillLiveTrends(); if (homeZip()) fillLiveLocal(); }
+    syncCatNav();
+    startPanelCycle();
+  }
+  // Show a tab in place: the search box and the strip stay, the section under them changes.
+  function showTab(id) {
+    TAB.id = tabFor(id);
+    if (tabIsPanel(TAB.id)) PANEL.id = TAB.id;
+    const host = document.getElementById('home-tab');
+    if (!host) return renderHome(TAB.id);
+    stopPanelCycle();
+    host.innerHTML = tabHtml();
+    mountTab();
+    history.replaceState(null, '', `#/${tabRoute(TAB.id)}`);
+    // If you'd scrolled down into the old section, bring the new one up under the strip.
+    const sec = host.firstElementChild;
+    if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView();
+  }
+
+  function renderHome(tab, params) {
     if (params && params.get('zip')) {
       setHomeZip(params.get('zip'), { quiet: true });
       history.replaceState(null, '', '#/');
-      scrollTo = scrollTo || 'local';
+      tab = tab || 'local';
     }
     const zip = homeZip();
-    const cats = homeCats();
-    const has = (id) => cats.some((c) => c.id === id);
     PANEL.id = panelById(PANEL.id).id;
+    TAB.id = tabFor(tab || TAB.id);
+    if (tab && location.hash.replace(/\?.*/, '') !== `#/${tabRoute(TAB.id)}`) history.replaceState(null, '', `#/${tabRoute(TAB.id)}`);
     setView('home', `
       ${homeTopHtml()}
-      ${catNavHtml(cats)}
-      <section class="section cat" id="insights"><div id="market-head">${marketHeadHtml()}</div><div id="market-panel">${marketPanelHtml()}</div></section>
-      ${mapSectionHtml()}
-      ${localSectionHtml()}
-      ${has('trends') ? `<section class="section cat" id="trends">${trendsHtml(cats)}</section>` : ''}
-      ${has('rewind') ? `<section class="section cat" id="rewind">${isLive() ? liveRewindHtml(cats) : rewindHtml(cats)}</section>` : ''}
-      <section class="section cat" id="browse">${browseHtml(cats)}</section>`);
+      ${catNavHtml(homeCats())}
+      <div id="home-tab">${tabHtml()}</div>`);
     mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…' });
-    const carousel = document.getElementById('insights');
-    for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
-    fillPanelLive();
-    fillTrimMapIfShown();
-    if (isLive()) fillLiveMap();
-    if (isLive()) fillLiveTrends();
-    if (isLive() && zip) fillLiveLocal();
-    syncCatNav();
-    startPanelCycle();
+    mountTab();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
-    if (scrollTo) requestAnimationFrame(() => { document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }); });
-    else window.scrollTo(0, 0);
+    window.scrollTo(0, 0);
   }
 
   /* ----- Search ----- */
@@ -3601,7 +3624,7 @@
       document.getElementById(el.dataset.target || 'rare-scroller')?.scrollBy({ left: Number(el.dataset.dir) * 320, behavior: 'smooth' });
     } else if (a === 'radius') {
       store.update((s) => { s.prefs.homeRadius = Number(el.dataset.r); });
-      if (isLive()) renderHome(el.closest('#local') ? 'local' : 'insights');
+      if (isLive()) showTab(TAB.id);
       else renderLocal();
     } else if (a === 'deal-cond') {
       HOME.cond = dealCond(el.dataset.cond);
@@ -3629,14 +3652,17 @@
       renderSettings();
     } else if (a === 'near-home') {
       updateFilters((f) => { f.near = homeZip(); f.radius = homeRadius(); });
+    } else if (a === 'tab') {
+      e.preventDefault();
+      if (tabIsPanel(el.dataset.tab)) PANEL.auto = false;
+      showTab(el.dataset.tab);
     } else if (a === 'panel') {
       e.preventDefault();
       PANEL.auto = false;
       showPanel(el.dataset.panel);
-      if (el.closest('.cat-nav')) document.getElementById('insights')?.scrollIntoView({ behavior: 'smooth' });
     } else if (a === 'jump') {
       e.preventDefault();
-      document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: 'smooth' });
+      showTab(el.dataset.target);
     } else if (a === 'toggle-filters') {
       S.filtersOpen = !S.filtersOpen;
       document.getElementById('filters').classList.toggle('open', S.filtersOpen);
@@ -3897,7 +3923,8 @@
     const [path, qs] = hash.split('?');
     const parts = path.split('/').filter(Boolean);
     const params = new URLSearchParams(qs || '');
-    document.getElementById('header-search').hidden = !parts.length;
+    const home = !parts.length || (parts.length === 1 && (PANELS.some((p) => p.route === parts[0]) || HOME_CATS.some((c) => c.id === parts[0])));
+    document.getElementById('header-search').hidden = home;
     if (!parts.length) return renderHome(null, params);
     if (parts.length === 1 && PANELS.some((p) => p.route === parts[0])) {
       PANEL.id = PANELS.find((p) => p.route === parts[0]).id;
