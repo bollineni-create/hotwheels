@@ -1490,8 +1490,11 @@
       });
     const usedOf = (params) => Object.assign({}, params, { inventory_type: 'used,certified' });
     const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
-      const min = lv.kind === 'nation' ? 50 : 10;
-      const top = (await pair(usedOf(lv.params), 'make')).filter((x) => x.now >= min && x.before >= min && x.change != null).sort((x, y) => y.change - x.change)[0];
+      // Enough sales that a month's change means something, from a make that's a real share of the market.
+      const rows = await pair(usedOf(lv.params), 'make');
+      const total = rows.reduce((t, x) => t + x.now, 0);
+      const min = Math.max(lv.kind === 'nation' ? 100 : 30, total * 0.02);
+      const top = rows.filter((x) => x.now >= min && x.before >= min && x.change != null).sort((x, y) => y.change - x.change)[0];
       return top ? { top } : null;
     });
     if (!found) return '';

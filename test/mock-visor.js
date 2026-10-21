@@ -89,6 +89,9 @@ const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'mo
   features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state',
   availability_status: 'availability_status' };
 
+const RATE = Number(process.env.MOCK_RATE) || 0;
+const recent = [];
+
 function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const send = (status, body) => {
@@ -97,6 +100,13 @@ function handle(req, res) {
   };
   if ((req.headers.authorization || '') !== `Bearer ${KEY}`) {
     return send(401, { error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key.' } });
+  }
+  // MOCK_RATE=n answers like Visor's rate limiter when more than n requests arrive within a second.
+  if (RATE) {
+    const t = Date.now();
+    while (recent.length && t - recent[0] > 1000) recent.shift();
+    recent.push(t);
+    if (recent.length > RATE) return send(429, { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'Rate limit exceeded. Retry after 1 seconds.' } });
   }
   const q = url.searchParams;
   const p = url.pathname;
