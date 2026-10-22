@@ -161,12 +161,12 @@
 
   function liveErrorHtml(e) {
     const tips = {
-      no_key: `Open <a href="#/settings">Settings</a> and paste your ${esc(srcName())} API key.`,
-      auth: `${esc(srcName())} rejected the API key. Check it in <a href="#/settings">Settings</a>.`,
-      billing: 'Your Visor API balance or spending cap is used up. Top up at <a href="https://visor.vin/account/api" target="_blank" rel="noopener">visor.vin/account/api</a>.',
+      no_key: `Open <a href="#/settings">Settings</a> and paste your API key.`,
+      auth: `The data source rejected the API key. Check it in <a href="#/settings">Settings</a>.`,
+      billing: `Your API balance or spending cap is used up. <a href="${Live.info().keyUrl}" target="_blank" rel="noopener">Top up your balance</a>.`,
       rate_limit: SOURCE() === 'autodev' ? 'Either this month’s 1,000 free auto.dev calls are used up (they reset on the 1st), or too many requests went out at once. Wait a few seconds and try again.' : 'Too many requests in a short time. Wait a few seconds and try again.',
       blocked: 'Live data works in the Gridline desktop app, or when you run <code>npm start</code> and open <a href="http://localhost:8080">localhost:8080</a>.',
-      unsupported: `That needs data ${esc(srcName())} doesn’t provide.`,
+      unsupported: 'That needs data the live source doesn’t provide.',
     };
     return `<div class="card live-error"><h3>Couldn’t load live listings</h3><p>${esc(e.message || String(e))}</p><p class="muted">${tips[e.code] || ''}</p>
       <p><button class="btn" type="button" data-action="use-demo">Switch to demo data</button></p></div>`;
@@ -705,7 +705,7 @@
     const pill = (p, dir) => `<a class="cat-pill${dir > 0 ? ' next' : ''}" href="#/${p.route}" data-action="panel" data-panel="${p.id}" aria-label="${dir < 0 ? 'Previous' : 'Next'}: ${esc(p.label())}">${dir < 0 ? '<span aria-hidden="true">‹</span> ' : ''}${esc(p.label())}${dir > 0 ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
     const pills = (n > 2 ? pill(panels[(i + n - 1) % n], -1) : '') + (n > 1 ? pill(panels[(i + 1) % n], 1) : '');
     const eyebrow = isLive()
-      ? `Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`
+      ? `Live · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`
       : `Week of ${esc(weekOf)}`;
     const extra = !isLive() ? '' : homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>';
     return `<div class="insight-head cat-head">
@@ -1103,8 +1103,8 @@
 
   function trendsHtml(cats) {
     if (isLive()) {
-      return catHead(cats, 'trends', { eyebrow: `Every car for sale nationwide, live from ${esc(srcName())}: inventory over 90 days, where prices sit, what moved, what sold and what got cut` }) +
-        `<div class="insight-grid" id="live-trends">${['inv', 'map', 'mover', 'fast', 'drops', 'value'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml(`Computing the whole market from ${srcName()}…`)}</div>`).join('')}</div>`;
+      return catHead(cats, 'trends', { eyebrow: `Every car for sale nationwide, live: inventory over 90 days, where prices sit, what moved, what sold and what got cut` }) +
+        `<div class="insight-grid" id="live-trends">${['inv', 'map', 'mover', 'fast', 'drops', 'value'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml('Computing the whole market…')}</div>`).join('')}</div>`;
     }
     const mv = Market.priceMovers(LISTINGS, 20)[0];
     const drops = Market.recentDrops(LISTINGS, 7);
@@ -1293,7 +1293,7 @@
   // With live data, the rewind cards are doors into the source's daily snapshots rather than numbers computed here.
   function liveRewindHtml(cats) {
     const scope = homeScope();
-    return catHead(cats, 'rewind', { eyebrow: `${esc(srcName())} keeps a daily snapshot of every listing. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
+    return catHead(cats, 'rewind', { eyebrow: `A daily snapshot of every listing is kept. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
       `<div class="capsule-grid">${CAPSULES.map(([d, label]) => `<a class="card insight capsule link" href="${searchHref(Object.assign({ when: String(d) }, scope))}">
         <p class="capsule-when">${esc(label)}</p><h3>${esc(dateDaysAgo(d))}</h3>
         <p class="muted">Every car for sale ${esc(scopeText())} that day, at that day’s asking price.</p>
@@ -1472,7 +1472,7 @@
             <ul class="price-bars">${o.prices.map((b) => { const [lo, hi] = String(b.value).split('-').map(Number); return `<li><a href="${searchHref({ priceMin: lo, priceMax: hi })}"><span>${moneyK(lo)}–${moneyK(hi)}</span><i style="width:${Math.round(((b.count || 0) / maxP) * 100)}%"></i><b>${b.count != null ? num(b.count) : ''}</b></a></li>`; }).join('')}</ul></article>
           <article class="card insight wide"><header><h3>Most listed body styles</h3><p class="muted">Tap one to browse live listings</p></header>
             <div class="quick">${o.bodies.map((b) => `<a class="chip-link" href="${searchHref({ body: b.value })}">${esc(b.value)} <span class="muted">${b.count != null ? num(b.count) : ''}</span></a>`).join('')}</div>
-            <p class="muted small">Sold-car trends, price drops and inventory history need a source with sales history (Visor). The free auto.dev plan covers cars for sale now.</p></article>`;
+            <p class="muted small">Sold-car trends, price drops and inventory history need a source with sales history. The free auto.dev plan covers cars for sale now.</p></article>`;
       } catch (e) {
         if (document.getElementById('live-insights')) grid.innerHTML = liveErrorHtml(e);
       }
@@ -1485,7 +1485,7 @@
     const bp = Live.toParams(Object.assign(Market.emptyFilters(), scope), ctx);
     const browseEl = document.getElementById('live-browse');
     if (grid) {
-      grid.innerHTML = ['ret', 'trim', 'momentum', 'arrivals'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml(`Computing ${scopeShort() === 'near you' ? 'your market' : 'the market'} from ${srcName()}…`)}</div>`).join('');
+      grid.innerHTML = ['ret', 'trim', 'momentum', 'arrivals'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml(`Computing ${scopeShort() === 'near you' ? 'your market' : 'the market'}…`)}</div>`).join('');
       const fill = (k, make) => make().then((html) => {
         const slot = grid.querySelector(`[data-slot="${k}"]`);
         if (!slot || !slot.isConnected) return;
@@ -1786,7 +1786,7 @@
     const g = Geo.lookup(zip);
     const head = catHead(homeCats(), 'local', {
       title: `Your market: <span class="place" data-home-place>${esc(Geo.label(g, { short: true }))}</span>`,
-      eyebrow: `${live ? `Live from ${esc(srcName())} · ` : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}`,
+      eyebrow: `${live ? 'Live · ' : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}`,
       extra: radiusSegHtml(radius),
     });
     const strip = `<dl class="market-strip reveal">
@@ -1860,8 +1860,8 @@
     const full = searchHref(Object.assign({ layout: 'map' }, zip ? { near: zip, radius: WIDE } : {}));
     const cta = `<a class="card-cta" href="${full}">Open the full map view${zip ? `, ${num(WIDE)} miles around ${esc(zip)}` : ''} →</a>`;
     if (isLive()) {
-      return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `Where ${esc(srcName())}’s listings are. Click a state or city to shop it.` })}
-        <article class="card insight home-map"><div id="home-map-body">${loadingHtml(`Counting listings by state from ${srcName()}…`)}</div>${cta}</article></section>`;
+      return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `Where the listings are. Click a state or city to shop it.` })}
+        <article class="card insight home-map"><div id="home-map-body">${loadingHtml('Counting listings by state…')}</div>${cta}</article></section>`;
     }
     const groups = homeMapGroups(LISTINGS);
     const states = new Set(LISTINGS.map((l) => l.state)).size;
@@ -1899,18 +1899,18 @@
         const r = await Live.search(f, ctx, { lite: true });
         const groups = homeMapGroups(r.results, { noDelta: true });
         html = Charts.usMap(groups, { aria: 'Map of the newest cars for sale by city' }) +
-          `<p class="muted small">The ${plural(r.results.length, 'newest listing')}${zip ? ` within ${num(WIDE)} miles of ${esc(zip)}` : ''}; the full count by state needs Visor.</p>`;
+          `<p class="muted small">The ${plural(r.results.length, 'newest listing')}${zip ? ` within ${num(WIDE)} miles of ${esc(zip)}` : ''}; the full count by state needs a source with sales history.</p>`;
       }
       if (body()) body().innerHTML = html;
     } catch (e) {
-      if (body()) body().innerHTML = `<p class="muted">Couldn’t load the map from ${esc(srcName())}: ${esc(e.message || String(e))}</p>`;
+      if (body()) body().innerHTML = `<p class="muted">Couldn’t load the map: ${esc(e.message || String(e))}</p>`;
     }
   }
 
   function localSectionHtml() {
     const zip = homeZip(), radius = homeRadius();
     if (!zip) return '';
-    if (isLive()) return `<section class="section cat local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip} from ${srcName()}…`)}</div></section>`;
+    if (isLive()) return `<section class="section cat local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip}…`)}</div></section>`;
     return `<section class="section cat local" id="local"><div id="local-body">${localHtml(localData(zip, radius, LISTINGS), zip, radius, false)}</div></section>`;
   }
 
@@ -1988,7 +1988,7 @@
     const zip = homeZip(), radius = homeRadius();
     const g = zip ? Geo.lookup(zip) : null;
     const states = new Set(LISTINGS.map((l) => l.state)).size;
-    const eyebrow = isLive() ? `Live listings from ${esc(srcName())}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`;
+    const eyebrow = isLive() ? 'Live listings' : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`;
     const localQuick = zip ? [
       { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
       { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
@@ -2020,7 +2020,7 @@
     const zip = homeZip();
     const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
     const popular = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
-    return catHead(cats, 'browse', { eyebrow: isLive() ? `The most-listed models ${esc(scopeText())}, with live counts and median asking prices from ${esc(srcName())}.` : 'The most-listed models, with how many are for sale and the median used asking price.' }) +
+    return catHead(cats, 'browse', { eyebrow: isLive() ? `The most-listed models ${esc(scopeText())}, with live counts and median asking prices.` : 'The most-listed models, with how many are for sale and the median used asking price.' }) +
       (isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
         ${popular.map(([key, g]) => {
           const used = g.filter((l) => l.condition !== 'New');
@@ -2177,7 +2177,7 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     } else {
       resultsEl.classList.add('is-loading');
-      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml(`Searching live listings from ${srcName()}…`);
+      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml('Searching live listings…');
     }
     try {
       await ensureLiveVocab();
@@ -2360,7 +2360,7 @@
         ${facetList('upfitter', facets, { limit: 8, hint: 'Aftermarket builders like Roush, Rocky Ridge or BraunAbility.', fmt: S.live ? Live.titleCase : null })}`)}
       ${group('Origin & seller', `
         ${facetList('assembly', facets, { limit: 6 })}
-        ${facetList('seller', facets, { hint: S.live ? `Franchise or independent dealer. ${esc(srcName())} covers dealer listings only.` : null })}
+        ${facetList('seller', facets, { hint: S.live ? 'Franchise or independent dealer. Live data covers dealer listings only.' : null })}
         ${facetList('state', facets, { limit: 6 })}
         ${S.live && !can('vinPattern') ? '' : `<fieldset class="facet"><legend><span>VIN pattern</span></legend>
           <input type="text" id="vin-pattern" data-text="vin" class="mono-input" maxlength="17" placeholder="e.g. 5TF*B5D or JTE??????N" value="${esc(f.vin)}" spellcheck="false" autocapitalize="characters">
@@ -2481,13 +2481,13 @@
     const sold = S.f.when === 'sold';
     const when = Number(S.f.when) || 0;
     const liveNotes = live ? [
-      S.f.q ? `${esc(srcName())} doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
-      S.dropped ? `${esc(srcName())} doesn’t support one of these filters (<code>${esc(S.dropped)}</code>), so it was skipped.` : '',
+      S.f.q ? `Live search doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
+      S.dropped ? `Live search doesn’t support one of these filters (<code>${esc(S.dropped)}</code>), so it was skipped.` : '',
       S.f.belowMarket || S.f.dropsOnly ? '“Below market only” and “Has price cuts” apply to demo data only.' : '',
     ].filter(Boolean) : [];
     const head = `${activeChips()}
       <div class="results-summary" aria-live="polite">${sentenceHtml(sum.count)}
-        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings from ${srcLink()}</span>` : ''}</p>
+        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings</span>` : ''}</p>
         ${liveNotes.map((n) => `<p class="live-note">${n}</p>`).join('')}
       </div>`;
     if (!results.length) {
@@ -2532,7 +2532,7 @@
         ${Charts.trend(S.liveTrend.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
         <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div></div>`;
     } else {
-      trendCard = `<div class="card viz trend-card trend-cta"><div><h3>Inventory over time</h3><p class="muted small">See how many of these cars were for sale over the last 90 days and how many sold. Uses 9 Visor requests (about 3¢).</p></div>
+      trendCard = `<div class="card viz trend-card trend-cta"><div><h3>Inventory over time</h3><p class="muted small">See how many of these cars were for sale over the last 90 days and how many sold. Uses 9 requests (about 3¢).</p></div>
         <button class="btn" type="button" data-action="live-trend">Load 90-day trend</button></div>`;
     }
 
@@ -2620,7 +2620,7 @@
   }
 
   async function loadLiveCar(id) {
-    setView('car', `<section class="narrow">${loadingHtml(`Loading listing from ${srcName()}…`)}</section>`);
+    setView('car', `<section class="narrow">${loadingHtml('Loading listing…')}</section>`);
     try {
       const l = await Live.listing(id);
       const comps = await Live.comparables(l, liveCtx(), { years: 1, condition: 'same' });
@@ -2944,7 +2944,6 @@
         <dl class="spec pricing"><div class="sub"><dt>Advertised price</dt><dd>${money(l.price)}</dd></div>
         <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(l.price * taxRate / 100)}</dd></div>
         <div class="total"><dt>Est. before fees</dt><dd>${money(l.price * (1 + taxRate / 100))}</dd></div></dl>`}
-      <p class="muted small">Listing data from ${srcLink()}.</p>
     </section>`;
   }
 
@@ -3066,11 +3065,11 @@
         </section>
         <section><h3>Origin</h3>
           <p>Final assembly point: <b>${esc(l.assembly.plant)}</b>${l.assembly.country ? `<br>Country of assembly: ${esc(l.assembly.country)}` : ''}</p>
-          ${l.windowStickerVerified ? `<p class="st-note">${esc(srcName())} verified this VIN against its original window sticker.</p>` : ''}
+          ${l.windowStickerVerified ? `<p class="st-note">This VIN was verified against its original window sticker.</p>` : ''}
           ${l.upfitter ? `<p class="st-note">Upfitted after delivery by <b>${esc(l.upfitter.name)}</b> (${esc(l.upfitter.category.toLowerCase())}). Upfit content is not part of the factory MSRP.</p>` : ''}
         </section>
       </div>
-      <p class="st-foot">Reconstructed from listing data${l.live ? ` (${esc(srcName())})` : ''} for reference. Confirm with the original Monroney label from the seller.</p>
+      <p class="st-foot">Reconstructed from listing data for reference. Confirm with the original Monroney label from the seller.</p>
     </article>`;
   }
 
@@ -3085,7 +3084,7 @@
       <table class="st-price"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join('')}</tbody></table>
       <h3>Factory options</h3>
       <table class="st-price"><tbody>${l.options.map((x, i) => `<tr><td><span class="mono">${esc(x.code || l.make.slice(0, 2).toUpperCase() + String(100 + i * 7))}</span> ${esc(x.name)}</td><td>${x.price ? money(x.price) : '—'}</td></tr>`).join('') || '<tr><td>None</td><td></td></tr>'}</tbody></table>
-      <p class="st-foot">${l.live && l.options.length ? `Option codes from ${esc(srcName())}.` : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
+      <p class="st-foot">${l.live && l.options.length ? 'Option codes from the listing.' : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
     </article>`;
   }
 
@@ -3098,10 +3097,10 @@
       Live.vin(d.vin).then((l) => {
         const el = document.getElementById('vin-live');
         if (!el) return;
-        if (!l) { el.innerHTML = `<p class="muted">${esc(srcName())} has no listing for this VIN.</p>`; return; }
+        if (!l) { el.innerHTML = '<p class="muted">No live listing for this VIN.</p>'; return; }
         rememberLive(l);
         el.innerHTML = `<h2 class="sec-title">${l.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(l)}</div>`;
-      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? `<p class="muted">${esc(srcName())} hasn’t seen this VIN.</p>` : liveErrorHtml(e); });
+      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? '<p class="muted">This VIN hasn’t been seen in live listings.</p>' : liveErrorHtml(e); });
     }
     setView('vin', `<section class="narrow">
       <h1>VIN <span class="mono">${esc(d.vin)}</span></h1>
@@ -3117,7 +3116,7 @@
         </dl>
         ${d.errors.length ? `<ul class="errors">${d.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
       </div>
-      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml(`Looking up this VIN on ${srcName()}…`)}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
+      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml('Looking up this VIN…')}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
       ${d.wellFormed ? `<p><a href="${searchHref({ vin: d.vin.slice(0, 8) })}">Find other cars with the same first 8 characters →</a></p>` : ''}
     </section>`);
     window.scrollTo(0, 0);
@@ -3447,7 +3446,7 @@
       }
       st.rarity = Market.rarityLabel(st.perMonth);
       st.best = results.filter((l) => expected(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
-      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')} on ${esc(srcName())}${can('velocity') ? '' : '. Sales history needs a Visor key'}.</p>`;
+      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')}${can('velocity') ? '' : '. Sales history needs a source that has it (see Settings)'}.</p>`;
       if (el()) el().innerHTML = huntMarketHtml(st, f, note);
     } catch (e) {
       if (el()) el().innerHTML = liveErrorHtml(e);
@@ -3521,7 +3520,7 @@
       <p class="muted small">Live data works in the desktop app or with <code>npm start</code>. Both services only accept browser requests from their own websites, so the public web version stays on demo data. Recalls and complaints come from NHTSA and work everywhere.</p>
       <h2 class="sec-title">Hunts</h2>
       <div class="card settings">
-        <label class="set-row"><span><b>Check watched hunts</b><small>While Gridline is open, including in the background. ${isLive() ? `Each check uses 1 ${esc(srcName())} request per hunt${SOURCE() === 'autodev' ? huntBudgetText() : ''}.` : 'Demo checks are free.'}</small></span>
+        <label class="set-row"><span><b>Check watched hunts</b><small>While Gridline is open, including in the background. ${isLive() ? `Each check uses 1 request per hunt${SOURCE() === 'autodev' ? huntBudgetText() : ''}.` : 'Demo checks are free.'}</small></span>
           <select data-pref="huntEvery">${HUNT_EVERY.map(([v, t]) => `<option value="${v}" ${p.huntEvery === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <div class="set-row"><span><b>Notifications</b><small>${{ desktop: 'Native notifications from the desktop app. You can turn them off in your system’s notification settings.', granted: 'This browser will show notifications from Gridline.', denied: 'Blocked in this browser. Allow notifications for this site in its settings to get them.', unsupported: 'This browser can’t show notifications. Use the desktop app.' }[notifyState()] || 'Allow notifications to hear about new matches and price cuts.'}</small></span>
           ${notifyState() === 'default' ? '<button class="btn ghost" type="button" data-action="notify-allow">Allow notifications</button>' : ''}</div>
@@ -3551,7 +3550,7 @@
     const route = await Live.transport();
     try {
       const n = await Live.count({ ex: {} }, liveCtx());
-      out.innerHTML = `<span class="good">✓ Connected to ${esc(srcName())}</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
+      out.innerHTML = `<span class="good">✓ Connected</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
     } catch (e) {
       out.innerHTML = `<span class="bad">✕ ${esc(e.message)}</span>`;
     }
@@ -3563,7 +3562,7 @@
     const pill = document.getElementById('mode-pill');
     if (pill) {
       pill.textContent = live ? 'Live' : 'Demo';
-      pill.title = live ? `Searching live listings from ${srcName()}` : 'Showing sample data. Switch to live data in Settings.';
+      pill.title = live ? 'Searching live listings' : 'Showing sample data. Switch to live data in Settings.';
     }
     const att = document.getElementById('data-attribution');
     if (att) att.innerHTML = live
@@ -3837,7 +3836,7 @@
         LIVE_KNOWN = null;
         applyModeUi();
         renderSettings();
-        toast(t.value === 'demo' ? 'Using demo data' : isLive() ? `Live data from ${srcName()}` : `Add your ${Live.info(t.value).name} API key to use live data`);
+        toast(t.value === 'demo' ? 'Using demo data' : isLive() ? 'Using live data' : 'Add your API key to use live data');
       } else toast('Saved');
       return;
     }
