@@ -88,7 +88,7 @@
     try {
       res = await fetch(url, { headers });
     } catch (e) {
-      throw new LiveError('blocked', `${PROVIDERS[prov].name} only accepts browser requests from its own website. Use the Gridline desktop app, or run \`npm start\` and open http://localhost:8080.`);
+      throw new LiveError('blocked', `The live data source only accepts browser requests from its own website. Use the Gridline desktop app, or run \`npm start\` and open http://localhost:8080.`);
     }
     return { status: res.status, body: await res.text(), cost: Number(res.headers.get('x-usage-cost-micros')) || 0, retryAfter: Number(res.headers.get('retry-after')) || 0, remaining60: remainingOf(res.headers.get('x-ratelimit-remaining-60s')) };
   }
@@ -206,7 +206,7 @@
   async function request(path, params, prov, opts) {
     const p = prov || current;
     const key = getKey(p);
-    if (!key) throw new LiveError('no_key', `Add your ${PROVIDERS[p].name} API key in Settings to use live data.`);
+    if (!key) throw new LiveError('no_key', 'Add your API key in Settings to use live data.');
     const query = params ? new URLSearchParams(params).toString() : '';
     const cacheKey = p + path + '?' + query;
     const hit = cacheGet(cacheKey);
@@ -242,7 +242,7 @@
         continue;
       }
       const code = r.status === 401 || r.status === 403 ? 'auth' : r.status === 402 ? 'billing' : r.status === 429 ? 'rate_limit' : r.status === 404 ? 'not_found' : r.status === 400 ? 'bad_request' : 'api';
-      const e = new LiveError(code, err.message || `${PROVIDERS[p].name} API error (${r.status})`, r.status);
+      const e = new LiveError(code, err.message || `Live data error (${r.status})`, r.status);
       e.apiCode = err.code;
       throw e;
     }
@@ -891,7 +891,7 @@
     return { total: r.total || 0, makes: adBuckets(fx.makes).slice(0, 12), prices: adBuckets(fx.prices), states: adBuckets(fx.states), bodies: adBuckets(fx.types).slice(0, 8) };
   }
 
-  const unsupported = (what) => async () => { throw new LiveError('unsupported', `${what} isn't available from ${PROVIDERS[current].name}.`); };
+  const unsupported = (what) => async () => { throw new LiveError('unsupported', `${what} isn't available from this data source.`); };
 
   /* ---------- Providers ---------- */
 
