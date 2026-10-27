@@ -100,7 +100,7 @@ button, input, select { font: inherit; color: inherit; }
 .brand-mark svg { width: 32px; height: 32px; display: block; }
 .brand-mark rect { fill: var(--ink); }
 .brand-mark path { stroke: #34d399; stroke-width: 2; stroke-linecap: round; fill: none; }
-.header-search { flex: 1; max-width: 420px; }
+.header-search { flex: 1; min-width: 0; max-width: 420px; }
 .header-search[hidden] { display: block; visibility: hidden; }
 .main-nav { display: flex; gap: 4px; margin-left: auto; }
 .main-nav a { color: var(--text-2); font-weight: 500; padding: 7px 12px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
