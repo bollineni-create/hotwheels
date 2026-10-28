@@ -116,7 +116,7 @@
   const lanes = {};
   let seq = 0;
   function lane(p) {
-    if (!lanes[p]) lanes[p] = { inflight: 0, pausedUntil: 0, nextStart: 0, sent: [], waiting: [], timer: null, caps: loadTier(p) };
+    if (!lanes[p]) lanes[p] = { inflight: 0, pausedUntil: 0, nextStart: 0, sent: [], answered: [], waiting: [], timer: null, caps: loadTier(p) };
     return lanes[p];
   }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -176,13 +176,18 @@
     L.caps = Object.assign({ t: now }, caps);
     safe(() => localStorage.setItem(tierKey(p), JSON.stringify(L.caps)));
   }
-  // From a reply's requests left this minute plus the ones we sent in it: the largest tier that fits.
-  // It only ever raises the pace; refusals are what lower it.
+  // A reply's requests left this minute plus the replies we've had in it is the minute's allowance,
+  // less whatever else used the key in that minute (another tab, a reload), plus up to a few replies
+  // that were counted out of order. So the tier is the smallest one that holds it after allowing for
+  // those: other use can only make it guess low, never high. It only ever raises the pace; refusals
+  // are what lower it.
   function tierFromHeader(p, remaining60) {
-    const L = lane(p), est = remaining60 + L.sent.length;
-    let caps = null;
-    for (const [c10, c60] of TIERS) if (c60 <= est) caps = { cap10: c10, cap60: c60 };
-    if (!caps || (L.caps && L.caps.cap60 >= caps.cap60)) return;
+    const L = lane(p), now = Date.now();
+    L.answered = L.answered.filter((t) => now - t < 60000);
+    const est = remaining60 + L.answered.length - 16;
+    const fit = TIERS.find(([, c60]) => c60 >= est) || TIERS[TIERS.length - 1];
+    const caps = { cap10: fit[0], cap60: fit[1] };
+    if (L.caps && L.caps.cap60 >= caps.cap60) return;
     L.caps = Object.assign({ t: Date.now() }, caps);
     safe(() => localStorage.setItem(tierKey(p), JSON.stringify(L.caps)));
   }
@@ -243,6 +248,7 @@
       let r;
       try { r = await rawFetch(p, path, query, key); } finally { free(p); }
       if (r.status !== 401 && r.status !== 403 && r.status !== 429) track(p, r.cost);
+      if (r.status !== 429) L.answered.push(Date.now());
       if (r.remaining60 != null && r.status !== 429) tierFromHeader(p, r.remaining60);
       // Nearly out of this minute's requests: hold until the oldest one we sent falls out of the window.
       if (r.remaining60 != null && r.remaining60 <= 1 && r.status !== 429) L.pausedUntil = Math.max(L.pausedUntil, (L.sent[0] || Date.now()) + 60050);

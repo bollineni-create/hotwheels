@@ -550,7 +550,7 @@
     }
   }
 
-  const api = { generateInventory, mulberry32, colorFamily, MODELS, CITIES, PLANTS, UPFITTERS, GEARBOX };
+  const api = { generateInventory, mulberry32, colorFamily, MODELS, CITIES, PALETTES, PLANTS, UPFITTERS, GEARBOX };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MarketData = api;
 })(typeof window !== 'undefined' ? window : globalThis);

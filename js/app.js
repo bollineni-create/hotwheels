@@ -8,15 +8,35 @@
 
   /* ---------- Data + derived models ---------- */
 
-  const DATA = MarketData.generateInventory({ currentYear: CURRENT_YEAR });
-  const LISTINGS = DATA.listings; // for sale today
-  const SOLD = DATA.sold;         // sold in the last ~120 days
-  const ALL = LISTINGS.concat(SOLD);
-  const BY_ID = new Map(ALL.map((l) => [l.id, l]));
-  const BY_VIN = new Map(ALL.map((l) => [l.vin, l]));
-  for (const l of LISTINGS) BY_VIN.set(l.vin, l);
+  // The demo market takes a few hundred milliseconds to build, which would hold up the first live
+  // request on every load. So it, and everything derived from it, is built the first time something
+  // reads it; with live data on, the home page often never does. `lazy` stands in for the value
+  // (an array, a Map, an object or a function) and hands every use to the real one.
+  function lazy(target, make) {
+    let real = null;
+    const get = () => real || (real = make());
+    return new Proxy(target, {
+      get(t, k) { const r = get(), v = r[k]; return typeof v === 'function' ? v.bind(r) : v; },
+      apply: (t, self, args) => get()(...args),
+      has: (t, k) => k in get(),
+      ownKeys: () => Reflect.ownKeys(get()),
+      getOwnPropertyDescriptor: (t, k) => Reflect.getOwnPropertyDescriptor(get(), k),
+    });
+  }
+  let DEMO = null;
+  const demo = () => DEMO || (DEMO = MarketData.generateInventory({ currentYear: CURRENT_YEAR }));
+  const DATA = { models: MarketData.MODELS, cities: MarketData.CITIES, get dealers() { return demo().dealers; } };
+  const LISTINGS = lazy([], () => demo().listings); // for sale today
+  const SOLD = lazy([], () => demo().sold);         // sold in the last ~120 days
+  const ALL = lazy([], () => demo().listings.concat(demo().sold));
+  const BY_ID = lazy(new Map(), () => new Map(ALL.map((l) => [l.id, l])));
+  const BY_VIN = lazy(new Map(), () => {
+    const m = new Map(ALL.map((l) => [l.vin, l]));
+    for (const l of LISTINGS) m.set(l.vin, l);
+    return m;
+  });
   // Trained on cars for sale and recently sold, so rare specs have enough examples.
-  const fairValue = Market.buildFairValue(ALL, CURRENT_YEAR);
+  const fairValue = lazy(() => {}, () => Market.buildFairValue(ALL, CURRENT_YEAR));
   const expectedCache = new Map();
   const expected = (l) => {
     if (l.live) return LIVE_EXPECTED.has(l.id) ? LIVE_EXPECTED.get(l.id) : null;
@@ -33,7 +53,7 @@
     const e = expected(l);
     return e ? l.price / e - 1 : 0;
   };
-  const rarity = Market.colorStats(LISTINGS);
+  const rarity = lazy(() => {}, () => Market.colorStats(LISTINGS));
   const CITY_NAMES = [...new Set(DATA.cities.map((c) => `${c[0]}, ${c[1]}`))].sort();
   const cityByName = (name) => DATA.cities.find((c) => `${c[0]}, ${c[1]}` === name);
   const MODEL_KEYS = DATA.models.map((m) => `${m.make} ${m.model}`);
@@ -41,7 +61,7 @@
   const UPFITTER_NAMES = [...new Set(Object.values(MarketData.UPFITTERS).flat().map((u) => u[0]))];
   const VOCAB = NLQ.build({
     models: DATA.models, cities: DATA.cities, currentYear: CURRENT_YEAR,
-    paints: [...new Set(ALL.map((l) => l.extColor))], upfitters: UPFITTER_NAMES,
+    paints: [...new Set(Object.values(MarketData.PALETTES).flat().map((p) => p[0]))], upfitters: UPFITTER_NAMES,
   });
 
   const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'Washington, DC', FL: 'Florida',
@@ -55,12 +75,12 @@
   const STATE_TAX = { CA: 8.8, NY: 8.5, TX: 6.25, FL: 7, GA: 7, NC: 3, IL: 8.25, OH: 7.2, PA: 6, MI: 6, CO: 7.7, AZ: 8.4, WA: 9.3, MN: 6.9,
     OR: 0, MA: 6.25, NJ: 6.6, VA: 4.15, TN: 9.5, IN: 7, MO: 8.2, MD: 6, WI: 5.4, SC: 5, AL: 4, LA: 9.5, KY: 6, OK: 3.25, UT: 7.2, NV: 8.2 };
   const stateTax = (st) => (STATE_TAX[st] != null ? STATE_TAX[st] : 6.5);
-  const DOC_FEE_TYPICAL = (() => {
+  const DOC_FEE_TYPICAL = lazy({}, () => {
     const by = Market.groupBy(LISTINGS.filter((l) => l.seller === 'Dealer'), (l) => l.state);
     const out = {};
     for (const [st, g] of by) out[st] = Market.median(g.map((l) => l.pricing.docFee));
     return out;
-  })();
+  });
 
   /* ---------- Persistence ---------- */
 
@@ -1542,10 +1562,23 @@
     out.push({ kind: 'nation', params: Live.toParams(Market.emptyFilters(), ctx), scope: {}, where: 'nationwide' });
     return out;
   }
+  // All the levels are asked at once (waiting on each in turn made a card that ends up nationwide
+  // three round trips slower), except on the smallest usage tier, where the extra requests would
+  // queue behind its rate limit and come out slower than asking one level at a time.
   async function firstLevel(levels, compute) {
-    for (const lv of levels) {
-      const r = await compute(lv);
-      if (r) return Object.assign(r, { lv });
+    const tier = Live.tier();
+    if (tier && tier.cap10 < 40) {
+      for (const lv of levels) {
+        const r = await compute(lv);
+        if (r) return Object.assign(r, { lv });
+      }
+      return null;
+    }
+    const runs = levels.map((lv) => compute(lv));
+    for (const run of runs) run.catch(() => { /* reported below if its level is the one used */ });
+    for (let i = 0; i < levels.length; i++) {
+      const r = await runs[i];
+      if (r) return Object.assign(r, { lv: levels[i] });
     }
     return null;
   }
@@ -1987,8 +2020,7 @@
   function homeTopHtml() {
     const zip = homeZip(), radius = homeRadius();
     const g = zip ? Geo.lookup(zip) : null;
-    const states = new Set(LISTINGS.map((l) => l.state)).size;
-    const eyebrow = isLive() ? 'Live listings' : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`;
+    const eyebrow = isLive() ? 'Live listings' : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${new Set(LISTINGS.map((l) => l.state)).size} states · ${num(SOLD.length)} recent sales · demo data`;
     const localQuick = zip ? [
       { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
       { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
@@ -2282,11 +2314,11 @@
       ${S.live && !can('exclude') ? '' : `<button type="button" class="mode-btn${exMode ? ' on' : ''}" data-action="ex-mode" data-key="${key}" aria-pressed="${exMode}" title="Exclude mode: checked values are left out">${exMode ? 'Excluding' : 'Exclude'}</button>`}</span></legend>${hint}${body}${more}</fieldset>`;
   }
 
-  const HEX = (() => {
+  const HEX = lazy(new Map(), () => {
     const m = new Map();
     for (const l of ALL) if (!m.has(l.extColor)) m.set(l.extColor, l.extHex);
     return m;
-  })();
+  });
   const FAMILY_HEX = { White: '#f4f4f2', Black: '#151515', Gray: '#6b6e72', Silver: '#b9bcc0', Blue: '#2f4a6b', Red: '#a3141d', Green: '#3e5a3e',
     Brown: '#7a5a3a', Beige: '#c9bfa8', Orange: '#d2691e', Yellow: '#e3b51b', Purple: '#5b3d72', Other: '#999' };
 
@@ -3941,14 +3973,14 @@
     return renderNotFound();
   }
 
+  // The most listed models, by the share of the market each has (the weights the demo market is drawn from).
   function footerLinks() {
-    const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
-    const top = [...counts.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 12);
+    const top = [...DATA.models].sort((a, b) => b.weight - a.weight).slice(0, 12).map((m) => [`${m.make} ${m.model}`]);
     const segs = [...new Set(DATA.models.map((m) => m.seg))];
     document.getElementById('footer-links').innerHTML = `
       <div><h4>Popular searches</h4>${top.map(([k]) => `<a href="${searchHref({ model: k })}">${esc(k)}</a>`).join('')}</div>
       <div><h4>Used prices by segment</h4>${segs.map((s) => `<a href="${searchHref({ q: s, condition: ['Used', 'Certified'] })}">${esc(s)}</a>`).join('')}</div>
-      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Hunts</a><a href="#/vin/${LISTINGS[0].vin}">VIN decoder</a><a href="#/settings">Settings</a></div>`;
+      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Hunts</a><a href="#/vin">VIN decoder</a><a href="#/settings">Settings</a></div>`;
   }
 
   applyTheme(store.get().theme);
