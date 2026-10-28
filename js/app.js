@@ -1878,8 +1878,8 @@
     const body = () => document.getElementById('home-map-body');
     if (!body()) return;
     const ctx = liveCtx();
+    ensureLiveVocab(ON_PAGE); // for the search box; the map's own requests don't need it
     try {
-      await ensureLiveVocab(ON_PAGE);
       let html;
       try {
         const rows = (await Live.facetMetrics(Market.emptyFilters(), ctx, 'state', ON_PAGE)).filter((r) => r.value && r.count);
@@ -1929,8 +1929,8 @@
     if (!zip || !body()) return;
     const ctx = liveCtx();
     const near = (r) => Object.assign(Market.emptyFilters(), { near: zip, radius: r, sort: 'newest' });
+    ensureLiveVocab(ON_PAGE); // for the search box; a radius search doesn't need it
     try {
-      await ensureLiveVocab(ON_PAGE);
       const [local, wide, national] = await Promise.all([
         Live.search(near(radius), ctx, ON_PAGE),
         Live.search(near(Math.min(WIDE, 500)), ctx, Object.assign({ lite: true }, ON_PAGE)).catch(() => ({ results: [] })),
@@ -3209,7 +3209,7 @@
       return { results, complete: true, total: results.length };
     }
     await ensureLiveVocab();
-    const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true });
+    const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true, fresh: true });
     for (const l of r.results) LIVE_SEEN.set(l.id, l);
     const fv = Live.fairValueFrom(r.results, CURRENT_YEAR);
     for (const l of r.results) if (!LIVE_EXPECTED.has(l.id)) setLiveValue(fv, l);

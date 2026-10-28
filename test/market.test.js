@@ -588,3 +588,59 @@ test('live requests go out by priority, the tier is learned from a refusal, and 
     fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
   }
 });
+
+test('an older reply shows at once while it refreshes behind, hunts wait for a fresh one, and the tier comes from the first reply', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k),
+    get length() { return store.size; }, key: (i) => [...store.keys()][i],
+  };
+  const origKeys = Object.keys;
+  Object.keys = (o) => (o === globalThis.localStorage ? [...store.keys()] : origKeys(o));
+  const fresh = () => { delete require.cache[require.resolve('../js/live.js')]; return require('../js/live.js'); };
+  let Live = fresh();
+  let seen = 0;
+  const server = http.createServer((req, res) => {
+    seen++;
+    res.setHeader('X-RateLimit-Remaining-60s', String(600 - seen)); // Tier 3: 200 per 10 s, 600 per minute
+    setTimeout(() => handle(req, res), 50);
+  }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  const restart = () => { Live = fresh(); Live.PROVIDERS.visor.base = base; Live.setProvider('visor'); };
+  try {
+    restart();
+    const params = { facets: 'make', facet_value_limit: 5 };
+    const first = await Live.request('/v1/facets', params);
+    assert.equal(seen, 1);
+    assert.deepEqual([Live.tier('visor').cap10, Live.tier('visor').cap60], [200, 600], 'learned from the header, with no refusal');
+    // An hour later (after a restart), the stored reply answers at once and a fresh one is fetched behind it.
+    const k = [...store.keys()].find((x) => x.startsWith('gv:'));
+    const e = JSON.parse(store.get(k));
+    e.t -= 3600e3;
+    store.set(k, JSON.stringify(e));
+    restart();
+    const t0 = Date.now();
+    const again = await Live.request('/v1/facets', params);
+    assert.ok(Date.now() - t0 < 40, 'answered without waiting for the API');
+    assert.deepEqual(again, first);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(seen, 2, 'refreshed in the background');
+    assert.ok(Date.now() - JSON.parse(store.get(k)).t < 5000, 'the refreshed reply is stored');
+    // A hunt check never takes the older reply.
+    const e2 = JSON.parse(store.get(k));
+    e2.t -= 3600e3;
+    store.set(k, JSON.stringify(e2));
+    restart();
+    await Live.request('/v1/facets', params, null, { fresh: true });
+    assert.equal(seen, 3, 'waited for a fresh reply');
+  } finally {
+    server.close();
+    Object.keys = origKeys;
+    delete globalThis.localStorage;
+    delete globalThis.gridlineDesktop;
+    fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
+  }
+});

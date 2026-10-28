@@ -9,6 +9,7 @@
     autodev: { name: 'auto.dev', site: 'https://www.auto.dev', base: 'https://api.auto.dev', keyUrl: 'https://auto.dev/dashboard', free: true, monthlyCalls: 1000 },
   };
   const CACHE_TTL = 30 * 60 * 1000; // identical requests within 30 minutes are free
+  const STALE_TTL = 6 * 3600 * 1000; // older replies, up to 6 hours, show at once while a fresh one loads behind them
   const PAGE = 100;
 
   const memCache = new Map();
@@ -101,13 +102,15 @@
   // flight share a single fetch, and the pace stays under the account's tier. The tier is learned
   // from the first "rate limit exceeded" reply (how many requests had gone out in the last 10 and
   // 60 seconds says which tier refused) and remembered for a week, so later loads never burst into
-  // it; a refusal pauses everything for the seconds the API names and the request tries again.
-  const MAX_INFLIGHT = 4;
+  // it; a refusal pauses everything for the seconds the API names and the request tries again. The
+  // first reply's "requests left this minute" header names the tier too, before any refusal, and a
+  // roomier tier lets more requests out at once.
   const RETRIES = 6;
-  const SPACING_MS = 150; // between request starts, so a queue never arrives as one burst
   const TIERS = [[10, 60], [40, 120], [200, 600], [500, 3000]]; // [per 10 s, per 60 s]
   const TIER_TTL = 7 * 864e5;
-  const PRIORITY = { first: 0, page: 1, later: 2 };
+  const PRIORITY = { first: 0, page: 1, later: 2, background: 3 };
+  const maxInflight = (L) => (!L.caps ? 4 : L.caps.cap10 >= 200 ? 16 : L.caps.cap10 >= 40 ? 8 : 4);
+  const spacingMs = (L) => (L.caps && L.caps.cap10 >= 40 ? 25 : 150); // between request starts, so a queue never arrives as one burst
   const tierKey = (p) => `gridline:tier:${p}`;
   const loadTier = (p) => safe(() => { const t = JSON.parse(localStorage.getItem(tierKey(p))); return t && t.cap10 && Date.now() - t.t < TIER_TTL ? t : null; }, null);
   const lanes = {};
@@ -129,7 +132,7 @@
   function pump(p) {
     const L = lane(p);
     if (L.timer) return;
-    while (L.inflight < MAX_INFLIGHT && L.waiting.length) {
+    while (L.inflight < maxInflight(L) && L.waiting.length) {
       const now = Date.now();
       L.sent = L.sent.filter((t) => now - t < 60000);
       const at = Math.max(now, L.pausedUntil, L.nextStart, windowFree(L, now));
@@ -138,7 +141,7 @@
         return;
       }
       L.inflight++;
-      L.nextStart = now + SPACING_MS;
+      L.nextStart = now + spacingMs(L);
       L.sent.push(now);
       L.waiting.shift().resolve();
     }
@@ -173,11 +176,22 @@
     L.caps = Object.assign({ t: now }, caps);
     safe(() => localStorage.setItem(tierKey(p), JSON.stringify(L.caps)));
   }
+  // From a reply's requests left this minute plus the ones we sent in it: the largest tier that fits.
+  // It only ever raises the pace; refusals are what lower it.
+  function tierFromHeader(p, remaining60) {
+    const L = lane(p), est = remaining60 + L.sent.length;
+    let caps = null;
+    for (const [c10, c60] of TIERS) if (c60 <= est) caps = { cap10: c10, cap60: c60 };
+    if (!caps || (L.caps && L.caps.cap60 >= caps.cap60)) return;
+    L.caps = Object.assign({ t: Date.now() }, caps);
+    safe(() => localStorage.setItem(tierKey(p), JSON.stringify(L.caps)));
+  }
   const tier = (p) => lane(p || current).caps;
 
   // Replies are kept for 30 minutes (repeats within that are free), in memory and on disk, so the
-  // app's own restarts and other tabs reuse them. When the disk is full, expired entries go first,
-  // then the oldest half.
+  // app's own restarts and other tabs reuse them. A reply up to 6 hours old is still shown at once,
+  // and fetched again in the background for next time. When the disk is full, entries past that
+  // go first, then the oldest half.
   const CACHE_PREFIX = 'gv:';
   const cacheGet = (key) => memCache.get(key) || safe(() => JSON.parse(localStorage.getItem(CACHE_PREFIX + key)), null);
   function cachePut(key, entry) {
@@ -193,7 +207,7 @@
       for (const k of Object.keys(localStorage)) {
         if (!k.startsWith(CACHE_PREFIX)) continue;
         const e = safe(() => JSON.parse(localStorage.getItem(k)), null);
-        if (!e || !(now - e.t < CACHE_TTL)) localStorage.removeItem(k); else live.push([k, e.t]);
+        if (!e || !(now - e.t < STALE_TTL)) localStorage.removeItem(k); else live.push([k, e.t]);
       }
       if (makeRoom) for (const [k] of live.sort((a, b) => a[1] - b[1]).slice(0, Math.ceil(live.length / 2))) localStorage.removeItem(k);
     });
@@ -202,7 +216,8 @@
   if (sweep && sweep.unref) sweep.unref();
 
   // opts.priority: PRIORITY.first for what's on screen (the default), .page for the rest of the
-  // page, .later for sections that aren't on screen yet.
+  // page, .later for sections that aren't on screen yet. opts.fresh: never answer from a reply
+  // older than 30 minutes (hunt checks, which look for what's new).
   async function request(path, params, prov, opts) {
     const p = prov || current;
     const key = getKey(p);
@@ -210,11 +225,15 @@
     const query = params ? new URLSearchParams(params).toString() : '';
     const cacheKey = p + path + '?' + query;
     const hit = cacheGet(cacheKey);
-    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
-    if (inflight.has(cacheKey)) return inflight.get(cacheKey);
-    const run = fetchJson(p, path, query, key, cacheKey, (opts && opts.priority) || PRIORITY.first);
+    const age = hit ? Date.now() - hit.t : Infinity;
+    if (age < CACHE_TTL) return hit.json;
+    const stale = age < STALE_TTL && !(opts && opts.fresh);
+    if (inflight.has(cacheKey)) return stale ? hit.json : inflight.get(cacheKey);
+    // A stale answer goes out now; its refresh waits behind everything else in the queue.
+    const run = fetchJson(p, path, query, key, cacheKey, stale ? PRIORITY.background : (opts && opts.priority) || PRIORITY.first);
     inflight.set(cacheKey, run);
-    try { return await run; } finally { inflight.delete(cacheKey); }
+    run.then(() => inflight.delete(cacheKey), () => inflight.delete(cacheKey));
+    return stale ? hit.json : run;
   }
 
   async function fetchJson(p, path, query, key, cacheKey, priority) {
@@ -224,6 +243,7 @@
       let r;
       try { r = await rawFetch(p, path, query, key); } finally { free(p); }
       if (r.status !== 401 && r.status !== 403 && r.status !== 429) track(p, r.cost);
+      if (r.remaining60 != null && r.status !== 429) tierFromHeader(p, r.remaining60);
       // Nearly out of this minute's requests: hold until the oldest one we sent falls out of the window.
       if (r.remaining60 != null && r.remaining60 <= 1 && r.status !== 429) L.pausedUntil = Math.max(L.pausedUntil, (L.sent[0] || Date.now()) + 60050);
       let json = null;
@@ -658,7 +678,7 @@
   /* ---------- auto.dev (free plan: 1,000 calls/month, 20 cars per call) ---------- */
 
   const AD_PAGE = 20;
-  const areq = (path, params) => request(path, params, 'autodev');
+  const areq = (path, params, opts) => request(path, params, 'autodev', opts);
   // Facet group -> Gridline filter key, and the query parameter that filters it.
   const AD_GROUP = { years: 'year', makes: 'make', models: 'model', trims: 'trim', types: 'body', exteriorColor: 'colorFamily',
     interiorColor: 'interiorFamily', fuel: 'fuel', drivetrain: 'drivetrain', states: 'state', transmissions: 'transmission' };
@@ -797,9 +817,9 @@
   }
 
   // Runs a request; if auto.dev rejects a filter parameter we guessed, drop it, remember, and retry once.
-  async function adGet(path, params) {
+  async function adGet(path, params, opts) {
     try {
-      return await areq(path, params);
+      return await areq(path, params, opts);
     } catch (e) {
       const m = e.code === 'bad_request' && /parameter[^:]*:\s*([\w.]+)/i.exec(e.message);
       if (!m || params[m[1]] === undefined) throw e;
@@ -808,7 +828,7 @@
       safe(() => localStorage.setItem(AD_UNSUPPORTED, JSON.stringify([...bad])));
       const next = Object.assign({}, params);
       delete next[m[1]];
-      const r = await areq(path, next);
+      const r = await areq(path, next, opts);
       r._dropped = m[1];
       return r;
     }
@@ -819,7 +839,7 @@
     const params = Object.assign(adToParams(f, ctx), { limit: AD_PAGE, page: Math.floor((o.offset || 0) / AD_PAGE) + 1 });
     // opts.lite (hunt checks): just the cars and the total, no filter counts.
     if (!o.offset) params.includes = o.lite ? 'total' : 'total,facets';
-    const r = await adGet('/listings', params);
+    const r = await adGet('/listings', params, o);
     const results = (r.data || []).map(adNormalize);
     let facets = null;
     if (r.facets) {
