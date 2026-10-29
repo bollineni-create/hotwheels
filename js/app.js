@@ -534,6 +534,37 @@
     return out.slice(0, 10);
   }
 
+  // Show the longest of several placeholders that fits the box, so a narrow screen (a phone, the
+  // folded iPhone Duo) gets a shorter hint instead of one cut off mid-word. Re-fits when the box resizes.
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  // One shared observer and one font listener for every fitted input; inputs the page has
+  // re-rendered away are dropped, so nothing keeps detached nodes alive.
+  const fitted = new Map(); // input -> fit()
+  const refitAll = () => fitted.forEach((fit, el) => (el.isConnected ? fit() : (fitted.delete(el), fitRO?.unobserve(el))));
+  const fitRO = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((e) => fitted.get(e.target)?.())) : null;
+  if (!fitRO) addEventListener('resize', refitAll);
+  // The web font swaps in after first paint without resizing any box; measure again once it has.
+  if (document.fonts) { document.fonts.ready.then(refitAll); document.fonts.addEventListener?.('loadingdone', refitAll); }
+  function fitPlaceholder(input, options) {
+    const fit = () => {
+      const cs = getComputedStyle(input);
+      const room = input.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      if (room <= 0) return;
+      measureCtx.font = cs.font;
+      input.placeholder = options.find((t) => measureCtx.measureText(t).width <= room) || options[options.length - 1];
+    };
+    fitted.forEach((_, el) => { if (!el.isConnected) { fitted.delete(el); fitRO?.unobserve(el); } });
+    fitted.set(input, fit);
+    fitRO?.observe(input);
+    fit();
+  }
+  // Inputs drawn from templates list their shorter hints in data-placeholders ("a|b|c"), fitted as they appear.
+  const fitNewPlaceholders = () => document.querySelectorAll('input[data-placeholders]:not([data-fitted])').forEach((el) => {
+    el.dataset.fitted = '';
+    fitPlaceholder(el, [el.placeholder, ...el.dataset.placeholders.split('|')]);
+  });
+  new MutationObserver(fitNewPlaceholders).observe(document.documentElement, { childList: true, subtree: true });
+
   let searchBoxSeq = 0;
   function mountSearchBox(container, opts) {
     const id = 'sb' + ++searchBoxSeq;
@@ -548,6 +579,7 @@
     const input = form.querySelector('input');
     const list = form.querySelector('ul');
     let items = [], active = -1;
+    if (opts.placeholders) fitPlaceholder(input, [opts.placeholder, ...opts.placeholders]);
 
     function render() {
       items = suggestions(input.value);
@@ -713,7 +745,24 @@
   function syncCatNav() {
     const active = tabIsPanel(TAB.id) ? panelById(PANEL.id).id : TAB.id;
     document.querySelectorAll('.cat-nav a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === active));
+    document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView);
   }
+  // Bring the highlighted tab into view (centred) when it's off the visible part of the strip.
+  function keepActiveTabInView(strip) {
+    const a = strip.querySelector('a.active');
+    const off = a && (a.offsetLeft < strip.scrollLeft || a.offsetLeft + a.offsetWidth > strip.scrollLeft + strip.clientWidth);
+    if (off) strip.scrollTo({ left: a.offsetLeft - (strip.clientWidth - a.offsetWidth) / 2 });
+    catNavEdges(strip);
+  }
+  // Mark which ends of the strip have tabs scrolled past them, for the edge fades in the CSS.
+  function catNavEdges(strip) {
+    const max = strip.scrollWidth - strip.clientWidth;
+    strip.classList.toggle('more-l', strip.scrollLeft > 2);
+    strip.classList.toggle('more-r', strip.scrollLeft < max - 2);
+  }
+  document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('cat-nav-inner')) catNavEdges(e.target); }, true);
+  // Folding or rotating narrows the strip: keep the open tab visible, not just the fades current.
+  addEventListener('resize', () => document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView));
 
   /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
 
@@ -2110,7 +2159,7 @@
       ${homeTopHtml()}
       ${catNavHtml(homeCats())}
       <div id="home-tab">${tabHtml()}</div>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…' });
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…', placeholders: ['Search models, VINs or dealers…', 'Search cars or VINs…', 'Search cars…'] });
     mountTab();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
     window.scrollTo(0, 0);
@@ -2135,7 +2184,7 @@
           <div class="results-top">
             <button class="btn ghost filters-toggle" type="button" data-action="toggle-filters">⚙ Filters</button>
             <form class="q-wrap" id="q-form" role="search"><svg class="sb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" aria-label="Refine results" value="${esc(S.f.q)}"></form>
+              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" data-placeholders="Refine, or type a whole search…|Refine or search again…|Refine…" aria-label="Refine results" value="${esc(S.f.q)}"></form>
             <label class="sort"><span class="sr-only">Sort</span><select id="sort-select"></select></label>
             <div class="seg" role="group" aria-label="Layout">
               <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦<span class="seg-label"> Grid</span></button>
@@ -2331,7 +2380,7 @@
         <button type="button" class="link-btn" data-action="reset">Reset all</button>
         <button type="button" class="icon-btn filters-close" data-action="toggle-filters" aria-label="Close filters">✕</button></div>
       <div class="finder">
-        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
+        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" data-placeholders="Search filters: “brown interior”…|Search filters…" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
         <ul class="finder-list" id="finder-list" role="listbox" hidden></ul>
       </div>
       ${S.live && can('historyFilters') ? `<div class="toggle-row">
