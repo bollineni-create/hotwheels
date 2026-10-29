@@ -713,7 +713,22 @@
   function syncCatNav() {
     const active = tabIsPanel(TAB.id) ? panelById(PANEL.id).id : TAB.id;
     document.querySelectorAll('.cat-nav a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === active));
+    // Bring the highlighted tab into view (centred) when the strip is wider than the screen.
+    document.querySelectorAll('.cat-nav-inner').forEach((strip) => {
+      const a = strip.querySelector('a.active');
+      const off = a && (a.offsetLeft < strip.scrollLeft || a.offsetLeft + a.offsetWidth > strip.scrollLeft + strip.clientWidth);
+      if (off) strip.scrollTo({ left: a.offsetLeft - (strip.clientWidth - a.offsetWidth) / 2 });
+      catNavEdges(strip);
+    });
   }
+  // Mark which ends of the strip have tabs scrolled past them, for the edge fades in the CSS.
+  function catNavEdges(strip) {
+    const max = strip.scrollWidth - strip.clientWidth;
+    strip.classList.toggle('more-l', strip.scrollLeft > 2);
+    strip.classList.toggle('more-r', strip.scrollLeft < max - 2);
+  }
+  document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('cat-nav-inner')) catNavEdges(e.target); }, true);
+  addEventListener('resize', () => document.querySelectorAll('.cat-nav-inner').forEach(catNavEdges));
 
   /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
 

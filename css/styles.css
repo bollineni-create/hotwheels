@@ -202,6 +202,13 @@ button, input, select { font: inherit; color: inherit; }
 .cat-nav { position: sticky; top: 57px; z-index: 30; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--border); }
 .cat-nav-inner { max-width: 1280px; margin: 0 auto; padding: 8px 20px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .cat-nav-inner::-webkit-scrollbar { display: none; }
+/* On a narrow screen (a phone, the folded iPhone Duo) the strip scrolls sideways. Fade whichever
+   edge has more tabs past it, so a tab running off the edge reads as "scroll for more", not cut off. */
+.cat-nav-inner { --fl: 0px; --fr: 0px; scroll-padding-inline: 40px; scroll-behavior: smooth;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fl), #000 calc(100% - var(--fr)), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 var(--fl), #000 calc(100% - var(--fr)), transparent); }
+.cat-nav-inner.more-l { --fl: 36px; }
+.cat-nav-inner.more-r { --fr: 36px; }
 .cat-nav a { flex: none; color: var(--text-2); font-weight: 600; font-size: .9rem; padding: 7px 14px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
 .cat-nav a:hover { text-decoration: none; background: var(--surface-2); color: var(--text); }
 .cat-nav a.active { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
