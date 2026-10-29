@@ -547,6 +547,8 @@
     };
     if ('ResizeObserver' in window) new ResizeObserver(fit).observe(input);
     else addEventListener('resize', fit);
+    // The web font swaps in after first paint without resizing the box; measure again once it has.
+    if (document.fonts) { document.fonts.ready.then(fit); document.fonts.addEventListener?.('loadingdone', fit); }
     fit();
   }
   // Inputs drawn from templates list their shorter hints in data-placeholders ("a|b|c"), fitted as they appear.
@@ -736,13 +738,14 @@
   function syncCatNav() {
     const active = tabIsPanel(TAB.id) ? panelById(PANEL.id).id : TAB.id;
     document.querySelectorAll('.cat-nav a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === active));
-    // Bring the highlighted tab into view (centred) when the strip is wider than the screen.
-    document.querySelectorAll('.cat-nav-inner').forEach((strip) => {
-      const a = strip.querySelector('a.active');
-      const off = a && (a.offsetLeft < strip.scrollLeft || a.offsetLeft + a.offsetWidth > strip.scrollLeft + strip.clientWidth);
-      if (off) strip.scrollTo({ left: a.offsetLeft - (strip.clientWidth - a.offsetWidth) / 2 });
-      catNavEdges(strip);
-    });
+    document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView);
+  }
+  // Bring the highlighted tab into view (centred) when it's off the visible part of the strip.
+  function keepActiveTabInView(strip) {
+    const a = strip.querySelector('a.active');
+    const off = a && (a.offsetLeft < strip.scrollLeft || a.offsetLeft + a.offsetWidth > strip.scrollLeft + strip.clientWidth);
+    if (off) strip.scrollTo({ left: a.offsetLeft - (strip.clientWidth - a.offsetWidth) / 2 });
+    catNavEdges(strip);
   }
   // Mark which ends of the strip have tabs scrolled past them, for the edge fades in the CSS.
   function catNavEdges(strip) {
@@ -751,7 +754,8 @@
     strip.classList.toggle('more-r', strip.scrollLeft < max - 2);
   }
   document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('cat-nav-inner')) catNavEdges(e.target); }, true);
-  addEventListener('resize', () => document.querySelectorAll('.cat-nav-inner').forEach(catNavEdges));
+  // Folding or rotating narrows the strip: keep the open tab visible, not just the fades current.
+  addEventListener('resize', () => document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView));
 
   /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
 
