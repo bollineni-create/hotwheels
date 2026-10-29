@@ -534,6 +534,28 @@
     return out.slice(0, 10);
   }
 
+  // Show the longest of several placeholders that fits the box, so a narrow screen (a phone, the
+  // folded iPhone Duo) gets a shorter hint instead of one cut off mid-word. Re-fits when the box resizes.
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  function fitPlaceholder(input, options) {
+    const fit = () => {
+      const cs = getComputedStyle(input);
+      const room = input.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      if (room <= 0) return;
+      measureCtx.font = cs.font;
+      input.placeholder = options.find((t) => measureCtx.measureText(t).width <= room) || options[options.length - 1];
+    };
+    if ('ResizeObserver' in window) new ResizeObserver(fit).observe(input);
+    else addEventListener('resize', fit);
+    fit();
+  }
+  // Inputs drawn from templates list their shorter hints in data-placeholders ("a|b|c"), fitted as they appear.
+  const fitNewPlaceholders = () => document.querySelectorAll('input[data-placeholders]:not([data-fitted])').forEach((el) => {
+    el.dataset.fitted = '';
+    fitPlaceholder(el, [el.placeholder, ...el.dataset.placeholders.split('|')]);
+  });
+  new MutationObserver(fitNewPlaceholders).observe(document.documentElement, { childList: true, subtree: true });
+
   let searchBoxSeq = 0;
   function mountSearchBox(container, opts) {
     const id = 'sb' + ++searchBoxSeq;
@@ -548,6 +570,7 @@
     const input = form.querySelector('input');
     const list = form.querySelector('ul');
     let items = [], active = -1;
+    if (opts.placeholders) fitPlaceholder(input, [opts.placeholder, ...opts.placeholders]);
 
     function render() {
       items = suggestions(input.value);
@@ -2125,7 +2148,7 @@
       ${homeTopHtml()}
       ${catNavHtml(homeCats())}
       <div id="home-tab">${tabHtml()}</div>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…' });
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…', placeholders: ['Search models, VINs or dealers…', 'Search cars or VINs…', 'Search cars…'] });
     mountTab();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
     window.scrollTo(0, 0);
@@ -2150,7 +2173,7 @@
           <div class="results-top">
             <button class="btn ghost filters-toggle" type="button" data-action="toggle-filters">⚙ Filters</button>
             <form class="q-wrap" id="q-form" role="search"><svg class="sb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" aria-label="Refine results" value="${esc(S.f.q)}"></form>
+              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" data-placeholders="Refine, or type a whole search…|Refine or search again…|Refine…" aria-label="Refine results" value="${esc(S.f.q)}"></form>
             <label class="sort"><span class="sr-only">Sort</span><select id="sort-select"></select></label>
             <div class="seg" role="group" aria-label="Layout">
               <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦<span class="seg-label"> Grid</span></button>
@@ -2346,7 +2369,7 @@
         <button type="button" class="link-btn" data-action="reset">Reset all</button>
         <button type="button" class="icon-btn filters-close" data-action="toggle-filters" aria-label="Close filters">✕</button></div>
       <div class="finder">
-        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
+        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" data-placeholders="Search filters: “brown interior”…|Search filters…" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
         <ul class="finder-list" id="finder-list" role="listbox" hidden></ul>
       </div>
       ${S.live && can('historyFilters') ? `<div class="toggle-row">
