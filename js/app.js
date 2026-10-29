@@ -537,6 +537,14 @@
   // Show the longest of several placeholders that fits the box, so a narrow screen (a phone, the
   // folded iPhone Duo) gets a shorter hint instead of one cut off mid-word. Re-fits when the box resizes.
   const measureCtx = document.createElement('canvas').getContext('2d');
+  // One shared observer and one font listener for every fitted input; inputs the page has
+  // re-rendered away are dropped, so nothing keeps detached nodes alive.
+  const fitted = new Map(); // input -> fit()
+  const refitAll = () => fitted.forEach((fit, el) => (el.isConnected ? fit() : (fitted.delete(el), fitRO?.unobserve(el))));
+  const fitRO = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((e) => fitted.get(e.target)?.())) : null;
+  if (!fitRO) addEventListener('resize', refitAll);
+  // The web font swaps in after first paint without resizing any box; measure again once it has.
+  if (document.fonts) { document.fonts.ready.then(refitAll); document.fonts.addEventListener?.('loadingdone', refitAll); }
   function fitPlaceholder(input, options) {
     const fit = () => {
       const cs = getComputedStyle(input);
@@ -545,10 +553,9 @@
       measureCtx.font = cs.font;
       input.placeholder = options.find((t) => measureCtx.measureText(t).width <= room) || options[options.length - 1];
     };
-    if ('ResizeObserver' in window) new ResizeObserver(fit).observe(input);
-    else addEventListener('resize', fit);
-    // The web font swaps in after first paint without resizing the box; measure again once it has.
-    if (document.fonts) { document.fonts.ready.then(fit); document.fonts.addEventListener?.('loadingdone', fit); }
+    fitted.forEach((_, el) => { if (!el.isConnected) { fitted.delete(el); fitRO?.unobserve(el); } });
+    fitted.set(input, fit);
+    fitRO?.observe(input);
     fit();
   }
   // Inputs drawn from templates list their shorter hints in data-placeholders ("a|b|c"), fitted as they appear.
