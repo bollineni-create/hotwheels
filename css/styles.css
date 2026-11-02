@@ -178,7 +178,7 @@ button, input, select { font: inherit; color: inherit; }
 .home-top { position: relative; overflow-x: clip; background: radial-gradient(900px 360px at 50% -40%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 70%), linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%); border-bottom: 1px solid var(--border); padding: clamp(28px, 6vw, 64px) 20px clamp(20px, 4vw, 36px); }
 .home-top::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 48px 48px; mask-image: radial-gradient(700px 320px at 50% 30%, #000, transparent 75%); opacity: .5; pointer-events: none; }
 /* While suggestions are open, lift the hero above the sticky tab bar (30) but under the header (40). */
-.home-top:has(.sb-list:not([hidden])) { z-index: 35; }
+.home-top.sb-open { z-index: 35; }
 .home-top-inner { position: relative; z-index: 2; max-width: 760px; margin: 0 auto; text-align: center; }
 .home-top .eyebrow { margin-bottom: 14px; }
 :root[data-theme="dark"] .home-top { background: var(--bg); }
