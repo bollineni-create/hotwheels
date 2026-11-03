@@ -591,6 +591,8 @@
     }
     function open(v) {
       list.hidden = !v;
+      // Lift the hero over the sticky tab bar while suggestions show (a class, since Safari doesn't reliably re-run :has() on [hidden]).
+      list.closest('.home-top')?.classList.toggle('sb-open', v);
       input.setAttribute('aria-expanded', String(v));
     }
     function setActive(i) {
