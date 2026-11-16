@@ -410,8 +410,10 @@
     });
   }
 
-  // Rank a listing among its comparables. Lower is better for every key.
+  // Rank a listing among its comparables. Lower is better for every key. A listing with no
+  // price (the feed gives 0) can't be ranked on price, value or discount, so there it goes last.
   function leaderboard(l, comps, key, delta) {
+    const byPrice = !['miles', 'days'].includes(key);
     const score = {
       price: (x) => x.price,
       value: (x) => delta(x),
@@ -419,7 +421,8 @@
       days: (x) => -x.daysListed,
       discount: (x) => -discountOf(x),
     }[key] || ((x) => x.price);
-    const rows = [l, ...comps].sort((a, b) => score(a) - score(b));
+    const rank = (x) => (byPrice && !(x.price > 0) ? Infinity : score(x));
+    const rows = [l, ...comps].sort((a, b) => (rank(a) === rank(b) ? 0 : rank(a) - rank(b)));
     return { rows, rank: rows.indexOf(l) + 1, total: rows.length };
   }
 
@@ -794,9 +797,12 @@
     const added = [];
     const cut = [];
     for (const l of current) {
-      next[l.id] = l.price;
+      // A listing whose price is withdrawn (the feed gives 0) hasn't been cut to nothing:
+      // its last real price is kept, so a lower price that shows up later still counts as a cut.
+      const has = l.price > 0;
+      next[l.id] = has || !(l.id in prev) ? l.price : prev[l.id];
       if (!(l.id in prev)) added.push(l);
-      else if (l.price < prev[l.id]) cut.push({ l, from: prev[l.id], to: l.price });
+      else if (has && l.price < prev[l.id]) cut.push({ l, from: prev[l.id], to: l.price });
     }
     const gone = o.complete ? Object.keys(prev).filter((id) => !(id in next)) : [];
     return { added, cut, gone, seen: next };

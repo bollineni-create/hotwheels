@@ -324,6 +324,37 @@ test('a hunt reports new matches, price cuts and cars that are gone', () => {
   assert.equal(Market.huntDiff({ a: 100 }, [car('a', 120)], { complete: true }).cut.length, 0);
 });
 
+test('a withdrawn price is not a price cut, and the last real price is remembered', () => {
+  const car = (id, price) => ({ id, price });
+  // The dealer pulls the price: the feed gives 0.
+  const pulled = Market.huntDiff({ a: 30000 }, [car('a', 0)], { complete: true });
+  assert.equal(pulled.cut.length, 0);
+  assert.deepEqual(pulled.seen, { a: 30000 });
+  // It comes back lower: that is a cut from the last real price.
+  const back = Market.huntDiff(pulled.seen, [car('a', 28500)], { complete: true });
+  assert.deepEqual(back.cut.map((c) => [c.l.id, c.from, c.to]), [['a', 30000, 28500]]);
+  // A car first seen without a price, then priced: nothing was cut.
+  const fresh = Market.huntDiff({}, [car('n', 0)], { complete: true });
+  assert.deepEqual(fresh.added.map((l) => l.id), ['n']);
+  assert.equal(Market.huntDiff(fresh.seen, [car('n', 19000)], { complete: true }).cut.length, 0);
+});
+
+test('a listing with no price is ranked last on price, value and discount', () => {
+  const car = (id, price, miles) => ({ id, price, miles, msrp: 40000, daysListed: 3 });
+  const me = car('me', 25000, 40000);
+  const comps = [car('free', 0, 10000), car('cheap', 20000, 60000), car('dear', 30000, 20000)];
+  const delta = (x) => (x.price > 0 ? x.price / 26000 - 1 : 0);
+  for (const key of ['price', 'value', 'discount']) {
+    const lb = Market.leaderboard(me, comps, key, delta);
+    assert.deepEqual(lb.rows.map((x) => x.id), ['cheap', 'me', 'dear', 'free'], key);
+    assert.equal(lb.rank, 2);
+  }
+  // Miles don't depend on the price, so there it ranks as any other car.
+  assert.equal(Market.leaderboard(me, comps, 'miles', delta).rows[0].id, 'free');
+  // The car itself unpriced: last, not first.
+  assert.equal(Market.leaderboard(car('me', 0, 1), comps.slice(1), 'price', delta).rank, 3);
+});
+
 test('a demo hunt started a week ago finds that week’s new listings and sales', () => {
   const f = Object.assign(Market.emptyFilters(), { model: ['Mazda MX-5 Miata'] });
   const ctx = { delta: () => 0 };
