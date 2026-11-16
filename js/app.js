@@ -49,9 +49,13 @@
     LIVE_EXPECTED.set(l.id, fv(l));
     if (fv.explain) LIVE_EXPLAIN.set(l.id, fv.explain(l));
   }
+  // A dealer can list a car without a price, and the feed then gives 0. Such a car has no asking
+  // price to print, rank or hold against the market: it is never shown as "$0" or as a deal.
+  const priced = (l) => l.price > 0;
+  const prices = (cars) => cars.filter(priced).map((l) => l.price);
   const delta = (l) => {
     const e = expected(l);
-    return e ? l.price / e - 1 : 0;
+    return e && priced(l) ? l.price / e - 1 : 0;
   };
   const rarity = lazy(() => {}, () => Market.colorStats(LISTINGS));
   const CITY_NAMES = [...new Set(DATA.cities.map((c) => `${c[0]}, ${c[1]}`))].sort();
@@ -197,9 +201,6 @@
 
   const money = (n) => (n == null ? '—' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US'));
   const moneyK = (n) => (n == null ? '—' : '$' + (n >= 1000 ? Math.round(n / 1000) + 'k' : Math.round(n)));
-  // A dealer can list a car without a price, and the feed then gives 0. Such a car has no asking
-  // price to print and none to hold against the market, so it is never shown as "$0" or as a deal.
-  const priced = (l) => l.price > 0;
   const asking = (l) => (priced(l) ? money(l.price) : 'Price not listed');
   const num = (n) => Math.round(n).toLocaleString('en-US');
   const miles = (n) => `${num(n)} mi`;
@@ -488,7 +489,7 @@
       out.push({ icon: '#', label: `VIN pattern ${compact}`, sub: `${plural(n, 'match')} · wildcards match any character`, href: searchHref({ vin: compact }) });
     } else if (/^[A-Z0-9]{11,17}$/.test(compact) && /\d/.test(compact)) {
       const hit = BY_VIN.get(compact) || ALL.find((l) => l.vin.endsWith(compact) || l.vin.startsWith(compact));
-      if (hit) out.push({ icon: '#', label: `${title(hit)} ${hit.trim}`, sub: `VIN ${hit.vin} · ${money(hit.price)}${hit.sold ? ' · sold' : ''}`, href: `#/car/${hit.id}` });
+      if (hit) out.push({ icon: '#', label: `${title(hit)} ${hit.trim}`, sub: `VIN ${hit.vin} · ${asking(hit)}${hit.sold ? ' · sold' : ''}`, href: `#/car/${hit.id}` });
       if (compact.length === 17) out.push({ icon: '⌁', label: `Decode VIN ${compact}`, sub: 'Check digit, model year, plant, manufacturer', href: `#/vin/${compact}` });
       else out.push({ icon: '#', label: `VINs starting ${compact}`, sub: 'Search by VIN prefix', href: searchHref({ vin: compact }) });
     }
@@ -519,7 +520,7 @@
         const g = counts.get(key) || [];
         const gy = yearTok ? g.filter((l) => String(l.year) === yearTok) : g;
         if (!gy.length) continue;
-        out.push({ icon: '⌕', label: yearTok ? `${yearTok} ${key}` : key, sub: `${plural(gy.length, 'car')} · median ${money(Market.median(gy.map((l) => l.price)))}`,
+        out.push({ icon: '⌕', label: yearTok ? `${yearTok} ${key}` : key, sub: `${plural(gy.length, 'car')} · median ${money(Market.median(prices(gy)))}`,
           href: searchHref(Object.assign({ model: key }, yearTok ? { year: yearTok } : {})) });
       }
       const makes = [...new Set(DATA.models.map((m) => m.make))].filter((mk) => hit(mk) && !out.some((o) => o.label === mk));
@@ -1913,7 +1914,7 @@
         <header><h3>${badge(`${radius}–${num(WIDE)} mi`, 'b-status')} Worth the drive</h3><p class="muted">Cars outside your radius that still come out ahead after the round-trip fuel (about ${Math.round(Market.FUEL_PER_MILE * 100)}¢ a mile) and the best deal on the same model near you.</p></header>
         ${d.drive.length ? `<ol class="drive-list">${d.drive.map((x, i) => `<li class="reveal" style="--i:${i}"><a href="#/car/${x.l.id}">
             <span class="drive-art" style="--paint:${esc(x.l.extHex)}">${Charts.car(x.l.body, x.l.extHex, { label: `${x.l.extColor} ${x.l.model}` })}</span>
-            <span class="drive-main"><b>${esc(title(x.l))} ${esc(x.l.trim)}</b><small>${esc(x.l.city)}, ${esc(x.l.state)} · ${num(x.miles)} mi away · ${kMiles(x.l.miles)} · ${money(x.l.price)}</small></span>
+            <span class="drive-main"><b>${esc(title(x.l))} ${esc(x.l.trim)}</b><small>${esc(x.l.city)}, ${esc(x.l.state)} · ${num(x.miles)} mi away · ${kMiles(x.l.miles)} · ${asking(x.l)}</small></span>
             <span class="drive-math"><b class="good">${money(x.saving)} below fair value</b><small>− ${money(x.fuel)} fuel there and back${x.nearbyBest ? ` − ${money(x.nearbyBest)} best nearby` : ''}</small><b class="net">${money(x.net)} ahead</b></span>
           </a></li>`).join('')}</ol>` : `<p class="muted empty-note">Nothing between ${radius} and ${num(WIDE)} miles beats what you can already get nearby.</p>`}
       </article>`;
@@ -1936,7 +1937,7 @@
       const d = o && o.noDelta ? null : Market.median(g.map(delta));
       return {
         city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: deltaClass(d),
-        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(g.map((l) => l.price)))}${d != null ? `, ${pct(Math.abs(d), 1)} ${d < 0 ? 'below' : 'above'} market` : ''}`,
+        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}${d != null ? `, ${pct(Math.abs(d), 1)} ${d < 0 ? 'below' : 'above'} market` : ''}`,
       };
     });
   }
@@ -2111,7 +2112,7 @@
       (isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
         ${popular.map(([key, g]) => {
           const used = g.filter((l) => l.condition !== 'New');
-          return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
+          return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(prices(used)))}</small></a>`;
         }).join('')}
       </div>`);
   }
@@ -2532,7 +2533,7 @@
         <div><p class="eyebrow">Market overview · ${esc(m.seg)}</p><h2>${esc(key)}</h2></div>
         <dl class="kpis">
           <div><dt>For sale</dt><dd>${num(all.length)}</dd></div>
-          <div><dt>Used median</dt><dd>${money(Market.median(used.map((l) => l.price)))}</dd></div>
+          <div><dt>Used median</dt><dd>${money(Market.median(prices(used)))}</dd></div>
           <div><dt>Sold, 30 days</dt><dd>${num(v.sold30)}</dd></div>
           <div><dt>Median days to sell</dt><dd>${v.medianDaysToSell != null ? Math.round(v.medianDaysToSell) : '—'}</dd></div>
           <div><dt>Days of supply</dt><dd>${v.daysOfSupply ? Math.round(v.daysOfSupply) : '—'}</dd></div>
@@ -2542,12 +2543,12 @@
       <div class="overview-grid">
         <div><h4>Median price by model year</h4>
           ${Charts.columns(byYear.map(([y, g]) => {
-            const med = Market.median(g.map((l) => l.price));
+            const med = Market.median(prices(g));
             return { label: String(y).slice(2).padStart(3, "'"), value: med, display: '$' + Math.round(med / 1000) + 'k', title: `${y}: ${plural(g.length, 'car')}, median ${money(med)}` };
           }), { aria: `Median ${key} price by model year` })}
         </div>
         <div><h4>Trims</h4>
-          <ul class="trim-list">${trims.map(([t, g]) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t)}"><span>${esc(t)}</span><span class="muted">${num(g.length)}</span><span>${money(Market.median(g.map((l) => l.price)))}</span></button></li>`).join('')}</ul>
+          <ul class="trim-list">${trims.map(([t, g]) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t)}"><span>${esc(t)}</span><span class="muted">${num(g.length)}</span><span>${money(Market.median(prices(g)))}</span></button></li>`).join('')}</ul>
         </div>
       </div>
     </section>`;
@@ -2589,7 +2590,8 @@
     </dl>`;
 
     // Chart: plot up to 600 matches; color by market position.
-    const sample = results.length > 600 ? results.filter((_, i) => i % Math.ceil(results.length / 600) === 0) : results;
+    const plotted = results.filter(priced);
+    const sample = plotted.length > 600 ? plotted.filter((_, i) => i % Math.ceil(plotted.length / 600) === 0) : plotted;
     const scatter = Charts.scatter({
       series: [{ points: sample.map((l) => ({ x: l.miles, y: l.price, id: l.id, cls: sold ? 'mk-sold' : 'mk-' + (marketText(l) || { tone: 'fair' }).tone, label: `${title(l)} ${l.trim} · ${money(l.price)} · ${kMiles(l.miles)}` })), cls: 'res' }],
       xLabel: 'Miles', aria: 'Matching cars plotted by price and mileage', height: 260, r: 3.6,
@@ -2602,7 +2604,7 @@
       if (!n) return S.f.state.includes(st) ? { cls: 'cnt-0', value: 0, selected: true, title: st } : null;
       const hi = live ? Math.max(1, ...liveStates.values()) : 60;
       const cls = n >= hi * (live ? 0.5 : 1) ? 'cnt-4' : n >= hi * (live ? 0.2 : 25 / 60) ? 'cnt-3' : n >= hi * (live ? 0.07 : 10 / 60) ? 'cnt-2' : 'cnt-1';
-      return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${g && !live ? `, median ${money(Market.median(g.map((l) => l.price)))}` : ''}`, selected: S.f.state.includes(st) };
+      return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${g && !live ? `, median ${money(Market.median(prices(g)))}` : ''}`, selected: S.f.state.includes(st) };
     }, { clickable: true, aria: 'Matching cars by state' });
 
     let trendCard;
@@ -2667,7 +2669,7 @@
       const d = Market.median(meds);
       return {
         city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: S.f.when === 'sold' ? 'mp-sold' : deltaClass(d),
-        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(g.map((l) => l.price)))}`,
+        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}`,
       };
     });
     const c = S.f.near ? placeOf(S.f.near) : null;
@@ -2977,8 +2979,10 @@
     const lb = Market.leaderboard(l, comps, opts.rankBy, delta);
     const rankLabel = { value: 'price vs. market', price: 'lowest price', miles: 'lowest miles', days: 'newest listing', discount: 'discount from MSRP' }[opts.rankBy];
     const statOf = (x) => ({
-      value: deltaChip(x), price: money(x.price), miles: kMiles(x.miles), days: days(x.daysListed), discount: x.msrp ? `-${pct(Market.discountOf(x))}` : '—',
+      value: deltaChip(x), price: asking(x), miles: kMiles(x.miles), days: days(x.daysListed), discount: x.msrp && priced(x) ? `-${pct(Market.discountOf(x))}` : '—',
     }[opts.rankBy]);
+    // Ranked on price, value or discount, a car with no price has no place: it is listed last and unnumbered.
+    const unranked = (x) => !priced(x) && ['value', 'price', 'discount'].includes(opts.rankBy);
     const top = lb.rows.slice(0, 10);
     const rows = top.includes(l) ? top : [...top, null, l];
     const y = (x) => (opts.msrpAdjusted ? (x.price / x.msrp) * 100 : x.price);
@@ -2995,11 +2999,11 @@
     document.getElementById('mc-body').innerHTML = `
       <div class="mc-grid">
         <div class="leaderboard">
-          <p class="lb-rank"><b>#${lb.rank}</b> of ${num(lb.total)} by ${rankLabel}</p>
+          <p class="lb-rank">${unranked(l) ? `Not ranked by ${rankLabel}: this car has no listed price` : `<b>#${lb.rank}</b> of ${num(lb.rows.filter((x) => !unranked(x)).length)} by ${rankLabel}`}</p>
           <ol class="lb-list">${rows.map((x, i) => x === null ? '<li class="gap">…</li>' : `<li class="${x === l ? 'me' : ''}">
-            <span class="lb-pos">${lb.rows.indexOf(x) + 1}</span>
+            <span class="lb-pos">${unranked(x) ? '–' : lb.rows.indexOf(x) + 1}</span>
             <a href="#/car/${x.id}"><b>${x.year} ${esc(x.trim)}</b><small>${kMiles(x.miles)} · ${esc(x.city)}, ${esc(x.state)}</small></a>
-            <span class="lb-stat">${x === l ? '<b>This car</b>' : ''}<span>${money(x.price)}</span>${opts.rankBy !== 'price' ? `<small>${statOf(x)}</small>` : ''}</span></li>`).join('')}</ol>
+            <span class="lb-stat">${x === l ? '<b>This car</b>' : ''}<span>${asking(x)}</span>${opts.rankBy !== 'price' ? `<small>${statOf(x)}</small>` : ''}</span></li>`).join('')}</ol>
         </div>
         <div class="mc-chart" data-action-zone="scatter">${chart}
           <div class="legend"><span><i class="key self"></i>This car</span><span><i class="key comp"></i>For sale (${num(comps.length)})</span>${opts.includeSold ? `<span><i class="key sold"></i>Sold (${num(soldComps.length)})</span>` : ''}</div>
@@ -3022,11 +3026,13 @@
         ${items.map((x) => `<div class="${x.role === 'displayed_price' ? 'sub' : ''}"><dt>${esc(x.raw_label || Live.titleCase(x.role || 'Item'))}${x.applicability && x.applicability !== 'all_buyers' ? ` <span class="tag warn">${esc(Live.titleCase(x.applicability))}</span>` : x.role === 'seller_add_on' ? ' <span class="tag">add-on</span>' : x.role === 'seller_fee' ? ' <span class="tag">fee</span>' : ''}</dt>
           <dd class="${sign(x) < 0 ? 'good' : ''}">${x.amount_usd == null ? '—' : (sign(x) > 0 ? '+' : sign(x) < 0 ? '−' : '') + money(Math.abs(x.amount_usd))}</dd></div>`).join('')}
         ${before ? `<div class="sub"><dt>Seller total before tax</dt><dd>${money(before)}</dd></div>` : ''}
-        <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(base * taxRate / 100)}</dd></div>
-        <div class="total"><dt>Est. out the door</dt><dd>${money(base * (1 + taxRate / 100))}</dd></div>
+        ${base > 0 ? `<div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(base * taxRate / 100)}</dd></div>
+        <div class="total"><dt>Est. out the door</dt><dd>${money(base * (1 + taxRate / 100))}</dd></div>` : ''}
       </dl>
+      ${base > 0 ? '' : '<p class="muted small">The dealer hasn’t listed a price, so there is no tax or total to estimate. Ask for an out-the-door price in writing.</p>'}
       ${gap > 0 ? `<p class="price-gap">Possible price gap: <b>${money(gap)}</b> on top of the advertised price before tax.</p>` : ''}
       ${conditional.length ? `<p class="muted small">Discounts marked “${esc(Live.titleCase(conditional[0].applicability))}” only apply if you qualify.</p>` : ''}`
+      : !priced(l) ? '<p class="muted small">The dealer hasn’t listed a price for this car. Ask for an out-the-door price in writing.</p>'
       : `<p class="muted small">This dealer’s fee and add-on details aren’t available. Ask for an out-the-door price in writing.</p>
         <dl class="spec pricing"><div class="sub"><dt>Advertised price</dt><dd>${money(l.price)}</dd></div>
         <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(l.price * taxRate / 100)}</dd></div>
@@ -3217,17 +3223,19 @@
       setView('compare', `<section class="narrow empty-state"><h1>Compare cars</h1><p class="muted">Add up to four cars with <b>+ Compare</b> on any listing to line them up here.</p><a class="btn primary" href="#/search">Start searching</a></section>`);
       return;
     }
+    // Marks the best value in a row. A car with nothing to compare (null) never wins.
     const best = (vals, low) => {
-      const target = low ? Math.min(...vals) : Math.max(...vals);
-      return vals.map((v) => cars.length > 1 && v === target);
+      const known = vals.filter((v) => v != null);
+      const target = low ? Math.min(...known) : Math.max(...known);
+      return vals.map((v) => cars.length > 1 && v != null && v === target);
     };
     const optTotal = (l) => l.options.reduce((s, o) => s + o.price, 0);
     const rows = [
-      ['Price', cars.map((l) => asking(l) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => l.price), true)],
-      ['vs. market', cars.map((l) => deltaChip(l) || '—'), best(cars.map(delta), true)],
+      ['Price', cars.map((l) => asking(l) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => (priced(l) ? l.price : null)), true)],
+      ['vs. market', cars.map((l) => deltaChip(l) || '—'), best(cars.map((l) => (marketText(l) ? delta(l) : null)), true)],
       ['Expected value', cars.map((l) => money(expected(l))), []],
       ['Original MSRP', cars.map((l) => money(l.msrp)), []],
-      ['Discount from MSRP', cars.map((l) => pct(Market.discountOf(l))), best(cars.map(Market.discountOf), false)],
+      ['Discount from MSRP', cars.map((l) => (l.msrp && priced(l) ? pct(Market.discountOf(l)) : '—')), best(cars.map((l) => (l.msrp && priced(l) ? Market.discountOf(l) : null)), false)],
       ['Mileage', cars.map((l) => miles(l.miles)), best(cars.map((l) => l.miles), true)],
       ['Year', cars.map((l) => String(l.year)), best(cars.map((l) => l.year), false)],
       ['Trim', cars.map((l) => esc(l.trim)), []],
@@ -3396,7 +3404,7 @@
     let body;
     if (lead) {
       const m = marketText(lead);
-      body = `${title(lead)} ${lead.trim} · ${money(lead.price)}${m && m.d < -0.01 ? ` · ${m.label} market` : ''} · ${lead.city}, ${lead.state}`;
+      body = `${title(lead)} ${lead.trim} · ${asking(lead)}${m && m.d < -0.01 ? ` · ${m.label} market` : ''} · ${lead.city}, ${lead.state}`;
     } else {
       const c = d.cut[0];
       body = `${title(c.l)} ${c.l.trim} dropped ${money(c.from - c.to)} to ${money(c.to)}`;
@@ -3522,7 +3530,7 @@
       const { results, complete, total } = await huntMatches(x);
       const recent = results.filter((l) => l.daysListed <= 30).length;
       const st = { forSale: total, perMonth: complete ? recent : recent || null, perMonthAtLeast: !complete, sold: null, medianDaysToSell: null,
-        medianPrice: complete ? Market.median(results.map((l) => l.price)) : null, medianSoldPrice: null };
+        medianPrice: complete ? Market.median(prices(results)) : null, medianSoldPrice: null };
       if (can('velocity')) {
         const v = await Live.velocity(f, liveCtx()).catch(() => null);
         if (v) {
@@ -3532,7 +3540,7 @@
         }
       }
       st.rarity = Market.rarityLabel(st.perMonth);
-      st.best = results.filter((l) => expected(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
+      st.best = results.filter((l) => expected(l) && priced(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
       const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')}${can('velocity') ? '' : '. Sales history needs a source that has it (see Settings)'}.</p>`;
       if (el()) el().innerHTML = huntMarketHtml(st, f, note);
     } catch (e) {
