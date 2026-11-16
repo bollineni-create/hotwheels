@@ -2294,9 +2294,11 @@
       S.shown = S.results.length;
       renderSearchParts();
     } catch (e) {
-      if (seq !== liveSeq) return;
+      // The search page may be gone by the time a request fails: then there is nowhere to show it.
+      if (seq !== liveSeq || !resultsEl.isConnected) return;
       resultsEl.innerHTML = liveErrorHtml(e);
-      document.getElementById('filters').innerHTML = '';
+      const filters = document.getElementById('filters');
+      if (filters) filters.innerHTML = '';
     } finally {
       if (seq === liveSeq) resultsEl.classList.remove('is-loading');
     }
