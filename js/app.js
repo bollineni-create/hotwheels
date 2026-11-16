@@ -197,6 +197,10 @@
 
   const money = (n) => (n == null ? '—' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US'));
   const moneyK = (n) => (n == null ? '—' : '$' + (n >= 1000 ? Math.round(n / 1000) + 'k' : Math.round(n)));
+  // A dealer can list a car without a price, and the feed then gives 0. Such a car has no asking
+  // price to print and none to hold against the market, so it is never shown as "$0" or as a deal.
+  const priced = (l) => l.price > 0;
+  const asking = (l) => (priced(l) ? money(l.price) : 'Price not listed');
   const num = (n) => Math.round(n).toLocaleString('en-US');
   const miles = (n) => `${num(n)} mi`;
   const kMiles = (n) => (n < 1000 ? `${num(n)} mi` : `${Math.round(n / 1000)}k mi`);
@@ -212,7 +216,7 @@
 
   function marketText(l) {
     const e = expected(l);
-    if (!e) return null;
+    if (!e || !priced(l)) return null;
     const diff = l.price - e;
     const d = l.price / e - 1;
     const tone = d <= -0.07 ? 'great' : d <= -0.03 ? 'good' : d < 0.03 ? 'fair' : d < 0.07 ? 'high' : 'over';
@@ -448,7 +452,7 @@
       ? `${esc(whereText(l))} · <b>Sold ${ago(l.sold.daysAgo)}</b> after ${plural(l.sold.daysToSell, 'day')}`
       : `${esc(whereText(l))} · ${esc(days(l.daysListed))}${cut && cut.delta < 0 ? ` · <span class="drop">↓ ${money(-cut.delta)} ${cut.daysAgo <= 1 ? 'today' : cut.daysAgo + 'd ago'}</span>` : ''}`;
     return `<article class="card listing-card${l.sold ? ' is-sold' : ''}">
-      <a class="card-link" href="${href}" aria-label="${esc(title(l) + ' ' + l.trim + ', ' + money(l.price))}"></a>
+      <a class="card-link" href="${href}" aria-label="${esc(title(l) + ' ' + l.trim + ', ' + asking(l))}"></a>
       <div class="card-art${l.photos && l.photos[0] ? ' has-photo' : ''}" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}` })}
         ${l.photos && l.photos[0] ? `<img class="card-photo" src="${esc(l.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('has-photo');this.remove()">` : ''}
         ${opts && opts.ribbon ? `<span class="ribbon">${esc(opts.ribbon)}</span>` : ''}
@@ -459,7 +463,7 @@
         <h3 class="card-title">${esc(title(l))}</h3>
         <p class="card-sub">${esc(sub)}</p>
         <div class="card-price-row">
-          <span class="price">${l.sold ? '<small class="muted">Sold for</small> ' : ''}${money(l.price)}</span>
+          <span class="price">${l.sold ? '<small class="muted">Sold for</small> ' : ''}${asking(l)}</span>
           ${l.sold ? '' : deltaChip(l)}
         </div>
         <p class="card-meta">${meta}</p>
@@ -1379,7 +1383,7 @@
   // four drawn views), how many of the model are for sale, and three stat cells, the notable ones marked 💎.
   function specCard(l, kind, cells, note) {
     const href = `#/car/${l.id}`;
-    const facts = [conditionBadge(l), esc(l.trim), `${num(l.miles)} miles`, money(l.price),
+    const facts = [conditionBadge(l), esc(l.trim), `${num(l.miles)} miles`, asking(l),
       l.daysListed == null ? null : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`].filter(Boolean);
     const photos = (l.photos || []).slice(0, 4);
     const art = photos.length
@@ -1512,7 +1516,7 @@
         const cells = r ? rarityCells(l, r) : [
           { label: 'Miles', value: num(l.miles), sub: usualMiles(share), hi: true },
           { label: 'Model year', value: String(l.year), sub: `${plural(age, 'year')} old`, hi: false },
-          { label: 'Asking', value: money(l.price), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
+          { label: 'Asking', value: asking(l), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
         ];
         return specCard(l, 'capsules', cells, `${r ? `${liveSpecNote(l, r)} <span class="sep">|</span> ` : ''}${miles}`);
       }).join('')
@@ -2679,7 +2683,7 @@
       <thead><tr><th>Car</th><th class="num">${sold ? 'Sold for' : 'Price'}</th><th>${sold ? 'Sold' : 'vs. market'}</th><th class="num">MSRP</th><th class="num">Miles</th><th>Color</th><th>${prefs().showDealer ? 'Seller' : 'Location'}</th><th class="num">Days</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${rows.map((l) => `<tr>
         <td><a href="#/car/${l.id}"><b>${esc(title(l))}</b> <span class="muted">${esc(l.trim)}</span></a><div class="small">${conditionBadge(l)}${l.status && l.status !== 'On lot' && !l.sold ? ' ' + badge(l.status, 'b-status') : ''} ${upfitBadge(l)}</div></td>
-        <td class="num"><b>${money(l.price)}</b></td><td>${sold ? ago(l.sold.daysAgo) : deltaChip(l)}</td><td class="num">${money(l.msrp)}</td><td class="num">${num(l.miles)}</td>
+        <td class="num"><b>${asking(l)}</b></td><td>${sold ? ago(l.sold.daysAgo) : deltaChip(l)}</td><td class="num">${money(l.msrp)}</td><td class="num">${num(l.miles)}</td>
         <td><span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span></td>
         <td>${esc(whereText(l))}</td><td class="num">${sold ? l.sold.daysToSell : l.daysListed}</td>
         <td>${compareButton(l)}</td></tr>`).join('')}</tbody></table></div>`;
@@ -2752,7 +2756,7 @@
           <div class="badges">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private seller', 'b-private') : ''}${upfitBadge(l)}${r && r.extCount <= 3 ? badge(`💎 1 of ${r.extCount} in this color`, 'b-rare') : ''}${l.windowStickerVerified ? badge('✓ Window sticker verified', 'b-verified') : ''}${live ? badge('Live', 'b-live') : ''}</div>
           <h1>${esc(title(l))} <span>${esc(l.trim)}</span></h1>
           <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)}${l.transmission ? ` · ${esc(l.transmission)}` : ''} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
-          <div class="big-price">${money(l.price)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
+          <div class="big-price">${asking(l)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
           ${m ? `<div class="gauge" aria-label="Price position versus market">
               <div class="gauge-bar"><span class="gauge-mark" style="left:${gaugePos}%"></span></div>
               <div class="gauge-scale"><span>15% below</span><span>Market</span><span>15% above</span></div>
@@ -3219,7 +3223,7 @@
     };
     const optTotal = (l) => l.options.reduce((s, o) => s + o.price, 0);
     const rows = [
-      ['Price', cars.map((l) => money(l.price) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => l.price), true)],
+      ['Price', cars.map((l) => asking(l) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => l.price), true)],
       ['vs. market', cars.map((l) => deltaChip(l) || '—'), best(cars.map(delta), true)],
       ['Expected value', cars.map((l) => money(expected(l))), []],
       ['Original MSRP', cars.map((l) => money(l.msrp)), []],
