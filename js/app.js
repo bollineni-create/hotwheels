@@ -57,6 +57,9 @@
     const e = expected(l);
     return e && priced(l) ? l.price / e - 1 : 0;
   };
+  // The market positions of the cars that have one. A car with no price or no expected value is
+  // left out, not counted as sitting exactly at market.
+  const positions = (cars) => cars.filter((l) => priced(l) && expected(l)).map(delta);
   const rarity = lazy(() => {}, () => Market.colorStats(LISTINGS));
   const CITY_NAMES = [...new Set(DATA.cities.map((c) => `${c[0]}, ${c[1]}`))].sort();
   const cityByName = (name) => DATA.cities.find((c) => `${c[0]}, ${c[1]}` === name);
@@ -1184,7 +1187,7 @@
     }
     const mv = Market.priceMovers(LISTINGS, 20)[0];
     const drops = Market.recentDrops(LISTINGS, 7);
-    const states = Market.stateDeltas(LISTINGS, delta);
+    const states = Market.stateDeltas(LISTINGS, (l) => (priced(l) && expected(l) ? delta(l) : null));
     const values = LISTINGS.filter((l) => l.condition !== 'New' && l.miles < 80000 && l.year >= CURRENT_YEAR - 6)
       .sort((a, b) => delta(a) - delta(b)).slice(0, 5);
 
@@ -1934,7 +1937,7 @@
   // the search page in its map view. With a live source the counts come from the source, by state.
   function homeMapGroups(pool, o) {
     return [...Market.groupBy(pool, (l) => `${l.city}, ${l.state}`).entries()].filter(([, g]) => g[0].lat != null).map(([city, g]) => {
-      const d = o && o.noDelta ? null : Market.median(g.map(delta));
+      const d = o && o.noDelta ? null : Market.median(positions(g));
       return {
         city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: deltaClass(d),
         title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}${d != null ? `, ${pct(Math.abs(d), 1)} ${d < 0 ? 'below' : 'above'} market` : ''}`,
@@ -2542,10 +2545,9 @@
       </div>
       <div class="overview-grid">
         <div><h4>Median price by model year</h4>
-          ${Charts.columns(byYear.map(([y, g]) => {
-            const med = Market.median(prices(g));
-            return { label: String(y).slice(2).padStart(3, "'"), value: med, display: '$' + Math.round(med / 1000) + 'k', title: `${y}: ${plural(g.length, 'car')}, median ${money(med)}` };
-          }), { aria: `Median ${key} price by model year` })}
+          ${Charts.columns(byYear.map(([y, g]) => [y, g, Market.median(prices(g))]).filter(([, , med]) => med != null).map(([y, g, med]) => (
+            { label: String(y).slice(2).padStart(3, "'"), value: med, display: '$' + Math.round(med / 1000) + 'k', title: `${y}: ${plural(g.length, 'car')}, median ${money(med)}` }
+          )), { aria: `Median ${key} price by model year` })}
         </div>
         <div><h4>Trims</h4>
           <ul class="trim-list">${trims.map(([t, g]) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t)}"><span>${esc(t)}</span><span class="muted">${num(g.length)}</span><span>${money(Market.median(prices(g)))}</span></button></li>`).join('')}</ul>
@@ -2665,8 +2667,7 @@
 
   function mapHtml(results) {
     const groups = [...Market.groupBy(results, (l) => `${l.city}, ${l.state}`).entries()].map(([city, g]) => {
-      const meds = g.map(delta);
-      const d = Market.median(meds);
+      const d = Market.median(positions(g));
       return {
         city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: S.f.when === 'sold' ? 'mp-sold' : deltaClass(d),
         title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}`,
