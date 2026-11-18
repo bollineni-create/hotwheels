@@ -206,6 +206,9 @@
     for (const x of s.saved) {
       const h = want[x.id];
       x.name = plainText(h.name);
+      x.createdAt = Number(h.createdAt) || 0;
+      // The same hunt with a different search is a different search: what it found no longer applies.
+      if (x.params !== h.params) { x.params = h.params; x.count = Number.isFinite(h.count) ? h.count : null; x.hunt = null; }
       if (!x.hunt) x.hunt = Object.assign(makeHunt(), { watch: false });
       x.hunt.watch = !!h.watch;
       delete want[x.id];
@@ -387,14 +390,19 @@
         if (meta) return Promise.reject(failure('code', 'Turn sync off before entering a different code.'));
         meta = { code, version: null, doc: emptyDoc(), shadow: null, syncedAt: null, dirty: false };
         keys = null;
+        let joined = false;
         return run(async () => {
           keys = await derive(code);
           const r = await request('GET');
           if (r.status === 404) throw failure('empty', MESSAGES.empty);
           fold(await read(r.data.payload), r.data.version);
-          if (meta.dirty) await push(3);
-          else meta.syncedAt = now();
-        }).then(status, (e) => { meta = null; keys = null; persist(); tell('idle'); throw e; });
+          // From here the device has joined: the synced saves are in Gridline. If sending this
+          // device's own saves fails now, they stay marked as unsent and go with the next sync,
+          // rather than the join being undone with the other devices' saves already merged in.
+          joined = true;
+          meta.syncedAt = now();
+          if (meta.dirty) await push(3).catch(() => {});
+        }).then(status, (e) => { if (joined) return status(); meta = null; keys = null; persist(); tell('idle'); throw e; });
       },
       // Stops syncing here. What is saved on this device and on the others stays.
       leave() {

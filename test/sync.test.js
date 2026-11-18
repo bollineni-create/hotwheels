@@ -312,3 +312,35 @@ test('a real live listing passes through sync unchanged', () => {
   const remembered = JSON.parse(JSON.stringify(Object.assign({}, l, { photos: (l.photos || []).slice(0, 1), history: l.history.slice(-6), livePricing: null })));
   assert.deepEqual(Sync.cleanCar(remembered, 'abc'), remembered);
 });
+
+test('a join that reads the synced saves but can’t send this device’s own still joins, and sends them later', async () => {
+  const srv = server(), clock = { t: 1000 };
+  const a = device(srv, clock), b = device(srv, clock);
+  a.s.favs = { car1: 1 };
+  const { code } = await a.engine.create();
+  b.s.favs = { mine: 2 };
+  // The read works, then the connection drops before this device's own favorite is sent.
+  const fetch = srv.fetch.bind(srv);
+  srv.fetch = async (url, init = {}) => { if (init.method === 'PUT') throw new Error('network'); return fetch(url, init); };
+  const st = await b.engine.join(code);
+  assert.equal(st.on, true);
+  assert.deepEqual(b.s.favs, { car1: 1, mine: 2 });
+  assert.ok(b.kept, 'the code is kept');
+  srv.fetch = fetch;
+  await b.engine.sync();
+  await a.engine.sync();
+  assert.deepEqual(a.s.favs, { car1: 1, mine: 2 });
+});
+
+test('a hunt whose search changed on another device takes the new search and starts over', async () => {
+  const s = blank();
+  s.saved = [Object.assign(hunt('h1', 'Miata', 50), { count: 9 })];
+  s.saved[0].hunt.seen = { old: 1 };
+  const doc = Object.assign(Sync.emptyDoc(), { hunts: { h1: { h: { name: 'Miata', params: 'model=Miata&maxPrice=20000', createdAt: 60, watch: true, count: 4 }, t: 5 } } });
+  Sync.apply(doc, s, makeHunt);
+  assert.equal(s.saved[0].params, 'model=Miata&maxPrice=20000');
+  assert.equal(s.saved[0].createdAt, 60);
+  assert.equal(s.saved[0].count, 4);
+  assert.equal(s.saved[0].hunt.seen, null);
+  assert.equal(s.saved[0].hunt.watch, true);
+});

@@ -3895,10 +3895,13 @@
       const input = e.target.querySelector('input');
       const button = e.target.querySelector('button');
       button.disabled = true;
-      syncEngine.join(input.value).then(() => { toast('This device is syncing'); renderSettings(); }, (err) => {
+      const typed = input.value;
+      syncEngine.join(typed).then(() => { toast('This device is syncing'); renderSettings(); }, (err) => {
         toast(err.message);
-        button.disabled = false;
-        input.focus();
+        // Draw the section again as it now stands, keeping what was typed.
+        renderSettings();
+        const again = document.getElementById('sync-code');
+        if (again) { again.value = typed; again.focus(); }
       });
       return;
     }
