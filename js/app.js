@@ -4032,7 +4032,7 @@
 
   // Hunts, favorites, compare and display settings can follow you to another device (js/sync.js).
   // Only the hosted site has the storage for it. In the desktop app, a local copy or anywhere
-  // else, sync stays off and out of Settings.
+  // else, nothing answers the sync route, so sync stays off and out of Settings.
   const SYNC = { available: false };
   const typing = () => !!(document.activeElement && document.activeElement.matches('input, select, textarea'));
   function syncStatusText() {
@@ -4072,7 +4072,9 @@
     toast(e.message);
     if (view.name === 'settings' && !typing()) renderSettings();
   }
-  const canSync = window.Sync && !window.gridlineDesktop && /^https?:$/.test(location.protocol) && window.crypto && window.crypto.subtle;
+  // The hosted site also sets gridlineDesktop (for its built-in keys), so that is no sign of the
+  // desktop app. What decides is whether this origin answers the sync route (startSync asks).
+  const canSync = window.Sync && /^https?:$/.test(location.protocol) && window.crypto && window.crypto.subtle;
   if (canSync) {
     syncEngine = Sync.createEngine({
       fetch: (url, init) => fetch(url, init),
