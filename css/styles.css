@@ -923,11 +923,17 @@ section.cat { scroll-margin-top: 108px; }
 .key-row { align-items: flex-start; }
 .key-form { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .key-form input { border: 1px solid var(--border); background: var(--surface); border-radius: 9px; padding: 7px 10px; font-family: var(--mono); min-width: 220px; }
+.key-form .code-input { min-width: 34ch; text-transform: uppercase; }
+.key-form .code-input::placeholder { text-transform: none; }
+.sync-code, .sync-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.sync-code code { font-family: var(--mono); font-weight: 600; letter-spacing: .04em; user-select: all; white-space: nowrap; }
+.sync-actions { flex-shrink: 0; }
 .spend { text-align: right; font-size: .86rem; color: var(--text-2); white-space: nowrap; }
 .disclaimer #data-attribution { display: block; margin-bottom: 4px; }
 @media (max-width: 600px) {
   .key-form { justify-content: stretch; }
-  .key-form input { min-width: 0; flex: 1; }
+  .key-form input, .key-form .code-input { min-width: 0; flex: 1; }
+  .sync-code, .sync-actions { justify-content: flex-start; }
   .spend { text-align: left; }
   .mode-pill { display: none; }
 }
