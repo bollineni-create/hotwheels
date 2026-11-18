@@ -106,6 +106,7 @@
 
 
   const STORE_KEY = 'gridline:v1';
+  let syncEngine = null; // set further down, once the pages it refreshes exist
   const store = (() => {
     let s = { saved: [], favs: {}, compare: [], recent: [], theme: null, prefs: {} };
     try { s = Object.assign(s, JSON.parse(localStorage.getItem(STORE_KEY)) || {}); } catch (e) { /* private mode */ }
@@ -124,6 +125,7 @@
         fn(s);
         try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
         updateNavCounts();
+        if (syncEngine) syncEngine.changed();
       },
     };
   })();
@@ -3568,7 +3570,7 @@
       <h2 class="sec-title">Favorites</h2>
       ${favs.length ? `<div class="listing-grid">${favs.map((l) => listingCard(l)).join('')}</div>` : '<p class="muted">Tap the heart on any car to keep it here.</p>'}
       ${recent.length ? `<h2 class="sec-title">Recently viewed</h2><div class="listing-grid compact">${recent.map((l) => listingCard(l)).join('')}</div>` : ''}
-      <p class="muted small">Everything on this page is stored only on this device.</p>
+      <p class="muted small">${syncEngine && syncEngine.status().on ? 'Hunts and favorites sync to your other devices. Recently viewed stays on this device.' : 'Everything on this page is stored only on this device.'}</p>
     </section>`);
     window.scrollTo(0, 0);
   }
@@ -3638,6 +3640,7 @@
         <div class="set-row"><span><b>Saved data</b><small>${plural(store.get().saved.length, 'hunt')}, ${plural(Object.keys(store.get().favs).length, 'favorite')}, ${plural(store.get().compare.length, 'car')} in compare.</small></span>
           <button class="btn ghost" type="button" data-action="clear-data">Clear everything</button></div>
       </div>
+      ${syncSettingsHtml()}
     </section>`);
     window.scrollTo(0, 0);
   }
@@ -3848,8 +3851,21 @@
       applyModeUi();
       renderSettings();
       toast('API key removed');
+    } else if (a === 'sync-on') {
+      el.disabled = true;
+      syncEngine.create().then(() => { toast('Sync is on'); renderSettings(); }, (err) => { toast(err.message); renderSettings(); });
+    } else if (a === 'sync-now') {
+      syncEngine.sync().catch(onSyncProblem);
+    } else if (a === 'sync-off') {
+      syncEngine.leave().then(() => { toast('Sync is off on this device'); renderSettings(); });
+    } else if (a === 'sync-erase') {
+      askText('Type ERASE to delete the synced copy', '', 'Erase').then((v) => {
+        if (v !== 'ERASE') return;
+        syncEngine.erase().then(() => { toast('Synced copy erased'); renderSettings(); }, (err) => toast(err.message));
+      });
     } else if (a === 'clear-data') {
-      askText('Type CLEAR to delete hunts, favorites, compare and history', '', 'Delete').then((v) => {
+      const everywhere = syncEngine && syncEngine.status().on ? ', here and on your synced devices' : '';
+      askText(`Type CLEAR to delete hunts, favorites, compare and history${everywhere}`, '', 'Delete').then((v) => {
         if (v !== 'CLEAR') return;
         store.update((s) => { s.saved = []; s.favs = {}; s.compare = []; s.recent = []; });
         toast('Saved data cleared');
@@ -3872,6 +3888,18 @@
       if (!setHomeZip(raw)) return;
       if (zipForm === 'settings') renderSettings();
       else renderHome('local');
+      return;
+    }
+    if (e.target.dataset && 'syncForm' in e.target.dataset) {
+      e.preventDefault();
+      const input = e.target.querySelector('input');
+      const button = e.target.querySelector('button');
+      button.disabled = true;
+      syncEngine.join(input.value).then(() => { toast('This device is syncing'); renderSettings(); }, (err) => {
+        toast(err.message);
+        button.disabled = false;
+        input.focus();
+      });
       return;
     }
     const prov = e.target.dataset && e.target.dataset.provider;
@@ -4000,6 +4028,86 @@
     }
   });
 
+  /* ---------- Sync across devices ---------- */
+
+  // Hunts, favorites, compare and display settings can follow you to another device (js/sync.js).
+  // Only the hosted site has the storage for it. In the desktop app, a local copy or anywhere
+  // else, sync stays off and out of Settings.
+  const SYNC = { available: false };
+  const typing = () => !!(document.activeElement && document.activeElement.matches('input, select, textarea'));
+  function syncStatusText() {
+    const st = syncEngine.status();
+    if (st.phase === 'syncing') return 'Syncing…';
+    if (st.phase === 'error') return `<span class="bad">${esc(st.problem.message)}</span>`;
+    return st.syncedAt ? `Up to date. Last synced ${sinceText(st.syncedAt)}.` : 'Up to date.';
+  }
+  function syncSettingsHtml() {
+    if (!syncEngine || !SYNC.available) return '';
+    const st = syncEngine.status();
+    if (!st.on) return `<h2 class="sec-title">Sync</h2>
+      <div class="card settings">
+        <div class="set-row"><span><b>Sync across devices</b><small>Keeps your hunts, favorites, compare list and display settings the same on every device. There is no account: this device gets a sync code, and you enter it on the others. Your saves are encrypted with the code before they leave this device.</small></span>
+          <button class="btn primary" type="button" data-action="sync-on">Turn on sync</button></div>
+        <div class="set-row key-row"><span><b>Have a sync code?</b><small>Enter the code shown in Settings on a device that already syncs. What is saved here is added to it.</small></span>
+          <form class="key-form" data-sync-form><input class="code-input" type="text" id="sync-code" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" aria-label="Sync code" required>
+            <button class="btn primary" type="submit">Connect</button></form></div>
+      </div>`;
+    return `<h2 class="sec-title">Sync</h2>
+      <div class="card settings">
+        <div class="set-row"><span><b>Sync is on</b><small id="sync-status">${syncStatusText()}</small></span>
+          <button class="btn ghost" type="button" data-action="sync-now">Sync now</button></div>
+        <div class="set-row key-row"><span><b>Your sync code</b><small>Enter it in Settings on another device to sync that one too. Anyone with this code can read and change these saves, so keep it private. Recently viewed cars, the data source and API keys stay on each device.</small></span>
+          <div class="sync-code"><code>${esc(st.code)}</code><button class="btn ghost" type="button" data-action="copy" data-text="${esc(st.code)}">Copy</button></div></div>
+        <div class="set-row"><span><b>Stop syncing</b><small>Turning it off keeps everything on this device and on the others. Erasing also deletes the synced copy, which stops sync on your other devices; each keeps what it has.</small></span>
+          <div class="sync-actions"><button class="btn ghost" type="button" data-action="sync-off">Turn off here</button><button class="btn ghost" type="button" data-action="sync-erase">Erase synced copy</button></div></div>
+      </div>`;
+  }
+  // Another device's changes just arrived: show them, unless that would interrupt typing or reading.
+  function afterSyncApplied() {
+    applyTheme(store.get().theme);
+    if (['home', 'saved', 'compare', 'hunt', 'settings'].includes(view.name) && !typing()) route();
+  }
+  function onSyncProblem(e) {
+    if (!e || e.reason !== 'erased') return;
+    toast(e.message);
+    if (view.name === 'settings' && !typing()) renderSettings();
+  }
+  const canSync = window.Sync && !window.gridlineDesktop && /^https?:$/.test(location.protocol) && window.crypto && window.crypto.subtle;
+  if (canSync) {
+    syncEngine = Sync.createEngine({
+      fetch: (url, init) => fetch(url, init),
+      storage: {
+        get: () => localStorage.getItem('gridline:sync'),
+        set: (v) => localStorage.setItem('gridline:sync', v),
+        remove: () => localStorage.removeItem('gridline:sync'),
+      },
+      url: '/sync/api/gridline',
+      state: () => store.get(),
+      commit: (fn) => { store.update(fn); afterSyncApplied(); },
+      makeHunt: () => newHunt(),
+      onStatus: () => { const el = document.getElementById('sync-status'); if (el) el.innerHTML = syncStatusText(); },
+    });
+  }
+  // Sync when Gridline opens, when its window comes back, and every few minutes while it is in view.
+  function startSync() {
+    if (!syncEngine) return;
+    let last = 0;
+    const go = () => {
+      if (document.hidden || !syncEngine.status().on || Date.now() - last < 30000) return;
+      last = Date.now();
+      syncEngine.sync().catch(onSyncProblem);
+    };
+    SYNC.available = syncEngine.status().on;
+    go();
+    syncEngine.available().then((ok) => {
+      SYNC.available = ok || syncEngine.status().on;
+      if (view.name === 'settings' && !typing()) renderSettings();
+    });
+    document.addEventListener('visibilitychange', go);
+    window.addEventListener('focus', go);
+    setInterval(go, 3 * 60000);
+  }
+
   /* ---------- Theme ---------- */
 
   function applyTheme(t) {
@@ -4056,6 +4164,7 @@
   updateNavCounts();
   window.addEventListener('hashchange', route);
   route();
+  startSync();
 
   // Hunts: check what's due shortly after opening, then every few minutes and
   // whenever the window comes back. The desktop apps also call gridlineHuntTick.
