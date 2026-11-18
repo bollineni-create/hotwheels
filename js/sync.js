@@ -147,35 +147,74 @@
     homeRadius: (v) => Number.isFinite(v) && v > 0 && v <= 5000,
     showDealer: (v) => typeof v === 'boolean',
     compact: (v) => typeof v === 'boolean',
-    valueSort: (v) => typeof v === 'string' && v.length < 40,
+    valueSort: (v) => typeof v === 'string' && /^[\w-]{1,40}$/.test(v),
     huntEvery: (v) => Number.isFinite(v) && v >= 0,
     theme: (v) => v === null || v === 'dark' || v === 'light',
   };
   const text = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max;
 
+  // What arrives through sync was written by whoever holds the code, which is not always the
+  // person at this device (someone can be talked into entering a stranger's code). Gridline puts
+  // listing fields into its pages, so nothing synced may be able to act as markup: ids are plain
+  // tokens, and in every other string the characters that open a tag or close an attribute are
+  // swapped for look-alikes.
+  const ID_OK = (id) => typeof id === 'string' && /^[\w.:-]{1,80}$/.test(id);
+  const LOOKALIKE = { '<': '‹', '>': '›', '"': '″', '`': '′' };
+  const plainText = (v) => v.replace(/[<>"`]/g, (ch) => LOOKALIKE[ch]);
+  const SCRIPT_URL = /^\s*(javascript|data|vbscript)\s*:/i;
+  // A copy of a synced car holding only plain values, or null if it can't be made safe.
+  function cleanCar(car, id) {
+    let budget = 3000;
+    const copy = (v, depth) => {
+      if (--budget < 0 || depth > 6) throw new Error('too much');
+      if (v === null || typeof v === 'boolean') return v;
+      if (typeof v === 'number') { if (!Number.isFinite(v)) throw new Error('number'); return v; }
+      if (typeof v === 'string') {
+        if (v.length > 2000 || SCRIPT_URL.test(v)) throw new Error('string');
+        return plainText(v);
+      }
+      if (Array.isArray(v)) return v.map((x) => copy(x, depth + 1));
+      if (typeof v !== 'object') throw new Error('type');
+      const out = {};
+      for (const [k, x] of Object.entries(v)) {
+        if (k.length > 80 || k === '__proto__' || k === 'constructor' || k === 'prototype') throw new Error('key');
+        out[plainText(k)] = copy(x, depth + 1);
+      }
+      return out;
+    };
+    try {
+      if (!car || typeof car !== 'object' || Array.isArray(car) || car.id !== id || !ID_OK(id)) return null;
+      const out = copy(car, 0);
+      // These two become part of a class name and an address.
+      if ('condition' in out && !/^[A-Za-z][A-Za-z -]{0,30}$/.test(out.condition)) return null;
+      if ('vin' in out && out.vin !== null && !/^[A-Za-z0-9*?_.-]{0,20}$/.test(out.vin)) return null;
+      return out;
+    } catch (e) { return null; }
+  }
+
   // Makes Gridline's saved state match the document. `makeHunt` builds a new hunt's own findings.
   // Anything in the document that isn't the shape Gridline saves is left out.
   function apply(doc, s, makeHunt) {
     s.favs = {};
-    for (const id of kept(doc.favs)) if (Number.isFinite(doc.favs[id].p)) s.favs[id] = doc.favs[id].p;
+    for (const id of kept(doc.favs)) if (ID_OK(id) && Number.isFinite(doc.favs[id].p)) s.favs[id] = doc.favs[id].p;
     const want = {};
     for (const id of kept(doc.hunts)) {
       const h = doc.hunts[id].h;
-      if (h && text(h.name, 200) && typeof h.params === 'string' && h.params.length <= 4000) want[id] = h;
+      if (ID_OK(id) && h && text(h.name, 200) && typeof h.params === 'string' && h.params.length <= 4000 && !/[<>"`\s]/.test(h.params)) want[id] = h;
     }
     s.saved = (s.saved || []).filter((x) => want[x.id]);
     for (const x of s.saved) {
       const h = want[x.id];
-      x.name = h.name;
+      x.name = plainText(h.name);
       if (!x.hunt) x.hunt = Object.assign(makeHunt(), { watch: false });
       x.hunt.watch = !!h.watch;
       delete want[x.id];
     }
     for (const [id, h] of Object.entries(want)) {
-      s.saved.push({ id, name: h.name, params: h.params, count: Number.isFinite(h.count) ? h.count : null, createdAt: Number(h.createdAt) || 0, hunt: Object.assign(makeHunt(), { watch: !!h.watch }) });
+      s.saved.push({ id, name: plainText(h.name), params: h.params, count: Number.isFinite(h.count) ? h.count : null, createdAt: Number(h.createdAt) || 0, hunt: Object.assign(makeHunt(), { watch: !!h.watch }) });
     }
     s.saved.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    s.compare = doc.compare.ids.filter((id) => typeof id === 'string').slice(0, 4);
+    s.compare = doc.compare.ids.filter(ID_OK).slice(0, 4);
     for (const k of PREF_KEYS) {
       const e = doc.prefs[k];
       if (!e || !PREF_OK[k](e.v)) continue;
@@ -185,8 +224,9 @@
     if (!s.prefs.homeZip) s.prefs.homeCity = null;
     s.liveCars = s.liveCars || {};
     for (const id of carIds(doc)) {
-      const car = doc.cars[id];
-      if (car && typeof car === 'object' && car.id === id && !s.liveCars[id]) s.liveCars[id] = car;
+      if (s.liveCars[id] || !doc.cars[id]) continue;
+      const car = cleanCar(doc.cars[id], id);
+      if (car) s.liveCars[id] = car;
     }
   }
 
@@ -383,7 +423,7 @@
     };
   }
 
-  const api = { newCode, normalizeCode, formatCode, derive, seal, open, snapshot, stamp, merge, apply, same, emptyDoc, createEngine, PREF_KEYS, MESSAGES };
+  const api = { newCode, normalizeCode, formatCode, derive, seal, open, snapshot, stamp, merge, apply, cleanCar, same, emptyDoc, createEngine, PREF_KEYS, MESSAGES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Sync = api;
 })(typeof window !== 'undefined' ? window : globalThis);

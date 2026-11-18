@@ -255,3 +255,60 @@ test('only saves in the shape Gridline keeps are applied', () => {
   assert.equal(s.prefs.compact, false);
   assert.deepEqual(s.liveCars, { b: { id: 'b' } });
 });
+
+test('nothing that arrives through sync can act as markup in Gridline’s pages', () => {
+  const s = blank();
+  const car = (over) => Object.assign({ id: 'c1', live: true, make: 'Mazda', condition: 'Used', vin: 'JM1NDAD75K0300000', price: 21000, options: ['19" wheels'], dealer: { name: 'Bob\'s Auto & Truck' }, photos: ['https://img.example/a.jpg'] }, over);
+  assert.deepEqual(Sync.cleanCar(car({}), 'c1').options, ['19″ wheels']);
+  assert.equal(Sync.cleanCar(car({}), 'c1').dealer.name, 'Bob\'s Auto & Truck');
+  assert.equal(Sync.cleanCar(car({ trim: '<img src=x onerror=alert(1)>' }), 'c1').trim, '‹img src=x onerror=alert(1)›');
+  for (const bad of [
+    car({ condition: 'x" onmouseover="alert(1)' }),
+    car({ condition: 'Used"><script>' }),
+    car({ vin: '"><svg onload=alert(1)>' }),
+    car({ photos: ['javascript:alert(1)'] }),
+    car({ url: ' JaVaScript :alert(1)' }),
+    car({ __proto__: null, constructor: 1 }),
+    car({ price: Infinity }),
+    car({ deep: { a: { b: { c: { d: { e: { f: { g: 1 } } } } } } } }),
+    car({ big: 'x'.repeat(2001) }),
+    car({ id: 'other' }),
+    ['c1'],
+    null,
+  ]) assert.equal(Sync.cleanCar(bad, 'c1'), null);
+  assert.equal(Sync.cleanCar(Object.assign(car({}), { id: 'a"b' }), 'a"b'), null);
+  assert.deepEqual(Object.keys(Sync.cleanCar(car({ 'Cold "Weather" Pkg': true }), 'c1')).pop(), 'Cold ″Weather″ Pkg');
+
+  const doc = Object.assign(Sync.emptyDoc(), {
+    favs: { c1: { p: 1, t: 1 }, 'x"><script>alert(1)</script>': { p: 1, t: 1 }, c2: { p: 2, t: 1 } },
+    hunts: {
+      ok: { h: { name: 'Miata <b>RF</b>', params: 'q=miata', createdAt: 1, watch: true }, t: 1 },
+      'h"1': { h: { name: 'x', params: 'q=1', createdAt: 1 }, t: 1 },
+      inj: { h: { name: 'x', params: 'q=1"><script>', createdAt: 1 }, t: 1 },
+    },
+    compare: { ids: ['c1', 'a"b', 'c2'], t: 1 },
+    prefs: { valueSort: { v: 'count"><x', t: 1 } },
+    cars: { c1: car({ trim: 'Club "Brembo"' }), c2: Object.assign(car({ condition: 'Used" x="' }), { id: 'c2' }) },
+  });
+  Sync.apply(doc, s, makeHunt);
+  assert.deepEqual(Object.keys(s.favs), ['c1', 'c2']);
+  assert.deepEqual(s.saved.map((h) => [h.id, h.name]), [['ok', 'Miata ‹b›RF‹/b›']]);
+  assert.deepEqual(s.compare, ['c1', 'c2']);
+  assert.equal(s.prefs.valueSort, 'count');
+  assert.deepEqual(Object.keys(s.liveCars), ['c1'], 'a car that can’t be made safe is left out');
+  assert.equal(s.liveCars.c1.trim, 'Club ″Brembo″');
+});
+
+test('a real live listing passes through sync unchanged', () => {
+  const Live = require('../js/live.js');
+  const l = Live.normalize({
+    id: 'abc', vin: '5TFAB5DB1MX123456', year: 2021, make: 'Toyota', model: 'Tundra', trim: 'SR5', body_type: 'Pickup Truck', drivetrain: '4WD',
+    fuel_type: 'Gas only', base_exterior_color: 'Red', exterior_color: 'Barcelona Red', msrp: 45000, discount_from_msrp: -0.1, price: 40500, miles: 30000,
+    days_on_market: 20, status: 'active', availability_status: 'transit', inventory_type: 'certified', dealer_name: 'Denver Toyota', dealer_type: 'franchise',
+    city: 'Denver', state: 'CO', latitude: 39.7, longitude: -105, photo_urls: ['https://x/1.jpg'], features: ['heated_seats'], upfitters: ['rocky_ridge'],
+    price_history: [{ changed_at: '2026-11-01 00:00:00.000', price_before: 41500, price_after: 40500 }],
+  });
+  // What Gridline remembers of a live car, as it comes back out of the synced document.
+  const remembered = JSON.parse(JSON.stringify(Object.assign({}, l, { photos: (l.photos || []).slice(0, 1), history: l.history.slice(-6), livePricing: null })));
+  assert.deepEqual(Sync.cleanCar(remembered, 'abc'), remembered);
+});
