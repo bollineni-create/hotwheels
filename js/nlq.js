@@ -111,6 +111,15 @@
       }
     }
 
+    // Location by ZIP code, before anything numeric: "near 94022", "within 50 miles of 94022"
+    const zipRadius = (m) => { f.near = m[2]; f.radius = +m[1]; understood.push(`within ${m[1]} mi of ${m[2]}`); };
+    if ((m = take(/\bwithin\s+(\d{1,4})\s*(?:mi|miles)\s+(?:of|from|around)\s+(\d{5})(?:-\d{4})?\b/))) zipRadius(m);
+    else if ((m = take(/\b(\d{1,4})\s*(?:mi|miles)\s+(?:of|from|around)\s+(\d{5})(?:-\d{4})?\b/))) zipRadius(m);
+    else if ((m = take(/\b(?:near|around|close to|in|by|from|at)\s+(\d{5})(?:-\d{4})?\b/))) {
+      f.near = m[1];
+      understood.push(`near ${m[1]}`);
+    }
+
     // Mileage before price so "under 50k miles" isn't read as a price.
     if ((m = take(/\b(?:under|below|less than|fewer than|<|max|up to)\s*([\d,.]+)\s*(k)?\s*(?:miles|mi)\b/))) {
       f.milesMax = money(m[1], m[2]);
@@ -133,6 +142,12 @@
       understood.push(`over $${f.priceMin.toLocaleString('en-US')}`);
     }
 
+    // A bare 5-digit number left after prices and mileage is a ZIP code: "suv under 40k 30303"
+    if (!f.near && (m = take(/(?:^|\s)(\d{5})(?:-\d{4})?(?=\s|$)/))) {
+      f.near = m[1];
+      understood.push(`near ${m[1]}`);
+    }
+
     // Years: "2022", "2020+", "2019-2021", "2020 or newer"
     const cy = vocab.currentYear + 1;
     const span = (a, b) => { for (let y = a; y <= b; y++) (f.year = f.year || []).push(String(y)); };
@@ -146,9 +161,16 @@
       add('year', m[1]);
     }
 
-    // Location: "near denver", "in texas", "in tx"
+    // Location: "near denver", "within 100 miles of denver", "in texas", "in tx"
     for (const c of vocab.cities) {
+      if (f.near) break;
       const city = c.split(',')[0].toLowerCase();
+      if ((m = take(new RegExp(`\\bwithin\\s+(\\d{1,4})\\s*(?:mi|miles)\\s+(?:of|from|around)\\s+${rx(city)}\\b`)))) {
+        f.near = c;
+        f.radius = +m[1];
+        understood.push(`within ${m[1]} mi of ${c}`);
+        break;
+      }
       if ((m = take(new RegExp(`\\b(?:near|around|close to|in)\\s+${rx(city)}\\b`)))) {
         f.near = c;
         understood.push(`near ${c}`);

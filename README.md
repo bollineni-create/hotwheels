@@ -2,76 +2,53 @@
 
 <h1 align="center">Gridline</h1>
 
-<p align="center"><b>See the whole car market, not just pages of listings.</b><br>
-Search every car for sale, see what each one should cost and why, and get told the moment the car you're hunting for shows up or drops its price.</p>
+<p align="center"><b>Type your ZIP code. See the best car deals around you, and the ones worth the drive.</b><br>
+A local, dependency-free car search and market-insights site, modeled on <a href="https://visor.vin">visor.vin</a> and extended past it. It runs as a desktop app (Electron) or as a plain website: HTML, CSS and JavaScript with no build step.</p>
 
-<p align="center"><b><a href="https://bollineni-create.github.io/hotwheels/">Open Gridline in your browser</a></b> · <a href="#the-mac-app">Get the Mac app</a></p>
+<p align="center"><b><a href="https://bollineni-create.github.io/hotwheels/">Open Gridline in your browser</a></b> · <a href="#install-it-on-a-mac-simplest">Get the Mac app</a></p>
 
-![Gridline's home page](docs/screenshot-home.jpg)
+![Gridline's home page: a search box, a ZIP code box and what the market is doing this week](docs/screenshot-home.jpg)
 
 ## What it does
 
-- **Search the way you talk.** "Manual Miata under $30k", "4x4 trucks under 50k miles near Denver" or "white Lexus GX with brown interior". Every filter shows how many cars you'd get by picking it, and every search is a link you can share or bookmark.
-- **A fair price for every car.** Gridline learns what each model is worth for its age, mileage, transmission and paint, then shows every car's dollar gap to that price, with the working shown. No unexplained "great deal" badges.
-- **The whole market at a glance.** Each search plots price against miles and maps where the cars are. Pick one model to see prices by year, the trim mix, how fast they sell and how many have had price cuts.
-- **Hunts.** Press **🎯 Hunt this** on any search and Gridline keeps watching it. You get a notification when a new match is listed or one drops its price, and a page showing what changed since you last looked and how rare the car really is.
-- **Everything about one car.** Its full price history, how it compares with similar cars, a pricing breakdown to the out-the-door total, a payment calculator, a VIN decode, the window sticker and build sheet, earlier listings of the same VIN, and NHTSA recalls and complaints.
-- **What the market's doing.** Weekly cards worked out from the data itself: new models arriving, the biggest price moves, which cars hold their value, this week's price cuts and where cars cost less.
-- **Deal Check and Compare.** Put in a dealer's numbers (add-ons, fees, trade-in, APR) and see the real total against the market, or line up four cars side by side with the best of each row highlighted.
-- **Free real listings.** Connect a free [auto.dev](https://auto.dev/pricing) key for cars for sale from US dealers right now, or a [Visor](https://visor.vin/account/api) key for sold cars and history too. Without a key it runs on a realistic demo market.
-- **Private.** Hunts, favorites, keys and recently viewed stay on your device and are never sent anywhere.
+- **Starts from where you are.** Type a ZIP code and the home page becomes your market: the best deals near you, the cars worth the drive, what your area charges against the rest of the country, and this week's price cuts.
+- **Search the way you talk.** "Manual Miata under $30k", "4x4 trucks near 94022" or "red convertibles under 40k with leather seats". Every filter shows how many cars you'd get by picking it, and every search is a link you can share or bookmark.
+- **A fair price for every car.** Gridline works out what each model is worth for its age, mileage, transmission and paint, then shows every car's dollar gap to that price, with the working shown.
+- **The whole result on a chart.** Each search plots price against miles and maps where the cars are. Pick one model to see prices by year, the trim mix, how fast they sell and how many have had price cuts.
+- **Hunts.** Press **🎯 Hunt this** on any search and Gridline keeps watching it. It tells you when a new match is listed or one drops its price, what changed since you last looked, and how rare the car really is.
+- **Everything about one car.** Its price history, the price against the market, a breakdown to the out-the-door total, a payment calculator, a VIN decode, the window sticker and build sheet, and how rare its color and options are.
+- **What the market's doing.** Cards worked out from the data itself: which cars hold their value, rare specs, cars with far fewer miles than their age implies, and a map of where cars are priced below market.
+- **Compare.** Line up four cars side by side, with the best value in each row highlighted.
+- **Real listings, free.** Connect a free [auto.dev](https://auto.dev/pricing) key or a [Visor](https://visor.vin/account/api) key for cars for sale right now. Without a key it runs on a realistic demo market, which is what these screenshots show.
+- **Private.** Your ZIP code, hunts, favorites and keys stay on your device.
 
-![Searching for a Toyota Tacoma](docs/screenshot-search.jpg)
+![Searching for a Toyota Tacoma: price against miles, and where the trucks are](docs/screenshot-search.jpg)
 
-![A listing with its price against the market and the out-the-door breakdown](docs/screenshot-car.jpg)
+![One listing: its price against the market, its price history and the out-the-door breakdown](docs/screenshot-car.jpg)
 
-## The Mac app
+## Install it on a Mac (simplest)
 
-Paste this into Terminal. It downloads Gridline to `~/hotwheels`, builds the app, puts it in **Applications** and opens it. If your Mac doesn't have Apple's command-line tools yet, it offers to install them first.
+Paste this into Terminal. It downloads Gridline to `~/hotwheels`, builds a small native app, puts it in Applications and opens it (and offers to install Apple's command-line tools first if you don't have them):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bollineni-create/hotwheels/main/app/macos/install.sh | zsh
 ```
 
-The first time, it asks for your Visor and auto.dev keys so you get real listings (Visor is used when both are given). Press Enter to skip either; with neither, it uses the demo listings. To build the keys in without being asked, put them in front of `zsh`: `... | VISOR_KEY=your_visor_key AUTODEV_KEY=your_autodev_key zsh`. Keys are saved in `electron/keys.local.json`, which git ignores, so they never get uploaded.
+To build your API keys in at the same time, put them in front of `zsh`: `... | VISOR_KEY=your_visor_key AUTODEV_KEY=your_autodev_key zsh`. Running the same line again updates and reinstalls.
 
-After that, open Gridline from Applications, Launchpad, Spotlight or the Dock like any other app.
+The first time, it asks for your Visor and auto.dev keys so you get real listings (Visor is used when both are given). Press Enter to skip either; with neither, it uses the demo listings. The key is saved in `electron/keys.local.json`, which git ignores, so it never gets uploaded.
 
-**It updates itself.** Each time you open or switch to it, and every 15 minutes while it's open, it pulls the latest `main` from GitHub into `~/hotwheels`, and page changes show up in the open window within a second. If an update changed the Mac app itself (`app/macos/`), Gridline rebuilds, reinstalls and reopens itself. Edits you make in `~/hotwheels` show up right away too, which makes it a handy live preview while you work on the site. If the folder moves, it falls back to the copy built into the app. Running the install line again also updates and reinstalls.
+After that, open Gridline from Launchpad, Spotlight or the Dock like any other app. It keeps itself up to date: each time you open or switch to it, and every 15 minutes while it's open, it pulls the latest version of the `main` branch from GitHub into `~/hotwheels`. Changes to the pages show up in the open window within a second. If the update changed the Mac app itself (`app/macos/`), Gridline rebuilds, reinstalls and reopens itself. Edits you make to the HTML, CSS or JS in `~/hotwheels` also show up right away. If the folder moves, the app falls back to the copy built into it.
 
-The red close button hides the window rather than quitting, so hunts keep watching; click the Dock icon to bring it back, or quit with `⌘Q`. The build is ad-hoc signed, so on another Mac you'll need to right-click it and choose **Open** the first time.
+### Give it to family: a DMG with your keys built in
 
-To rebuild by hand from a clone: `./app/macos/build.sh` (or `--no-install` to build into `build/` only).
+To hand someone a finished app with your API keys already inside, so they never see a Terminal or a key: open the repository on GitHub, go to **Settings → Secrets and variables → Actions** and add `VISOR_KEY` and/or `AUTODEV_KEY`. Then open the **Actions** tab, choose **Build Mac DMG** and press **Run workflow**. A few minutes later, download the `Gridline-mac-dmg` artifact from the run and send the `.dmg` inside it (AirDrop, Messages, a shared drive). They open it, drag Gridline to Applications, and the first time they right-click the app and choose **Open** because it is unsigned. The build works on both Intel and Apple-silicon Macs.
 
-### Keyboard
+Only people with access to this repository can download the artifact, so the keys stay private, but anyone who has the `.dmg` can use the keys inside it: share it only with people you trust. Like the one-line installer, this copy keeps itself up to date: it shows the pages from the public site, which GitHub Pages rebuilds from `main` within a minute or two of every merge, so your changes reach it the next time it is opened or switched to, or within 15 minutes while it is open. The keys built into it stay as they are. Without internet it shows the copy of the pages built into it. Only a change to the desktop shell itself (the `electron/` folder) needs a new `.dmg`.
 
-| Key | Does |
-| --- | --- |
-| `/` | Search (or the filter search, on the search page) |
-| `⌘F` or `⌘K` | Search (desktop apps) |
-| `⌘N` | New search |
-| `⌘1` to `⌘5` | Home, Search, Insights, Saved & Hunts, Compare |
-| `⌘[` `⌘]` | Back and forward |
-| `⌘,` | Settings (Mac app) |
-| `↑` `↓` `Enter` | Move through and pick search suggestions |
-| `⌘Enter` | In the filter search: add the filter and keep searching |
+## Run it as an Electron app
 
-On Windows and Linux, use `Ctrl` in place of `⌘`.
-
-## Run it
-
-It's a static site with no build step: HTML, CSS and plain JavaScript. It needs [Node.js](https://nodejs.org) 18 or newer only for the local server, the tests and the Electron app.
-
-```bash
-git clone https://github.com/bollineni-create/hotwheels.git
-cd hotwheels
-npm start          # http://localhost:8080; the local server also relays live-data requests
-npm test           # node's built-in test runner
-```
-
-**On the web.** The public site at https://bollineni-create.github.io/hotwheels/ is served by GitHub Pages from the root of `main`, so it updates on its own within a minute or two of every merge. Before committing changes to the JS or CSS, run `./tools/stamp-version.sh`: it stamps a fresh `?v=` on the page's script and stylesheet links, so visitors get the new files instead of a cached mix of old and new.
-
-**As an Electron app** (Mac, Windows or Linux):
+Requires [Node.js](https://nodejs.org) 18 or newer.
 
 ```bash
 npm install        # one time: downloads Electron and the packager
@@ -86,9 +63,50 @@ To build an installer you can double-click, run this on the OS you're targeting:
 | `npm run dist:win` | `Gridline Setup 1.0.0.exe` |
 | `npm run dist:linux` | `Gridline-1.0.0.AppImage` and `gridline_1.0.0_amd64.deb` |
 
-The builds are unsigned. The first time you open one, macOS asks you to confirm it (right-click → Open) and Windows SmartScreen asks you to choose "Run anyway". The desktop apps remember the window's size and position, open external links in your browser, and show native notifications for hunts.
+The builds are unsigned. The first time you open the app, macOS asks you to confirm it (right-click → Open) and Windows SmartScreen asks you to choose "Run anyway". Packaged builds show the pages from the public site (set `GRIDLINE_LIVE_URL` to point them elsewhere, or to an empty string to use only the bundled files); `npm run app` shows your local files.
 
-## Hunts
+The desktop app adds a native menu with shortcuts: `⌘/Ctrl+F` or `⌘/Ctrl+K` to search, `⌘/Ctrl+N` for a new search, `⌘/Ctrl+1`–`5` to switch between Home, Search, Insights, Saved & Hunts and Compare, and Back/Forward. On a Mac, the red close button hides the window rather than quitting, so hunts keep watching; click the Dock icon to bring it back, or quit with `⌘Q`. It remembers the window's size and position, and external links open in your browser. Hunts, favorites and the compare list persist between launches, and hunts show native notifications (see **Hunts** below).
+
+## Run it as a website
+
+```bash
+npm start          # local server on http://localhost:8080 (needed for live data in the browser)
+open http://localhost:8080
+npm test           # node's built-in test runner
+```
+
+The public site at https://bollineni-create.github.io/hotwheels/ is served by GitHub Pages from the root of `main`, so it updates on its own within a minute or two of every merge. Before committing changes to the JS or CSS, run `./tools/stamp-version.sh`: it stamps a fresh `?v=` on the page's script and stylesheet links, so visitors get the new files instead of a cached mix of old and new.
+
+## What carried over from the baseline
+
+| visor.vin homepage | Here |
+| --- | --- |
+| Hero with a search box for models, VINs and dealers | One search box at the top of the page, with typeahead across models, model + year, makes, dealers, cities, ZIP codes, saved searches and VINs and full keyboard support (`/` to focus, arrow keys, Enter). Under it, your market: a ZIP code (see **Your market** below) |
+| "What the market's doing" weekly cards | The same heading over a carousel of three panels. **National Trends** is four callout cards, each **computed from the inventory** rather than written by hand: 3-year residual value in a segment (one track per model, the value lost each year drawn from the left and the share still asked printed at the end), the trim that sells days faster than its sibling, scoped like Visor's "in Texas" to the state where the two are furthest apart when each sold there at least five times (a days-to-sell strip with both trims marked, the nationwide figures under it, and a map of that state county by county, each county that sold one colored by its pace against the state's, from real county outlines loaded only for this card; with no such state, the country, state by state), the make whose sales climbed most in a month (with a state map of the change), and new-model arrivals by status |
+| Pills next to the weekly heading (‹ Time Capsules, Rare Specs ›) | The same pills, in a ring: from National Trends, ‹ Time Capsules and Rare Specs ›; from Rare Specs, ‹ National Trends and Time Capsules ›. They turn the panel in place, and the next panel comes around on its own every nine seconds, a ring filling on its pill, until you pick one (not with reduced motion). The strip under the search box is a row of tabs: the three panels, then **Map**, **Your Market**, **The whole market**, **Rewind the market** and **Browse**. Only the tab you pick is on the page; the search box and the strip stay put while the section under them changes, and the address bar follows (`#/map`, `#/rewind`, …) so a tab can be reloaded or linked |
+| National market pages | **The whole market**: inventory over 90 days with the median price, a real map of the states where used cars sit below market (click a state to shop it), the biggest 30-day price move as a price-vs-miles scatter, the models selling fastest, this week's price cuts, and the cars priced lowest for what they are |
+| Time Capsules | Four cars with a small fraction of the miles their age implies (a 2019 Forester with 2,380 miles), found by comparing each used car's miles with about 12,000 a year, fewest for their age first. Each card: the car (four drawn views where Visor shows four photos: side, front, the interior in its own color, and a wheel against the paint), how many of the model are for sale, "3,062 miles in 10 years, 3% of the usual miles", and the same three rarity cells as a rare spec. **Rewind the market** keeps the other sense of a time capsule: 1 week, 1 month and 3 months ago, each the whole market frozen on that day, with cars for sale and median prices then vs. now, what sold, was listed and was cut since, the used models whose price moved most, and a link that runs any search as of that day |
+| Rare specs carousel | Four cars whose paint, interior or options are rare within their model: "1 of 5" paint and interior counts, and the options value against the model average, with the rare cells marked 💎 (7 or fewer and a tenth of the model, or options 50% over the average) |
+| "Search on a map, not just by zip code" (a feature block) | **On the map**, a section of the home page itself: every city with cars for sale as a dot sized by how many and colored by how the city prices against fair value (with a live source, cars for sale by state). Click a city or state to shop it, or open the search page straight into its map view, which `#/search?layout=map` also does |
+| "Built for buyers, not dealers" pitch | Removed |
+| Footer links for SEO (models, overviews, prices) | "Browse the market" grid with live counts and median prices, plus footer links into real searches |
+
+## Your market: the best deals around a ZIP code
+
+The home page starts from where you are. Type a ZIP code (or press **Near me** to use your location) and Gridline builds your market from it:
+
+- **Your market at a glance**: cars for sale within your radius, the median asking price, how many days cars sit, the share priced below fair value and this week's price cuts, each against the whole US. Switch the radius between 25, 50, 100 and 250 miles in place.
+- **Best deals near you**: the cars priced furthest below their fair value, ranked, with the saving on each card and how far away it is. Filter to used or new.
+- **Worth the drive**: cars beyond your radius but within 500 miles that still come out ahead once you subtract a round-trip fuel estimate (about 14¢ a mile) and the best deal on the same model near you. Each one shows the math.
+- **Where the cars are**: a map centered on you, with your radius and the 500-mile market around it; cities are sized by inventory and colored by how they price against fair value. Click one to search there.
+- **What your market charges**: median used asking price near you vs. nationwide, model by model, so you can see what's cheaper to buy at home and what's cheaper to bring in.
+- **Price cuts near you this week**, with a link to all of them.
+
+Your ZIP stays on this device. It also sets the distance shown on every listing, the **Distance from home** sort, the "Near me" shortcut in the search filters, and the radius used by the home page (**Settings → Display**). Searches understand ZIP codes too: *"4x4 trucks near 94022"*, *"within 50 miles of 80202 manual miata under 30k"*, or just a ZIP on its own.
+
+Every ZIP code works offline: `js/zipdata.js` (generated by `tools/build-zip-table.js` from GeoNames postal data, CC BY 4.0) has the center and main place of all 900-odd 3-digit ZIP areas. When online, the exact place for a 5-digit ZIP is fetched from the free [Zippopotam.us](https://api.zippopotam.us) service and remembered. With live data, the home page asks Visor or auto.dev for the newest listings within your radius and within 500 miles, and fair value is learned from those cars.
+
+## Hunts: find the car you want before someone else does
 
 Search for the exact car you want, then press **🎯 Hunt this**. Gridline keeps checking that search while it's open (in the background too) and tells you what changed:
 
@@ -98,31 +116,23 @@ Search for the exact car you want, then press **🎯 Hunt this**. Gridline keeps
 
 Watched hunts are checked every 6 hours by default; **Settings → Hunts** changes that to hourly, daily or by hand only, and pausing a hunt stops its checks. With live data, a check fetches only the newest page of matches in one request, so a car that isn't on that page is never reported as gone; Settings estimates how many of auto.dev's 1,000 free monthly requests your hunts use. The demo market never changes, so a new demo hunt starts from the market as it was a week ago, and its first check shows that week's new listings, cuts and sales.
 
-## Everything in it
+## What's new
+
+The baseline homepage only describes its search, filters, price history and alerts. This build implements them.
 
 - **Search with live facet counts.** Each filter option shows how many cars you'd get by picking it (standard faceting: a facet's own selection doesn't narrow its counts). Options with zero results are hidden. All filter state lives in the URL, so every search can be shared and bookmarked.
 - **Distance search.** Pick a city and a radius (25–1,000 mi) instead of a ZIP code. Uses great-circle distance.
-- **Transparent fair value.** Every car shows the dollar gap to its expected price, with the method explained (see **How fair value works** below). You can filter or sort by it.
-- **Spec premiums in fair value.** What a transmission or paint is worth within each model, so a manual Mustang isn't called overpriced next to the automatics. The listing page breaks the expected price into the base value and each premium.
+- **Transparent fair value.** For each make and model, a log-linear regression of retained value (price ÷ base MSRP) on age and mileage, trained on cars for sale and recently sold. Every car shows the dollar gap to its expected price, with the method explained, in place of an unexplained "great deal" badge. You can filter or sort by it.
+- **Spec premiums in fair value.** Within each model, Gridline also learns what a transmission or a paint is worth compared with the model's most common one, so a manual Mustang isn't called overpriced next to the automatics. A premium counts only when it's clear of normal price noise (2 standard errors for transmissions, 3 for paints, since many paints are tested at once), and it's shrunk toward zero by n ÷ (n + 10) so a few cars can't swing it. The listing page breaks the expected price into the base value and each premium, e.g. "Manual transmission +4.7% vs. Automatic, from 30 cars".
 - **Transmission filter.** Automatic, CVT or Manual, with live counts and exclude mode. Search understands "manual", "stick shift", "6-speed manual", "three pedals" and "no CVT".
-- **The whole result set on a chart.** A price-vs-miles scatter colored by market position (click a dot to open that car) and a state tile map of where the matches are (click a state to filter).
+- **The whole result set on a chart.** A price-vs-miles scatter colored by market position (click a dot to open that car) and a map of the United States, drawn from real state outlines, showing where the matches are (click a state to filter). The same outlines back every map on the site: `js/usmap.js` is generated by `tools/build-us-map.js` from the US Census TIGER state boundaries (via us-atlas, public domain), projected with Albers USA so Alaska and Hawaii sit inset at the bottom left. County outlines in the same projection (`js/uscounties.js`, from `tools/build-us-counties.js`) draw the home page's state-scoped trim card county by county, and load only when that card is on the page.
 - **Model overviews.** Pick a single model to see median price by model year, trim mix, days on market and the share of listings with price cuts.
 - **Listing pages.** A step chart and timeline of the full price history, a gauge of price vs. market, the car plotted against similar listings, color and option rarity, a payment calculator (down payment, APR, term, tax), a VIN decode, and similar cars.
 - **VIN decoder** (`#/vin/<VIN>`): validates the check digit, decodes model year, manufacturer (WMI), region, plant and serial, and explains typos (e.g. "VINs never contain I, O or Q").
 - **Compare** up to 4 cars side by side, with the best value in each row highlighted.
 - **Hunts, favorites and recently viewed.** Stored only on your machine, never sent anywhere.
 - **Dark mode** (follows the system, with a manual toggle), a responsive layout down to 375px with a slide-in filter drawer, a skip link, labeled controls, keyboard-operable map tiles, and support for `prefers-reduced-motion`.
-- **No hotlinked dealer photos.** Every car is drawn as an SVG side profile by body style, painted in its real exterior color.
-
-### What carried over from visor.vin
-
-| visor.vin homepage | Here |
-| --- | --- |
-| Hero with a search box for models, VINs and dealers | Typeahead search across models, model + year, makes, dealers, cities, saved searches and VINs, with full keyboard support (`/` to focus, arrow keys, Enter) |
-| "What the market's doing" weekly cards | Six cards, each **computed from the inventory** rather than written by hand: new-model arrivals by status, the biggest 30-day price move (price-vs-miles scatter, then vs. now), 4-year value retention, this week's price cuts, a state map of prices vs. market, and the cars priced lowest for what they are |
-| Rare specs carousel | Rarity scored per listing: paint and interior counts within the model, and options value vs. the model average |
-| "Built for buyers, not dealers" pitch | Kept. Every claim on the page is backed by a working feature |
-| Footer links for SEO (models, overviews, prices) | "Browse the market" grid with live counts and median prices, plus footer links into real searches |
+- **No hotlinked dealer photos.** Every car is drawn as an SVG side profile by body style, painted in its real exterior color; the home page's Rare Spec and Time Capsule cards get four views (side, front, interior, wheel) in place of a photo strip.
 
 ## Live data (real listings), free
 
@@ -147,11 +157,13 @@ Where live listings work:
 
 Keys are stored only on your device and are never written into the code or uploaded. Gridline names the data source on every live page, as the providers' terms require.
 
+With Visor connected, the carousel keeps all three panels. **Local Trends** (National Trends with no ZIP set) is the same four cards as the demo, computed from Visor for your market radius: residual value of used compact SUVs at 1, 2 and 3 years (average asking over average MSRP, one facets request per model year), the trim of a model that sells days faster than its sibling over 120 days of sales (its trims' median days to sell, with the state county by county from that model's sales and the nationwide figures under it), the make whose used sales climbed most in a month (sales in the last 30 days against the 30 before, with a state map of the change nationwide), and next model year's new arrivals by status with the newest four. A card about a place too small to say something moves up to your state and then the country, and says which; each card draws as soon as its own requests are in. **Rare Specs** starts from the 100 newest used listings in your market (one request), asks Visor how common each car's paint, interior family and factory packages are among its model year nationwide for the six model years with the most of them (one facets request each; cars of the same model year share it), and fetches the option prices of the four rarest (one request each), so a card reads "1 of 5 · Tanzanite Blue" and "$15,860 · 2 factory packages" over the car's own photos. **Time Capsules** is the lowest-mileage used cars five or more years old listed within your radius (one request), each with the same rarity cells (one facets request per car). **The whole market** draws the demo's six cards from Visor when you open its tab, nationwide: cars for sale every two weeks over 90 days from Visor's daily snapshots, a state map of what used cars up to six years old ask as a share of their MSRP against the country's, the used model whose price moved most in 30 days (today's listings against the snapshot 30 days ago, price against miles), the models selling fastest with days of supply, the biggest price cuts in the last week among used cars listed two to eight weeks ago, and the cars priced furthest below the value of the same trim, year and miles among the most-listed recent used models. On the free auto.dev plan, which has no colors, options or model counts, the carousel shows the trends alone. **Rewind the market** opens Visor's daily snapshots for your area, and **Your Market** and **Browse** stay. The home page takes about sixty small requests in all, and repeats within 30 minutes are free: replies are kept on the device for that long, so reopening the app or another tab within it draws the cards from the cache at once. A reply up to 6 hours old still draws its card at once, and is requested again in the background (after everything else) so the next visit is fresher; hunt checks always wait for a fresh reply. Visor computes metrics for one facet per request and allows a set number of requests per 10 seconds and per minute (its usage tiers: 10 and 60, 40 and 120, 200 and 600, or 500 and 3,000), so the live client queues requests and sends what's on screen first (only the open tab's cards are requested), keeps four in flight (eight or sixteen on the larger tiers), shares identical requests, learns the account's tier from the first reply's "requests left this minute" header or else the first "rate limit exceeded" reply (and remembers it for a week, so later loads stay under it instead of bursting into it), and waits the seconds Visor names before trying a refused request again. The carousel doesn't move on from a panel that is still computing.
+
 When a source can't provide something, Gridline hides that control instead of showing empty results. On the free auto.dev plan, sold history, past dates, installed options and upfitters, dealer fees, velocity and exclude filters are hidden, and auto.dev has no free-text search, so describe the car in the main search box instead.
 
 To develop without using real requests, run the stand-in APIs (`node test/mock-autodev.js`, key `ad_test_key`; `node test/mock-visor.js`, key `vis_test_key`) and start Gridline with `AUTODEV_API_BASE=http://127.0.0.1:8798 VISOR_API_BASE=http://127.0.0.1:8799 npm start`.
 
-### Visor Plus features, included
+## Visor Plus features, included
 
 Visor charges for these as "Visor Plus". Here they're all built in, with no account or paywall.
 
@@ -182,15 +194,15 @@ Visor charges for these as "Visor Plus". Here they're all built in, with no acco
 
 With a Visor API key, all of this runs on real listings; the free auto.dev source covers the subset described in **Live data** above. NHTSA recalls and owner complaints are included for every model year. Visor's own API/MCP server and email alerts are left out because they need a server; hunts cover alerts with notifications while Gridline is open.
 
-## The demo market
+## Data
 
-The site runs on `js/data.js`, a seeded generator that produces about 3,200 cars for sale and 7,000 sales from the last 120 days. The same seed always gives the same market, which keeps tests stable. The listings cover 33 models with real trims and approximate MSRPs, the makes' real paint names, realistic depreciation and mileage, regional price differences, options packages, new-car pipeline status (on lot, in transit, in production) and price-cut histories. Every VIN has a valid check digit and the correct model-year code.
+The site runs on `js/data.js`, a seeded generator that produces about 3,200 cars for sale and 7,000 sales from the last 120 days. The same seed always gives the same market, which keeps tests stable. About 3% of the cars five or more years old are time capsules, driven a few hundred to two thousand miles a year, drawn from a separate seeded stream so every other listing stays as it was. The listings cover 33 models with real trims and approximate MSRPs, the makes' real paint names, realistic depreciation and mileage, regional price differences, options packages, new-car pipeline status (on lot, in transit, in production) and price-cut histories. Every VIN has a valid check digit and the correct model-year code.
 
 The demo market also has transmissions: manuals on the trims that offered them (Miata, Civic Si and Type R, Mustang, Wrangler, Bronco, Tacoma), CVTs on the models and hybrids that use them, and a premium for used manuals.
 
 To use real data, have `generateInventory()` return listings with the same shape: `{ id, vin, year, make, model, trim, body, segment, condition, status, miles, price, msrp, msrpBase, options, extColor, extHex, intColor, transmission, dealer, city, state, lat, lng, daysListed, history: [{ daysAgo, price }] }`. Nothing else needs to change.
 
-## How it's put together
+## Layout
 
 ```
 index.html        shell: header, footer, script tags
@@ -200,27 +212,17 @@ assets/icons/     app icons (SVG source plus PNG sizes)
 css/styles.css    design tokens (light and dark), components, responsive rules
 js/vin.js         VIN validation and decoding (works in the browser and Node)
 js/data.js        seeded inventory generator
-js/market.js      search, facets, fair value and spec premiums, snapshots, velocity, leaderboard, Deal Check, hunt diffs (pure functions)
+js/market.js      search, facets, fair value and spec premiums, snapshots and rewind, rare specs and time capsules, velocity, make momentum, trim velocity, leaderboard, Deal Check, hunt diffs (pure functions)
 js/nlq.js         natural-language search and filter search
 js/live.js        listings API clients (auto.dev free, Visor paid): filter mapping, caching, usage tracking
 server.js         local server that also relays /api/<source>/* requests
 test/mock-*.js    stand-in auto.dev and Visor APIs for tests and development
-js/charts.js      SVG scatter, bars, tile map, price-history and car illustrations
+js/usmap.js       US state outlines (Albers USA projection) and the projection itself, generated by tools/build-us-map.js
+js/uscounties.js  US county outlines by state, same projection, generated by tools/build-us-counties.js; loaded only when a card draws one state by county
+js/charts.js      SVG scatter, bars, US maps (choropleth and dots), price-history and car illustrations
 js/app.js         hash router and views: home, search, car, compare, saved, hunts, VIN; hunt checks and notifications
 test/             node --test unit tests
 tools/stamp-version.sh  stamps ?v= on script and stylesheet links so browsers pick up updates
+tools/build-us-map.js   regenerates js/usmap.js from us-atlas states-10m.json
+tools/build-us-counties.js  regenerates js/uscounties.js from us-atlas counties-10m.json
 ```
-
-Plain scripts, no framework and no bundler. Charts, maps and the car illustrations are hand-drawn SVG, so there are no chart libraries either.
-
-**How fair value works.** For each make and model, Gridline fits a log-linear regression of retained value (price ÷ base MSRP) on age and mileage, trained on cars for sale and recently sold. Within each model it also learns what a transmission or a paint is worth compared with the model's most common one, so a manual Mustang isn't called overpriced next to the automatics. A premium counts only when it's clear of normal price noise (2 standard errors for transmissions, 3 for paints, since many paints are tested at once), and it's shrunk toward zero by n ÷ (n + 10) so a few cars can't swing it. Each listing breaks its expected price into the base value and each premium, e.g. "Manual transmission +4.7% vs. Automatic, from 30 cars".
-
-## Sources and credits
-
-- **Listings:** [auto.dev](https://auto.dev) and [Visor](https://visor.vin), with your own API key. Gridline names the source on every live page, as their terms require. Check each provider's terms before using Gridline commercially.
-- **Recalls and complaints:** [NHTSA](https://www.nhtsa.gov/recalls), free and with no key.
-- **Inspiration:** the [visor.vin](https://visor.vin) homepage, whose search, filters, price history and alerts this project builds out in full.
-- **Font:** Inter from Google Fonts (SIL Open Font License).
-- **Desktop app:** [Electron](https://www.electronjs.org) and electron-builder (MIT); the Mac app is plain Swift and WebKit.
-
-No dealer photos are hotlinked: every car is drawn as an SVG side profile for its body style, painted in its real exterior color. The demo market is generated, not copied from anywhere.

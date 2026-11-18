@@ -410,8 +410,10 @@
     });
   }
 
-  // Rank a listing among its comparables. Lower is better for every key.
+  // Rank a listing among its comparables. Lower is better for every key. A listing with no
+  // price (the feed gives 0) can't be ranked on price, value or discount, so there it goes last.
   function leaderboard(l, comps, key, delta) {
+    const byPrice = !['miles', 'days'].includes(key);
     const score = {
       price: (x) => x.price,
       value: (x) => delta(x),
@@ -419,7 +421,8 @@
       days: (x) => -x.daysListed,
       discount: (x) => -discountOf(x),
     }[key] || ((x) => x.price);
-    const rows = [l, ...comps].sort((a, b) => score(a) - score(b));
+    const rank = (x) => (byPrice && !(x.price > 0) ? Infinity : score(x));
+    const rows = [l, ...comps].sort((a, b) => (rank(a) === rank(b) ? 0 : rank(a) - rank(b)));
     return { rows, rank: rows.indexOf(l) + 1, total: rows.length };
   }
 
@@ -497,22 +500,26 @@
     return out.sort((a, b) => a.change - b.change);
   }
 
-  function retention(listings, segment, currentYear) {
+  // Residual value by model within a segment: the share of base MSRP that used cars under 75k miles
+  // still ask at 1, 2 ... `years` years old (default 4), best keeper first. MSRP, average list price
+  // and miles describe the oldest of those model years.
+  function retention(listings, segment, currentYear, years) {
+    const span = years || 4;
     const pool = listings.filter((l) => l.segment === segment && l.condition !== 'New' && l.miles < 75000);
     const rows = [];
     for (const [key, group] of groupBy(pool, (l) => l.make + '|' + l.model)) {
       const [make, model] = key.split('|');
       const byAge = [];
-      for (let age = 1; age <= 4; age++) {
+      for (let age = 1; age <= span; age++) {
         const g = group.filter((l) => currentYear - l.year === age);
         byAge.push(g.length >= 3 ? mean(g.map((l) => l.price / l.msrpBase)) : null);
       }
       if (byAge.some((v) => v == null)) continue;
-      const four = group.filter((l) => currentYear - l.year === 4);
+      const oldest = group.filter((l) => currentYear - l.year === span);
       rows.push({ make, model, byAge, n: group.length,
-        msrp: mean(four.map((l) => l.msrpBase)), avgList: mean(four.map((l) => l.price)), avgMiles: mean(four.map((l) => l.miles)) });
+        msrp: mean(oldest.map((l) => l.msrpBase)), avgList: mean(oldest.map((l) => l.price)), avgMiles: mean(oldest.map((l) => l.miles)) });
     }
-    return rows.sort((a, b) => b.byAge[3] - a.byAge[3]);
+    return rows.sort((a, b) => b.byAge[span - 1] - a.byAge[span - 1]);
   }
 
   function stateDeltas(listings, delta) {
@@ -563,11 +570,218 @@
       .slice(0, limit || 8);
   }
 
+  // Time capsules: used cars with a small fraction of the miles their age implies (about 12,000 a
+  // year), fewest miles for their age first: [{ l, expectedMiles, share }].
+  function timeCapsuleCars(listings, currentYear, limit) {
+    return listings
+      .filter((l) => l.condition !== 'New' && currentYear - l.year >= 5)
+      .map((l) => { const expectedMiles = (currentYear - l.year) * 12000; return { l, expectedMiles, share: l.miles / expectedMiles }; })
+      .filter((x) => x.share <= 0.35)
+      .sort((a, b) => a.share - b.share)
+      .slice(0, limit || 4);
+  }
+
   function recentDrops(listings, withinDays) {
     return listings
       .map((l) => ({ l, c: lastChange(l) }))
       .filter(({ c }) => c && c.delta < 0 && c.daysAgo <= withinDays)
       .sort((a, b) => a.c.delta - b.c.delta);
+  }
+
+
+  /* ---------- Weekly cards: who's selling more, which trim moves, the market then and now ---------- */
+
+  const inWindow = (l, from, to) => l.sold && l.sold.daysAgo >= from && l.sold.daysAgo < to;
+
+  // Makes that sold more in the last `days` days than in the `days` before, biggest climb first:
+  // [{ make, now, before, change, models: [{ model, now, before, change }], byState: { ST: { now, before, change } } }].
+  function makeMomentum(sold, days, minSales) {
+    const d = days || 30, min = minSales || 20;
+    const split = (g) => [g.filter((l) => inWindow(l, 0, d)), g.filter((l) => inWindow(l, d, 2 * d))];
+    const out = [];
+    for (const [make, g] of groupBy(sold, (l) => l.make)) {
+      const [now, before] = split(g);
+      if (now.length < min || before.length < min) continue;
+      const models = [...groupBy(g, (l) => l.model)].map(([model, mg]) => {
+        const [n, b] = split(mg);
+        return { model, now: n.length, before: b.length, change: b.length ? n.length / b.length - 1 : null };
+      }).sort((a, b) => b.now - a.now);
+      const byState = {};
+      for (const [st, sg] of groupBy(g, (l) => l.state)) {
+        const [n, b] = split(sg);
+        byState[st] = { now: n.length, before: b.length, change: b.length ? n.length / b.length - 1 : null };
+      }
+      out.push({ make, now: now.length, before: before.length, change: now.length / before.length - 1, models, byState });
+    }
+    return out.sort((a, b) => b.change - a.change);
+  }
+
+  // Within each model, the trim that sold fastest against the one that sold slowest (median days to sell),
+  // with every state's pace for the model. Biggest gap first.
+  function trimVelocity(sold, minGroup, minState) {
+    const min = minGroup || 20;
+    const out = [];
+    for (const [key, g] of groupBy(sold, (l) => `${l.make}|${l.model}`)) {
+      const trims = [...groupBy(g, (l) => l.trim)].filter(([, t]) => t.length >= min)
+        .map(([trim, t]) => ({ trim, n: t.length, days: median(t.map((l) => l.sold.daysToSell)), price: median(t.map((l) => l.sold.price)) }))
+        .sort((a, b) => a.days - b.days);
+      if (trims.length < 2) continue;
+      const [make, model] = key.split('|');
+      const fast = trims[0], slow = trims[trims.length - 1];
+      if (slow.days - fast.days < 1) continue;
+      const byState = {};
+      for (const [st, sg] of groupBy(g, (l) => l.state)) byState[st] = { n: sg.length, days: median(sg.map((l) => l.sold.daysToSell)) };
+      // The same two trims state by state, where each sold at least `minState` times and the fast
+      // one still sold faster: the state with the widest gap first. Each state carries its sales
+      // by city, for a map of where the model sells.
+      const minSt = minState || 5;
+      const states = [];
+      for (const [st, sg] of groupBy(g, (l) => l.state)) {
+        const sf = sg.filter((l) => l.trim === fast.trim), ss = sg.filter((l) => l.trim === slow.trim);
+        if (sf.length < minSt || ss.length < minSt) continue;
+        const fd = median(sf.map((l) => l.sold.daysToSell)), sd = median(ss.map((l) => l.sold.daysToSell));
+        if (sd - fd < 1) continue;
+        const cities = [...groupBy(sg, (l) => l.city)].map(([city, cg]) => ({ city, lat: cg[0].lat, lng: cg[0].lng, n: cg.length, days: median(cg.map((l) => l.sold.daysToSell)) }))
+          .sort((a, b) => b.n - a.n);
+        states.push({ state: st, n: sg.length, days: median(sg.map((l) => l.sold.daysToSell)), fast: { trim: fast.trim, n: sf.length, days: fd }, slow: { trim: slow.trim, n: ss.length, days: sd }, gap: sd - fd, cities });
+      }
+      states.sort((a, b) => b.gap - a.gap);
+      const newShare = g.filter((l) => l.condition === 'New').length / g.length;
+      out.push({ make, model, fast, slow, gap: slow.days - fast.days, trims, byState, states, n: g.length, days: median(g.map((l) => l.sold.daysToSell)), condition: newShare >= 0.5 ? 'New' : 'Used' });
+    }
+    return out.sort((a, b) => b.gap - a.gap);
+  }
+
+  // The market as it stood `daysAgo` days ago next to today: how many cars were for sale and at what
+  // median price, what has happened since, and the used models whose median asking price moved most.
+  function timeCapsule(active, sold, daysAgo, opts) {
+    const minGroup = (opts && opts.minGroup) || 15;
+    const then = snapshot(active, sold, daysAgo);
+    const used = (arr) => arr.filter((l) => l.condition !== 'New');
+    const medPrice = (arr) => median(arr.map((l) => l.price));
+    const stats = (arr) => ({ count: arr.length, median: medPrice(arr), usedMedian: medPrice(used(arr)) });
+    const nowBy = groupBy(used(active), (l) => `${l.make} ${l.model}`);
+    const models = [];
+    for (const [key, tg] of groupBy(used(then), (l) => `${l.make} ${l.model}`)) {
+      const ng = nowBy.get(key) || [];
+      if (tg.length < minGroup || ng.length < minGroup) continue;
+      const a = medPrice(tg), b = medPrice(ng);
+      models.push({ key, thenCount: tg.length, nowCount: ng.length, thenMedian: a, nowMedian: b, change: b / a - 1 });
+    }
+    models.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    return {
+      daysAgo,
+      then: stats(then), now: stats(active),
+      soldSince: sold.filter((l) => l.sold.daysAgo < daysAgo).length,
+      listedSince: active.filter((l) => l.daysListed < daysAgo).length,
+      cutsSince: active.filter((l) => l.history.slice(1).some((h) => h.daysAgo < daysAgo)).length,
+      models,
+    };
+  }
+
+  /* ---------- Your market: everything within a radius of a ZIP code ---------- */
+
+  // What's for sale around a point, compared with the whole market. `expected(l)`
+  // gives a car's fair value (null when unknown). Returns null without an origin.
+  // Miles from an origin to a car: from its coordinates, else the distance the listing API
+  // reported, else unknown (null).
+  const distOf = (origin, l) => (l.lat != null && l.lng != null ? haversineMiles(origin[2], origin[3], l.lat, l.lng) : l.distance != null ? l.distance : null);
+
+  function localMarket(listings, origin, radius, expected) {
+    if (!origin) return null;
+    // A car with no known distance is trusted to be local (a live API already filtered by radius).
+    const withD = listings.map((l) => ({ l, d: distOf(origin, l) }));
+    const local = withD.filter((x) => x.d == null || x.d <= radius).sort((a, b) => (a.d || 0) - (b.d || 0));
+    const stat = (rows) => {
+      const used = rows.filter((l) => l.condition !== 'New');
+      const deltas = rows.map((l) => { const e = expected(l); return e ? l.price / e - 1 : null; }).filter((v) => v != null);
+      return {
+        count: rows.length,
+        medianPrice: rows.length ? median(rows.map((l) => l.price)) : null,
+        medianUsed: used.length ? median(used.map((l) => l.price)) : null,
+        medianDays: rows.length ? median(rows.map((l) => l.daysListed)) : null,
+        belowShare: deltas.length ? deltas.filter((v) => v <= -0.03).length / deltas.length : null,
+        medianDelta: deltas.length ? median(deltas) : null,
+        dealers: new Set(rows.map((l) => l.dealer)).size,
+        cuts: rows.filter((l) => { const c = lastChange(l); return c && c.delta < 0 && c.daysAgo <= 7; }).length,
+      };
+    };
+    return { origin, radius, local: local.map((x) => x.l), distance: new Map(local.map((x) => [x.l.id, x.d])), stats: stat(local.map((x) => x.l)), national: stat(listings) };
+  }
+
+  // The cars priced furthest below their fair value nearby. Newer, lower-mile used cars
+  // first, so a cheap high-mile car doesn't crowd out the real bargains.
+  function bestDeals(local, expected, opts) {
+    const o = Object.assign({ limit: 8, condition: null, currentYear: new Date().getFullYear() }, opts);
+    return local
+      .filter((l) => !o.condition || o.condition === 'All' || (o.condition === 'Used' ? l.condition !== 'New' : l.condition === o.condition))
+      .map((l) => { const e = expected(l); return e ? { l, expected: e, saving: e - l.price, delta: l.price / e - 1 } : null; })
+      .filter((x) => x && x.delta <= -0.03 && (x.l.condition === 'New' || (x.l.miles < 120000 && x.l.year >= o.currentYear - 10)))
+      .sort((a, b) => a.delta - b.delta)
+      .slice(0, o.limit);
+  }
+
+  // Cars outside your radius (but within `wide` miles) that still beat what's near you once
+  // you count the drive. A deal is worth it when the fair-value saving minus a round-trip fuel
+  // estimate beats the best saving on the same model nearby.
+  const FUEL_PER_MILE = 0.14; // about 30 mpg at $4.20 a gallon
+  function worthTheDrive(listings, origin, radius, wide, expected, opts) {
+    if (!origin) return [];
+    const o = Object.assign({ limit: 8, currentYear: new Date().getFullYear() }, opts);
+    const dist = (l) => distOf(origin, l);
+    const bestNearby = new Map(); // model -> best saving within the radius
+    for (const l of listings) {
+      const d = dist(l);
+      if (d != null && d > radius) continue;
+      const e = expected(l);
+      if (!e) continue;
+      const k = l.make + ' ' + l.model;
+      bestNearby.set(k, Math.max(bestNearby.get(k) || 0, e - l.price));
+    }
+    return listings
+      .map((l) => {
+        const d = dist(l);
+        if (d == null || d <= radius || d > wide) return null;
+        const e = expected(l);
+        if (!e || l.price / e - 1 > -0.05) return null;
+        if (l.condition !== 'New' && (l.miles >= 120000 || l.year < o.currentYear - 10)) return null;
+        const fuel = d * 2 * FUEL_PER_MILE;
+        const saving = e - l.price;
+        const net = saving - fuel - (bestNearby.get(l.make + ' ' + l.model) || 0);
+        return net > 250 ? { l, miles: d, expected: e, saving, fuel, net, nearbyBest: bestNearby.get(l.make + ' ' + l.model) || 0 } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.net - a.net)
+      .slice(0, o.limit);
+  }
+
+  // Median used price per model near you vs. nationwide, for the models with enough cars.
+  function localVsNational(listings, origin, radius, opts) {
+    if (!origin) return [];
+    const o = Object.assign({ limit: 8, minLocal: 4 }, opts);
+    const used = listings.filter((l) => l.condition !== 'New');
+    const byModel = groupBy(used, (l) => l.make + ' ' + l.model);
+    const rows = [];
+    for (const [model, g] of byModel) {
+      const local = g.filter((l) => { const d = distOf(origin, l); return d == null || d <= radius; });
+      if (local.length < o.minLocal) continue;
+      const lm = median(local.map((l) => l.price)), nm = median(g.map((l) => l.price));
+      rows.push({ model, local: local.length, national: g.length, localMedian: lm, nationalMedian: nm, diff: lm / nm - 1 });
+    }
+    return rows.sort((a, b) => b.local - a.local).slice(0, o.limit);
+  }
+
+  // Cities with cars for sale near a point, each with how its prices sit against fair value.
+  function marketCities(listings, origin, radius, expected) {
+    const by = groupBy(listings, (l) => `${l.city}, ${l.state}`);
+    const out = [];
+    for (const [city, g] of by) {
+      if (g[0].lat == null || g[0].lng == null) continue;
+      const d = origin ? haversineMiles(origin[2], origin[3], g[0].lat, g[0].lng) : null;
+      const deltas = g.map((l) => { const e = expected(l); return e ? l.price / e - 1 : null; }).filter((v) => v != null);
+      out.push({ city, lat: g[0].lat, lng: g[0].lng, count: g.length, miles: d, inside: d != null && d <= radius, delta: deltas.length ? median(deltas) : null });
+    }
+    return out.sort((a, b) => (a.miles || 0) - (b.miles || 0));
   }
 
   /* ---------- Hunts ---------- */
@@ -583,9 +797,12 @@
     const added = [];
     const cut = [];
     for (const l of current) {
-      next[l.id] = l.price;
+      // A listing whose price is withdrawn (the feed gives 0) hasn't been cut to nothing:
+      // its last real price is kept, so a lower price that shows up later still counts as a cut.
+      const has = l.price > 0;
+      next[l.id] = has || !(l.id in prev) ? l.price : prev[l.id];
       if (!(l.id in prev)) added.push(l);
-      else if (l.price < prev[l.id]) cut.push({ l, from: prev[l.id], to: l.price });
+      else if (has && l.price < prev[l.id]) cut.push({ l, from: prev[l.id], to: l.price });
     }
     const gone = o.complete ? Object.keys(prev).filter((id) => !(id in next)) : [];
     return { added, cut, gone, seen: next };
@@ -627,8 +844,9 @@
     median, mean, groupBy, linearFit, fit2, buildFairValue, specModel, applySpecs, liftOf, priceOn, lastChange, haversineMiles,
     FACETS, MULTI, valueOf, emptyFilters, search, summarize, sortListings, vinMatches, matches, discountOf,
     snapshot, inventorySeries, velocity, comparables, leaderboard, dealCheck,
-    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, recentDrops,
-    huntDiff, huntStats, rarityLabel,
+    arrivals, priceMovers, retention, stateDeltas, colorStats, rareSpecs, timeCapsuleCars, recentDrops, makeMomentum, trimVelocity, timeCapsule,
+    huntDiff, huntStats, rarityLabel, linearFit,
+    localMarket, bestDeals, worthTheDrive, localVsNational, marketCities, distOf, FUEL_PER_MILE,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Market = api;

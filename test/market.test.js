@@ -68,6 +68,15 @@ test('weekly insights produce content', () => {
   assert.ok(Market.arrivals(listings, 2026).total > 0);
   assert.ok(Market.priceMovers(listings, 20).length > 0);
   assert.ok(Market.retention(listings, 'Compact SUV', 2026).length >= 3);
+  // The home page follows residual value over 3 years: one share of MSRP per year, best keeper first.
+  const three = Market.retention(listings, 'Compact SUV', 2026, 3);
+  assert.ok(three.length >= 3);
+  for (const r of three) {
+    assert.equal(r.byAge.length, 3);
+    for (const v of r.byAge) assert.ok(v > 0 && v < 1.5);
+    assert.ok(r.msrp > 0 && r.avgList > 0 && r.avgMiles > 0);
+  }
+  for (let i = 1; i < three.length; i++) assert.ok(three[i - 1].byAge[2] >= three[i].byAge[2], 'best 3-year keeper first');
   assert.ok(Market.rareSpecs(listings, Market.colorStats(listings), 8).length > 0);
 });
 
@@ -315,6 +324,37 @@ test('a hunt reports new matches, price cuts and cars that are gone', () => {
   assert.equal(Market.huntDiff({ a: 100 }, [car('a', 120)], { complete: true }).cut.length, 0);
 });
 
+test('a withdrawn price is not a price cut, and the last real price is remembered', () => {
+  const car = (id, price) => ({ id, price });
+  // The dealer pulls the price: the feed gives 0.
+  const pulled = Market.huntDiff({ a: 30000 }, [car('a', 0)], { complete: true });
+  assert.equal(pulled.cut.length, 0);
+  assert.deepEqual(pulled.seen, { a: 30000 });
+  // It comes back lower: that is a cut from the last real price.
+  const back = Market.huntDiff(pulled.seen, [car('a', 28500)], { complete: true });
+  assert.deepEqual(back.cut.map((c) => [c.l.id, c.from, c.to]), [['a', 30000, 28500]]);
+  // A car first seen without a price, then priced: nothing was cut.
+  const fresh = Market.huntDiff({}, [car('n', 0)], { complete: true });
+  assert.deepEqual(fresh.added.map((l) => l.id), ['n']);
+  assert.equal(Market.huntDiff(fresh.seen, [car('n', 19000)], { complete: true }).cut.length, 0);
+});
+
+test('a listing with no price is ranked last on price, value and discount', () => {
+  const car = (id, price, miles) => ({ id, price, miles, msrp: 40000, daysListed: 3 });
+  const me = car('me', 25000, 40000);
+  const comps = [car('free', 0, 10000), car('cheap', 20000, 60000), car('dear', 30000, 20000)];
+  const delta = (x) => (x.price > 0 ? x.price / 26000 - 1 : 0);
+  for (const key of ['price', 'value', 'discount']) {
+    const lb = Market.leaderboard(me, comps, key, delta);
+    assert.deepEqual(lb.rows.map((x) => x.id), ['cheap', 'me', 'dear', 'free'], key);
+    assert.equal(lb.rank, 2);
+  }
+  // Miles don't depend on the price, so there it ranks as any other car.
+  assert.equal(Market.leaderboard(me, comps, 'miles', delta).rows[0].id, 'free');
+  // The car itself unpriced: last, not first.
+  assert.equal(Market.leaderboard(car('me', 0, 1), comps.slice(1), 'price', delta).rank, 3);
+});
+
 test('a demo hunt started a week ago finds that week’s new listings and sales', () => {
   const f = Object.assign(Market.emptyFilters(), { model: ['Mazda MX-5 Miata'] });
   const ctx = { delta: () => 0 };
@@ -359,4 +399,279 @@ test('fair value learns what a manual is worth instead of calling it overpriced'
   // Noise isn't a premium: a model with no real paint effect gets few or none.
   const paints = new Set(pool.filter((l) => l.condition !== 'New').flatMap((l) => (fv.explain(l) || { adjustments: [] }).adjustments).filter((a) => a.key === 'extColor').map((a) => a.value));
   assert.ok(paints.size <= 3, [...paints].join(', '));
+});
+
+test('live home page sizes the market near home, and a hunt, in one request each', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const Live = require('../js/live.js');
+  const server = http.createServer(handle).listen(0);
+  const { cities } = generateInventory();
+  const prevBase = Live.PROVIDERS.visor.base;
+  Live.PROVIDERS.visor.base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } }; // a built-in key, as in the desktop app
+  try {
+    Live.setProvider('visor');
+    const ctx = { cityByName: (n) => cities.find((c) => `${c[0]}, ${c[1]}` === n) || null, makes: ['Toyota'], known: null };
+    const near = await Live.summary(Object.assign(Market.emptyFilters(), { near: 'Denver, CO', radius: 150 }), ctx);
+    const all = await Live.summary(Market.emptyFilters(), ctx);
+    assert.ok(near.total > 0 && near.total < all.total, `${near.total} near Denver of ${all.total}`);
+    assert.ok(near.medianPrice > 0 && near.medianDays >= 0 && near.medianMiles >= 0);
+    assert.equal(all.total, listings.length);
+    // A hunt's count matches counting the synthetic market by hand.
+    const hunt = await Live.summary(Object.assign(Market.emptyFilters(), { model: ['Toyota RAV4'], priceMax: 30000 }), ctx);
+    assert.equal(hunt.total, listings.filter((l) => l.make === 'Toyota' && l.model === 'RAV4' && l.price <= 30000).length);
+    // Sold cars near home, for days of supply.
+    const sold = await Live.summary(Object.assign(Market.emptyFilters(), { near: 'Denver, CO', radius: 150 }), ctx, { inventory_status: 'sold', sold_within_days: 30 });
+    assert.ok(sold.total > 0 && sold.total < near.total);
+  } finally {
+    server.close();
+    Live.PROVIDERS.visor.base = prevBase;
+    delete globalThis.gridlineDesktop;
+  }
+});
+
+test('make momentum compares the last 30 days of sales with the 30 before', () => {
+  const { sold } = generateInventory();
+  const rows = Market.makeMomentum(sold, 30, 20);
+  assert.ok(rows.length > 3);
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].change >= rows[i].change, 'sorted by change');
+  const top = rows[0];
+  const now = sold.filter((l) => l.make === top.make && l.sold.daysAgo < 30).length;
+  const before = sold.filter((l) => l.make === top.make && l.sold.daysAgo >= 30 && l.sold.daysAgo < 60).length;
+  assert.equal(top.now, now);
+  assert.equal(top.before, before);
+  assert.ok(Math.abs(top.change - (now / before - 1)) < 1e-9);
+  assert.equal(top.models.reduce((s, m) => s + m.now, 0), now, 'models add up to the make');
+  assert.equal(Object.values(top.byState).reduce((s, x) => s + x.now, 0), now, 'states add up to the make');
+});
+
+test('time capsules are older cars with a fraction of the usual miles', () => {
+  const caps = Market.timeCapsuleCars(listings, 2026, 4);
+  assert.equal(caps.length, 4);
+  for (const { l, share, expectedMiles } of caps) {
+    assert.ok(l.condition !== 'New' && 2026 - l.year >= 5, 'used and at least five years old');
+    assert.ok(share <= 0.35 && Math.abs(share - l.miles / expectedMiles) < 1e-9);
+    assert.equal(expectedMiles, (2026 - l.year) * 12000);
+  }
+  for (let i = 1; i < caps.length; i++) assert.ok(caps[i - 1].share <= caps[i].share, 'fewest miles for their age first');
+  assert.ok(Market.rareSpecs(listings, Market.colorStats(listings), 4).length === 4);
+});
+
+test('trim velocity pairs the fastest and slowest trims of a model', () => {
+  const { sold } = generateInventory();
+  const rows = Market.trimVelocity(sold, 20);
+  assert.ok(rows.length > 0);
+  for (const r of rows) {
+    assert.ok(r.fast.n >= 20 && r.slow.n >= 20);
+    assert.ok(r.slow.days > r.fast.days);
+    assert.ok(Math.abs(r.gap - (r.slow.days - r.fast.days)) < 1e-9);
+    assert.ok(['New', 'Used'].includes(r.condition));
+  }
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].gap >= rows[i].gap, 'biggest gap first');
+  const r = rows[0];
+  const pool = sold.filter((l) => l.make === r.make && l.model === r.model && l.trim === r.fast.trim);
+  assert.equal(Market.median(pool.map((l) => l.sold.daysToSell)), r.fast.days);
+});
+
+test('trim velocity scopes the same two trims to the states where both sold enough', () => {
+  const { sold } = generateInventory();
+  const rows = Market.trimVelocity(sold, 20, 5);
+  assert.ok(rows.some((r) => r.states.length > 0), 'at least one model has a state with both trims');
+  for (const r of rows) {
+    for (const st of r.states) {
+      assert.equal(st.fast.trim, r.fast.trim);
+      assert.equal(st.slow.trim, r.slow.trim);
+      assert.ok(st.fast.n >= 5 && st.slow.n >= 5);
+      assert.ok(st.gap >= 1 && Math.abs(st.gap - (st.slow.days - st.fast.days)) < 1e-9);
+      const inState = sold.filter((l) => l.make === r.make && l.model === r.model && l.state === st.state);
+      assert.equal(st.n, inState.length);
+      assert.equal(st.cities.reduce((s, c) => s + c.n, 0), inState.length, 'every sale in the state sits in a city');
+      assert.ok(st.cities.every((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)));
+    }
+    for (let i = 1; i < r.states.length; i++) assert.ok(r.states[i - 1].gap >= r.states[i].gap, 'widest gap first');
+  }
+});
+
+test('a time capsule matches a snapshot of the same day', () => {
+  const { sold } = generateInventory();
+  for (const d of [7, 30, 90]) {
+    const c = Market.timeCapsule(listings, sold, d, { minGroup: 25 });
+    const snap = Market.snapshot(listings, sold, d);
+    assert.equal(c.then.count, snap.length);
+    assert.equal(c.then.median, Market.median(snap.map((l) => l.price)));
+    assert.equal(c.now.count, listings.length);
+    assert.equal(c.soldSince, sold.filter((l) => l.sold.daysAgo < d).length);
+    assert.equal(c.listedSince, listings.filter((l) => l.daysListed < d).length);
+    assert.ok(c.cutsSince <= listings.length);
+    for (const m of c.models) {
+      assert.ok(m.thenCount >= 25 && m.nowCount >= 25);
+      assert.ok(Math.abs(m.change - (m.nowMedian / m.thenMedian - 1)) < 1e-9);
+    }
+    for (let i = 1; i < c.models.length; i++) assert.ok(Math.abs(c.models[i - 1].change) >= Math.abs(c.models[i].change));
+  }
+  assert.equal(Market.timeCapsule(listings, sold, 0).then.count, listings.length, 'today is today');
+});
+
+test('live requests are paced: a few in flight, duplicates shared, a rate-limit reply retried', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const Live = require('../js/live.js');
+  let open = 0, maxOpen = 0, hits = 0, limited = 0;
+  const server = http.createServer((req, res) => {
+    hits++;
+    open++; maxOpen = Math.max(maxOpen, open);
+    res.on('finish', () => { open--; });
+    // The first request for sold cars is refused, the way Visor refuses a burst.
+    if (req.url.includes('inventory_status=sold') && !limited) {
+      limited++;
+      res.writeHead(429, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Rate limit exceeded. Retry after 1 seconds.' } }));
+    }
+    setTimeout(() => handle(req, res), 30);
+  }).listen(0);
+  const prevBase = Live.PROVIDERS.visor.base;
+  Live.PROVIDERS.visor.base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  try {
+    Live.setProvider('visor');
+    const facet = (n, extra) => Live.request('/v1/facets', Object.assign({ facets: n, facet_value_limit: 5 }, extra || {}));
+    const t0 = Date.now();
+    const results = await Promise.all([
+      facet('make'), facet('model'), facet('body_type'), facet('price'), facet('trim'), facet('year'),
+      facet('make'), // identical to the first: shares its fetch
+      facet('model', { inventory_status: 'sold', sold_within_days: 30 }),
+    ]);
+    assert.equal(results.length, 8);
+    assert.ok(results.every((r) => r.data && r.data.total > 0));
+    assert.ok(maxOpen <= 4, `at most 4 in flight, saw ${maxOpen}`);
+    assert.equal(hits, 8, 'seven distinct requests plus one retry');
+    assert.equal(limited, 1);
+    assert.ok(Date.now() - t0 >= 1000, 'waited out the retry-after');
+    // The real API computes metrics for one facet per request; the mock enforces it so the pages stay within it.
+    await assert.rejects(facet('make,model', { metrics: 'price.median' }), (e) => e.code === 'bad_request' && /exactly one facet/.test(e.message));
+    const one = await facet('make', { metrics: 'price.median' });
+    assert.ok(Live.bucketsOf(one.data.facets.make).some((b) => b.metrics['price.median'] != null));
+  } finally {
+    server.close();
+    Live.PROVIDERS.visor.base = prevBase;
+    delete globalThis.gridlineDesktop;
+  }
+});
+
+test('live requests go out by priority, the tier is learned from a refusal, and replies survive a restart', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  // A localStorage like the browser's, so the tier and the cache can be kept.
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k),
+    get length() { return store.size; }, key: (i) => [...store.keys()][i],
+  };
+  Object.defineProperty(globalThis.localStorage, 'keys', { value: () => [...store.keys()] });
+  const origKeys = Object.keys;
+  Object.keys = (o) => (o === globalThis.localStorage ? [...store.keys()] : origKeys(o));
+  const fresh = () => { delete require.cache[require.resolve('../js/live.js')]; return require('../js/live.js'); };
+  let Live = fresh();
+  const seen = [];
+  let refuse = false;
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    seen.push(u.searchParams.get('facets'));
+    if (refuse && seen.length === 12) {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+      return res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Rate limit exceeded. Retry after 1 seconds.' } }));
+    }
+    setTimeout(() => handle(req, res), 120);
+  }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  Live.PROVIDERS.visor.base = base;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  try {
+    Live.setProvider('visor');
+    const facet = (n, prio, extra) => Live.request('/v1/facets', Object.assign({ facets: n, facet_value_limit: 5 }, extra || {}), null, { priority: prio });
+    // Six off-screen requests, then two for what's on screen: the first leaves at once, and the on-screen pair goes before the rest of the queue.
+    const later = ['make', 'model', 'body_type', 'trim', 'year', 'fuel_type'].map((n) => facet(n, Live.PRIORITY.later));
+    const first = ['state', 'drivetrain'].map((n) => facet(n, Live.PRIORITY.first));
+    await Promise.all(later.concat(first));
+    assert.deepEqual(seen, ['make', 'state', 'drivetrain', 'model', 'body_type', 'trim', 'year', 'fuel_type']);
+    assert.equal(Live.tier('visor'), null, 'no refusal yet, so no tier assumed');
+    // The twelfth request within ten seconds is refused: that's Tier 1 (10 per 10 s), remembered on the device.
+    refuse = true;
+    await Promise.all(['transmission', 'exterior_color', 'base_interior_color', 'dealer_type'].map((n) => facet(n, Live.PRIORITY.first)));
+    assert.equal(seen.length, 13, 'the refused request was sent again');
+    assert.deepEqual([Live.tier('visor').cap10, Live.tier('visor').cap60], [10, 60]);
+    assert.deepEqual(JSON.parse(store.get('gridline:tier:visor')).cap10, 10);
+    // Replies are on disk: a fresh client (a restart) answers from them without a request, and starts at the learned tier.
+    const before = seen.length;
+    Live = fresh();
+    Live.PROVIDERS.visor.base = base;
+    Live.setProvider('visor');
+    const again = await Live.request('/v1/facets', { facets: 'make', facet_value_limit: 5 });
+    assert.ok(again.data && again.data.total > 0);
+    assert.equal(seen.length, before, 'served from the cache');
+    assert.equal(Live.tier('visor').cap10, 10);
+  } finally {
+    server.close();
+    Object.keys = origKeys;
+    delete globalThis.localStorage;
+    delete globalThis.gridlineDesktop;
+    fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
+  }
+});
+
+test('an older reply shows at once while it refreshes behind, hunts wait for a fresh one, and the tier comes from the first reply', async () => {
+  const http = require('http');
+  const { handle, KEY } = require('./mock-visor.js');
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k),
+    get length() { return store.size; }, key: (i) => [...store.keys()][i],
+  };
+  const origKeys = Object.keys;
+  Object.keys = (o) => (o === globalThis.localStorage ? [...store.keys()] : origKeys(o));
+  const fresh = () => { delete require.cache[require.resolve('../js/live.js')]; return require('../js/live.js'); };
+  let Live = fresh();
+  let seen = 0;
+  const server = http.createServer((req, res) => {
+    seen++;
+    res.setHeader('X-RateLimit-Remaining-60s', String(600 - seen)); // Tier 3: 200 per 10 s, 600 per minute
+    setTimeout(() => handle(req, res), 50);
+  }).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  globalThis.gridlineDesktop = { defaultKeys: { visor: KEY } };
+  const restart = () => { Live = fresh(); Live.PROVIDERS.visor.base = base; Live.setProvider('visor'); };
+  try {
+    restart();
+    const params = { facets: 'make', facet_value_limit: 5 };
+    const first = await Live.request('/v1/facets', params);
+    assert.equal(seen, 1);
+    assert.deepEqual([Live.tier('visor').cap10, Live.tier('visor').cap60], [200, 600], 'learned from the header, with no refusal');
+    // An hour later (after a restart), the stored reply answers at once and a fresh one is fetched behind it.
+    const k = [...store.keys()].find((x) => x.startsWith('gv:'));
+    const e = JSON.parse(store.get(k));
+    e.t -= 3600e3;
+    store.set(k, JSON.stringify(e));
+    restart();
+    const t0 = Date.now();
+    const again = await Live.request('/v1/facets', params);
+    assert.ok(Date.now() - t0 < 40, 'answered without waiting for the API');
+    assert.deepEqual(again, first);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(seen, 2, 'refreshed in the background');
+    assert.ok(Date.now() - JSON.parse(store.get(k)).t < 5000, 'the refreshed reply is stored');
+    // A hunt check never takes the older reply.
+    const e2 = JSON.parse(store.get(k));
+    e2.t -= 3600e3;
+    store.set(k, JSON.stringify(e2));
+    restart();
+    await Live.request('/v1/facets', params, null, { fresh: true });
+    assert.equal(seen, 3, 'waited for a fresh reply');
+  } finally {
+    server.close();
+    Object.keys = origKeys;
+    delete globalThis.localStorage;
+    delete globalThis.gridlineDesktop;
+    fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
+  }
 });

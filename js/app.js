@@ -8,15 +8,35 @@
 
   /* ---------- Data + derived models ---------- */
 
-  const DATA = MarketData.generateInventory({ currentYear: CURRENT_YEAR });
-  const LISTINGS = DATA.listings; // for sale today
-  const SOLD = DATA.sold;         // sold in the last ~120 days
-  const ALL = LISTINGS.concat(SOLD);
-  const BY_ID = new Map(ALL.map((l) => [l.id, l]));
-  const BY_VIN = new Map(ALL.map((l) => [l.vin, l]));
-  for (const l of LISTINGS) BY_VIN.set(l.vin, l);
+  // The demo market takes a few hundred milliseconds to build, which would hold up the first live
+  // request on every load. So it, and everything derived from it, is built the first time something
+  // reads it; with live data on, the home page often never does. `lazy` stands in for the value
+  // (an array, a Map, an object or a function) and hands every use to the real one.
+  function lazy(target, make) {
+    let real = null;
+    const get = () => real || (real = make());
+    return new Proxy(target, {
+      get(t, k) { const r = get(), v = r[k]; return typeof v === 'function' ? v.bind(r) : v; },
+      apply: (t, self, args) => get()(...args),
+      has: (t, k) => k in get(),
+      ownKeys: () => Reflect.ownKeys(get()),
+      getOwnPropertyDescriptor: (t, k) => Reflect.getOwnPropertyDescriptor(get(), k),
+    });
+  }
+  let DEMO = null;
+  const demo = () => DEMO || (DEMO = MarketData.generateInventory({ currentYear: CURRENT_YEAR }));
+  const DATA = { models: MarketData.MODELS, cities: MarketData.CITIES, get dealers() { return demo().dealers; } };
+  const LISTINGS = lazy([], () => demo().listings); // for sale today
+  const SOLD = lazy([], () => demo().sold);         // sold in the last ~120 days
+  const ALL = lazy([], () => demo().listings.concat(demo().sold));
+  const BY_ID = lazy(new Map(), () => new Map(ALL.map((l) => [l.id, l])));
+  const BY_VIN = lazy(new Map(), () => {
+    const m = new Map(ALL.map((l) => [l.vin, l]));
+    for (const l of LISTINGS) m.set(l.vin, l);
+    return m;
+  });
   // Trained on cars for sale and recently sold, so rare specs have enough examples.
-  const fairValue = Market.buildFairValue(ALL, CURRENT_YEAR);
+  const fairValue = lazy(() => {}, () => Market.buildFairValue(ALL, CURRENT_YEAR));
   const expectedCache = new Map();
   const expected = (l) => {
     if (l.live) return LIVE_EXPECTED.has(l.id) ? LIVE_EXPECTED.get(l.id) : null;
@@ -29,11 +49,18 @@
     LIVE_EXPECTED.set(l.id, fv(l));
     if (fv.explain) LIVE_EXPLAIN.set(l.id, fv.explain(l));
   }
+  // A dealer can list a car without a price, and the feed then gives 0. Such a car has no asking
+  // price to print, rank or hold against the market: it is never shown as "$0" or as a deal.
+  const priced = (l) => l.price > 0;
+  const prices = (cars) => cars.filter(priced).map((l) => l.price);
   const delta = (l) => {
     const e = expected(l);
-    return e ? l.price / e - 1 : 0;
+    return e && priced(l) ? l.price / e - 1 : 0;
   };
-  const rarity = Market.colorStats(LISTINGS);
+  // The market positions of the cars that have one. A car with no price or no expected value is
+  // left out, not counted as sitting exactly at market.
+  const positions = (cars) => cars.filter((l) => priced(l) && expected(l)).map(delta);
+  const rarity = lazy(() => {}, () => Market.colorStats(LISTINGS));
   const CITY_NAMES = [...new Set(DATA.cities.map((c) => `${c[0]}, ${c[1]}`))].sort();
   const cityByName = (name) => DATA.cities.find((c) => `${c[0]}, ${c[1]}` === name);
   const MODEL_KEYS = DATA.models.map((m) => `${m.make} ${m.model}`);
@@ -41,27 +68,51 @@
   const UPFITTER_NAMES = [...new Set(Object.values(MarketData.UPFITTERS).flat().map((u) => u[0]))];
   const VOCAB = NLQ.build({
     models: DATA.models, cities: DATA.cities, currentYear: CURRENT_YEAR,
-    paints: [...new Set(ALL.map((l) => l.extColor))], upfitters: UPFITTER_NAMES,
+    paints: [...new Set(Object.values(MarketData.PALETTES).flat().map((p) => p[0]))], upfitters: UPFITTER_NAMES,
   });
+
+  const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'Washington, DC', FL: 'Florida',
+    GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts',
+    MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+    NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee',
+    TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+  const stateName = (st) => STATE_NAMES[st] || st;
 
   // Typical sales tax by state, for out-the-door estimates.
   const STATE_TAX = { CA: 8.8, NY: 8.5, TX: 6.25, FL: 7, GA: 7, NC: 3, IL: 8.25, OH: 7.2, PA: 6, MI: 6, CO: 7.7, AZ: 8.4, WA: 9.3, MN: 6.9,
     OR: 0, MA: 6.25, NJ: 6.6, VA: 4.15, TN: 9.5, IN: 7, MO: 8.2, MD: 6, WI: 5.4, SC: 5, AL: 4, LA: 9.5, KY: 6, OK: 3.25, UT: 7.2, NV: 8.2 };
   const stateTax = (st) => (STATE_TAX[st] != null ? STATE_TAX[st] : 6.5);
-  const DOC_FEE_TYPICAL = (() => {
+  const DOC_FEE_TYPICAL = lazy({}, () => {
     const by = Market.groupBy(LISTINGS.filter((l) => l.seller === 'Dealer'), (l) => l.state);
     const out = {};
     for (const [st, g] of by) out[st] = Market.median(g.map((l) => l.pricing.docFee));
     return out;
-  })();
+  });
 
   /* ---------- Persistence ---------- */
+
+  const CITY_ZIP = {
+    'Haverhill, MA': '01830', 'Boston, MA': '02108', 'Elmsford, NY': '10523', 'Albany, NY': '12207', 'Pawtucket, RI': '02860', 'Hartford, CT': '06103',
+    'Newark, NJ': '07102', 'Philadelphia, PA': '19107', 'Pittsburgh, PA': '15222', 'Baltimore, MD': '21202', 'Hampton, VA': '23669', 'Richmond, VA': '23219',
+    'Raleigh, NC': '27601', 'Charlotte, NC': '28202', 'Charleston, SC': '29401', 'Buford, GA': '30518', 'Atlanta, GA': '30303', 'Orlando, FL': '32801',
+    'Tampa, FL': '33602', 'Miami, FL': '33130', 'Nashville, TN': '37203', 'Birmingham, AL': '35203', 'Columbus, OH': '43215', 'Cleveland, OH': '44113',
+    'Detroit, MI': '48226', 'Indianapolis, IN': '46204', 'Louisville, KY': '40202', 'Schaumburg, IL': '60173', 'Chicago, IL': '60601', 'Milwaukee, WI': '53202',
+    'Minneapolis, MN': '55401', 'Des Moines, IA': '50309', 'St. Louis, MO': '63101', 'Kansas City, MO': '64106', 'Omaha, NE': '68102', 'Dallas, TX': '75201',
+    'Houston, TX': '77002', 'Austin, TX': '78701', 'Amarillo, TX': '79101', 'Oklahoma City, OK': '73102', 'New Orleans, LA': '70112', 'Little Rock, AR': '72201',
+    'Denver, CO': '80202', 'Salt Lake City, UT': '84101', 'Albuquerque, NM': '87102', 'Phoenix, AZ': '85004', 'Las Vegas, NV': '89101', 'Boise, ID': '83702',
+    'Seattle, WA': '98101', 'Portland, OR': '97204', 'Sacramento, CA': '95814', 'San Jose, CA': '95113', 'Los Altos, CA': '94022', 'Thousand Oaks, CA': '91360',
+    'San Diego, CA': '92101', 'Anchorage, AK': '99501', 'Honolulu, HI': '96813', 'Burlington, VT': '05401', 'Portland, ME': '04101', 'Billings, MT': '59101',
+  };
+
 
   const STORE_KEY = 'gridline:v1';
   const store = (() => {
     let s = { saved: [], favs: {}, compare: [], recent: [], theme: null, prefs: {} };
     try { s = Object.assign(s, JSON.parse(localStorage.getItem(STORE_KEY)) || {}); } catch (e) { /* private mode */ }
-    s.prefs = Object.assign({ homeCity: null, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo', huntEvery: 360 }, s.prefs);
+    s.prefs = Object.assign({ homeCity: null, homeZip: null, homeRadius: 100, showDealer: false, compact: false, valueSort: 'count', dataSource: 'demo', huntEvery: 360 }, s.prefs);
+    // Older saves kept a demo city as home; carry it over to that city's ZIP code.
+    if (!s.prefs.homeZip && s.prefs.homeCity && CITY_ZIP[s.prefs.homeCity]) s.prefs.homeZip = CITY_ZIP[s.prefs.homeCity];
+    if (!Geo.isZip(s.prefs.homeZip) || !Geo.lookup(s.prefs.homeZip)) s.prefs.homeZip = null;
     s.liveCars = s.liveCars || {};
     if (s.prefs.dataSource === 'live') s.prefs.dataSource = 'visor';
     // A desktop build with a built-in key starts on live data, preferring Visor (fuller data) over auto.dev.
@@ -77,9 +128,14 @@
     };
   })();
   const prefs = () => store.get().prefs;
+  // A place to measure from: a ZIP code ("94022") or a demo city ("Denver, CO"), as [name, state, lat, lng].
+  const placeOf = (near) => (Geo.isZip(near) ? Geo.place(near) : cityByName(near));
+  const placeLabel = (near) => (Geo.isZip(near) ? `${Geo.label(Geo.lookup(near), { short: true })} ${near}` : near);
+  const homeZip = () => prefs().homeZip || null;
+  const homeRadius = () => Number(prefs().homeRadius) || 100;
   const CTX = {
-    delta, cityByName,
-    get origin() { return prefs().homeCity ? cityByName(prefs().homeCity) : null; },
+    delta, cityByName: placeOf,
+    get origin() { return homeZip() ? Geo.place(homeZip()) : null; },
   };
 
   /* ---------- Live data (auto.dev or Visor API) ---------- */
@@ -93,30 +149,18 @@
   // What the active live source can do (null in demo mode = everything).
   const liveCaps = () => (isLive() ? Live.caps() : null);
   const can = (cap) => { const c = liveCaps(); return !c || !!c[cap]; };
-  const CITY_ZIP = {
-    'Haverhill, MA': '01830', 'Boston, MA': '02108', 'Elmsford, NY': '10523', 'Albany, NY': '12207', 'Pawtucket, RI': '02860', 'Hartford, CT': '06103',
-    'Newark, NJ': '07102', 'Philadelphia, PA': '19107', 'Pittsburgh, PA': '15222', 'Baltimore, MD': '21202', 'Hampton, VA': '23669', 'Richmond, VA': '23219',
-    'Raleigh, NC': '27601', 'Charlotte, NC': '28202', 'Charleston, SC': '29401', 'Buford, GA': '30518', 'Atlanta, GA': '30303', 'Orlando, FL': '32801',
-    'Tampa, FL': '33602', 'Miami, FL': '33130', 'Nashville, TN': '37203', 'Birmingham, AL': '35203', 'Columbus, OH': '43215', 'Cleveland, OH': '44113',
-    'Detroit, MI': '48226', 'Indianapolis, IN': '46204', 'Louisville, KY': '40202', 'Schaumburg, IL': '60173', 'Chicago, IL': '60601', 'Milwaukee, WI': '53202',
-    'Minneapolis, MN': '55401', 'Des Moines, IA': '50309', 'St. Louis, MO': '63101', 'Kansas City, MO': '64106', 'Omaha, NE': '68102', 'Dallas, TX': '75201',
-    'Houston, TX': '77002', 'Austin, TX': '78701', 'Amarillo, TX': '79101', 'Oklahoma City, OK': '73102', 'New Orleans, LA': '70112', 'Little Rock, AR': '72201',
-    'Denver, CO': '80202', 'Salt Lake City, UT': '84101', 'Albuquerque, NM': '87102', 'Phoenix, AZ': '85004', 'Las Vegas, NV': '89101', 'Boise, ID': '83702',
-    'Seattle, WA': '98101', 'Portland, OR': '97204', 'Sacramento, CA': '95814', 'San Jose, CA': '95113', 'Los Altos, CA': '94022', 'Thousand Oaks, CA': '91360',
-    'San Diego, CA': '92101', 'Anchorage, AK': '99501', 'Honolulu, HI': '96813', 'Burlington, VT': '05401', 'Portland, ME': '04101', 'Billings, MT': '59101',
-  };
   const DEMO_MAKES = [...new Set(DATA.models.map((m) => m.make))];
   const LIVE_EXPECTED = new Map();
   const LIVE_EXPLAIN = new Map();
   const LIVE_SEEN = new Map();
   let LIVE_VOCAB = null, LIVE_KNOWN = null;
-  const liveCtx = () => ({ cityByName, zipFor: (c) => CITY_ZIP[c] || null, home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
+  const liveCtx = () => ({ cityByName: placeOf, zipFor: (c) => (Geo.isZip(c) ? c : CITY_ZIP[c] || null), home: CTX.origin, makes: [...new Set(DEMO_MAKES.concat((LIVE_KNOWN && LIVE_KNOWN.makes) || []))], known: LIVE_KNOWN });
   const vocab = () => (isLive() && LIVE_VOCAB) || VOCAB;
 
-  async function ensureLiveVocab() {
+  async function ensureLiveVocab(opts) {
     if (LIVE_KNOWN) return;
     try {
-      LIVE_KNOWN = await Live.vocabulary();
+      LIVE_KNOWN = await Live.vocabulary(opts);
       LIVE_VOCAB = NLQ.build({
         models: DATA.models.concat(LIVE_KNOWN.models.filter((m) => !MODEL_KEYS.some((k) => k.endsWith(' ' + m))).map((m) => ({ make: '', model: m, trims: [] }))),
         makes: LIVE_KNOWN.makes, cities: DATA.cities, currentYear: CURRENT_YEAR,
@@ -144,12 +188,12 @@
 
   function liveErrorHtml(e) {
     const tips = {
-      no_key: `Open <a href="#/settings">Settings</a> and paste your ${esc(srcName())} API key.`,
-      auth: `${esc(srcName())} rejected the API key. Check it in <a href="#/settings">Settings</a>.`,
-      billing: 'Your Visor API balance or spending cap is used up. Top up at <a href="https://visor.vin/account/api" target="_blank" rel="noopener">visor.vin/account/api</a>.',
+      no_key: `Open <a href="#/settings">Settings</a> and paste your API key.`,
+      auth: `The data source rejected the API key. Check it in <a href="#/settings">Settings</a>.`,
+      billing: `Your API balance or spending cap is used up. <a href="${Live.info().keyUrl}" target="_blank" rel="noopener">Top up your balance</a>.`,
       rate_limit: SOURCE() === 'autodev' ? 'Either this month’s 1,000 free auto.dev calls are used up (they reset on the 1st), or too many requests went out at once. Wait a few seconds and try again.' : 'Too many requests in a short time. Wait a few seconds and try again.',
       blocked: 'Live data works in the Gridline desktop app, or when you run <code>npm start</code> and open <a href="http://localhost:8080">localhost:8080</a>.',
-      unsupported: `That needs data ${esc(srcName())} doesn’t provide.`,
+      unsupported: 'That needs data the live source doesn’t provide.',
     };
     return `<div class="card live-error"><h3>Couldn’t load live listings</h3><p>${esc(e.message || String(e))}</p><p class="muted">${tips[e.code] || ''}</p>
       <p><button class="btn" type="button" data-action="use-demo">Switch to demo data</button></p></div>`;
@@ -160,6 +204,7 @@
 
   const money = (n) => (n == null ? '—' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US'));
   const moneyK = (n) => (n == null ? '—' : '$' + (n >= 1000 ? Math.round(n / 1000) + 'k' : Math.round(n)));
+  const asking = (l) => (priced(l) ? money(l.price) : 'Price not listed');
   const num = (n) => Math.round(n).toLocaleString('en-US');
   const miles = (n) => `${num(n)} mi`;
   const kMiles = (n) => (n < 1000 ? `${num(n)} mi` : `${Math.round(n / 1000)}k mi`);
@@ -175,7 +220,7 @@
 
   function marketText(l) {
     const e = expected(l);
-    if (!e) return null;
+    if (!e || !priced(l)) return null;
     const diff = l.price - e;
     const d = l.price / e - 1;
     const tone = d <= -0.07 ? 'great' : d <= -0.03 ? 'good' : d < 0.03 ? 'fair' : d < 0.07 ? 'high' : 'over';
@@ -272,7 +317,7 @@
     if (f.msrpMin != null) parts.push(`MSRP over ${money(f.msrpMin)}`);
     if (f.msrpMax != null) parts.push(`MSRP under ${money(f.msrpMax)}`);
     if (f.milesMax != null) parts.push(`< ${kMiles(f.milesMax)}`);
-    if (f.near) parts.push(`within ${f.radius} mi of ${f.near}`);
+    if (f.near) parts.push(`within ${f.radius} mi of ${placeLabel(f.near)}`);
     if (f.state.length) parts.push(`in ${f.state.join(', ')}`);
     if (f.dropsOnly) parts.push('with price cuts');
     if (f.belowMarket) parts.push('below market');
@@ -411,9 +456,10 @@
       ? `${esc(whereText(l))} · <b>Sold ${ago(l.sold.daysAgo)}</b> after ${plural(l.sold.daysToSell, 'day')}`
       : `${esc(whereText(l))} · ${esc(days(l.daysListed))}${cut && cut.delta < 0 ? ` · <span class="drop">↓ ${money(-cut.delta)} ${cut.daysAgo <= 1 ? 'today' : cut.daysAgo + 'd ago'}</span>` : ''}`;
     return `<article class="card listing-card${l.sold ? ' is-sold' : ''}">
-      <a class="card-link" href="${href}" aria-label="${esc(title(l) + ' ' + l.trim + ', ' + money(l.price))}"></a>
+      <a class="card-link" href="${href}" aria-label="${esc(title(l) + ' ' + l.trim + ', ' + asking(l))}"></a>
       <div class="card-art${l.photos && l.photos[0] ? ' has-photo' : ''}" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}` })}
         ${l.photos && l.photos[0] ? `<img class="card-photo" src="${esc(l.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('has-photo');this.remove()">` : ''}
+        ${opts && opts.ribbon ? `<span class="ribbon">${esc(opts.ribbon)}</span>` : ''}
         <div class="card-art-top">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && l.status !== 'On lot' && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private', 'b-private') : ''}${upfitBadge(l)}</div>
         <div class="card-art-actions">${favButton(l)}</div>
       </div>
@@ -421,7 +467,7 @@
         <h3 class="card-title">${esc(title(l))}</h3>
         <p class="card-sub">${esc(sub)}</p>
         <div class="card-price-row">
-          <span class="price">${l.sold ? '<small class="muted">Sold for</small> ' : ''}${money(l.price)}</span>
+          <span class="price">${l.sold ? '<small class="muted">Sold for</small> ' : ''}${asking(l)}</span>
           ${l.sold ? '' : deltaChip(l)}
         </div>
         <p class="card-meta">${meta}</p>
@@ -446,10 +492,17 @@
       out.push({ icon: '#', label: `VIN pattern ${compact}`, sub: `${plural(n, 'match')} · wildcards match any character`, href: searchHref({ vin: compact }) });
     } else if (/^[A-Z0-9]{11,17}$/.test(compact) && /\d/.test(compact)) {
       const hit = BY_VIN.get(compact) || ALL.find((l) => l.vin.endsWith(compact) || l.vin.startsWith(compact));
-      if (hit) out.push({ icon: '#', label: `${title(hit)} ${hit.trim}`, sub: `VIN ${hit.vin} · ${money(hit.price)}${hit.sold ? ' · sold' : ''}`, href: `#/car/${hit.id}` });
+      if (hit) out.push({ icon: '#', label: `${title(hit)} ${hit.trim}`, sub: `VIN ${hit.vin} · ${asking(hit)}${hit.sold ? ' · sold' : ''}`, href: `#/car/${hit.id}` });
       if (compact.length === 17) out.push({ icon: '⌁', label: `Decode VIN ${compact}`, sub: 'Check digit, model year, plant, manufacturer', href: `#/vin/${compact}` });
       else out.push({ icon: '#', label: `VINs starting ${compact}`, sub: 'Search by VIN prefix', href: searchHref({ vin: compact }) });
     }
+
+    const zip = /^\d{5}(?:-\d{4})?$/.test(q) ? q.slice(0, 5) : null;
+    const zg = zip && Geo.lookup(zip);
+    if (zg) {
+      out.push({ icon: '◎', label: `Cars near ${Geo.label(zg, { short: true })} ${zip}`, sub: `Within ${homeRadius()} miles of this ZIP code`, href: searchHref({ near: zip, radius: homeRadius() }) });
+      out.push({ icon: '⌂', label: `Make ${zip} my market`, sub: 'Deals near you on the home page, distances on every car', href: `#/?zip=${zip}` });
+    } else if (zip) out.push({ icon: '◎', label: `${zip} isn’t a US ZIP code`, sub: 'Check the number and try again', href: '#/' });
 
     // Plain-English: "red convertibles under 40k with leather seats"
     const parsed = NLQ.parse(q, vocab());
@@ -470,7 +523,7 @@
         const g = counts.get(key) || [];
         const gy = yearTok ? g.filter((l) => String(l.year) === yearTok) : g;
         if (!gy.length) continue;
-        out.push({ icon: '⌕', label: yearTok ? `${yearTok} ${key}` : key, sub: `${plural(gy.length, 'car')} · median ${money(Market.median(gy.map((l) => l.price)))}`,
+        out.push({ icon: '⌕', label: yearTok ? `${yearTok} ${key}` : key, sub: `${plural(gy.length, 'car')} · median ${money(Market.median(prices(gy)))}`,
           href: searchHref(Object.assign({ model: key }, yearTok ? { year: yearTok } : {})) });
       }
       const makes = [...new Set(DATA.models.map((m) => m.make))].filter((mk) => hit(mk) && !out.some((o) => o.label === mk));
@@ -489,6 +542,37 @@
     return out.slice(0, 10);
   }
 
+  // Show the longest of several placeholders that fits the box, so a narrow screen (a phone, the
+  // folded iPhone Duo) gets a shorter hint instead of one cut off mid-word. Re-fits when the box resizes.
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  // One shared observer and one font listener for every fitted input; inputs the page has
+  // re-rendered away are dropped, so nothing keeps detached nodes alive.
+  const fitted = new Map(); // input -> fit()
+  const refitAll = () => fitted.forEach((fit, el) => (el.isConnected ? fit() : (fitted.delete(el), fitRO?.unobserve(el))));
+  const fitRO = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((e) => fitted.get(e.target)?.())) : null;
+  if (!fitRO) addEventListener('resize', refitAll);
+  // The web font swaps in after first paint without resizing any box; measure again once it has.
+  if (document.fonts) { document.fonts.ready.then(refitAll); document.fonts.addEventListener?.('loadingdone', refitAll); }
+  function fitPlaceholder(input, options) {
+    const fit = () => {
+      const cs = getComputedStyle(input);
+      const room = input.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      if (room <= 0) return;
+      measureCtx.font = cs.font;
+      input.placeholder = options.find((t) => measureCtx.measureText(t).width <= room) || options[options.length - 1];
+    };
+    fitted.forEach((_, el) => { if (!el.isConnected) { fitted.delete(el); fitRO?.unobserve(el); } });
+    fitted.set(input, fit);
+    fitRO?.observe(input);
+    fit();
+  }
+  // Inputs drawn from templates list their shorter hints in data-placeholders ("a|b|c"), fitted as they appear.
+  const fitNewPlaceholders = () => document.querySelectorAll('input[data-placeholders]:not([data-fitted])').forEach((el) => {
+    el.dataset.fitted = '';
+    fitPlaceholder(el, [el.placeholder, ...el.dataset.placeholders.split('|')]);
+  });
+  new MutationObserver(fitNewPlaceholders).observe(document.documentElement, { childList: true, subtree: true });
+
   let searchBoxSeq = 0;
   function mountSearchBox(container, opts) {
     const id = 'sb' + ++searchBoxSeq;
@@ -503,6 +587,7 @@
     const input = form.querySelector('input');
     const list = form.querySelector('ul');
     let items = [], active = -1;
+    if (opts.placeholders) fitPlaceholder(input, [opts.placeholder, ...opts.placeholders]);
 
     function render() {
       items = suggestions(input.value);
@@ -514,6 +599,8 @@
     }
     function open(v) {
       list.hidden = !v;
+      // Lift the hero over the sticky tab bar while suggestions show (a class, since Safari doesn't reliably re-run :has() on [hidden]).
+      list.closest('.home-top')?.classList.toggle('sb-open', v);
       input.setAttribute('aria-expanded', String(v));
     }
     function setActive(i) {
@@ -546,18 +633,47 @@
   }
 
   const nlQuick = (text) => nlHref(NLQ.parse(text, VOCAB));
-  const QUICK = [
-    { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
-    { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
-    { label: '4x4 trucks under 50k miles near Denver', href: nlQuick('4x4 trucks under 50k miles near denver') },
-    { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
-    { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
-    { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
-    { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
-    { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
-  ];
+  // The "near …" example uses your home city once one is set.
+  const quickList = () => {
+    const home = homeZip();
+    const trucks = NLQ.parse('4x4 trucks under 50k miles', VOCAB);
+    trucks.filters.near = home || 'Denver, CO';
+    if (home) trucks.filters.radius = homeRadius();
+    return [
+      { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
+      { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
+      { label: `4x4 trucks under 50k miles near ${home ? Geo.lookup(home).place : 'Denver'}`, href: nlHref(trucks) },
+      { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
+      { label: 'Third-row SUVs under $35k', href: nlQuick('suv with third row under 35k') },
+      { label: 'Manual Civic under 60k miles', href: nlQuick('manual civic under 60k miles') },
+      { label: 'Tacoma 4x4 with tow package', href: nlQuick('tacoma 4x4 with tow package') },
+      { label: 'Wrangler under $35k', href: nlQuick('wrangler under 35k') },
+      { label: 'AWD wagons with heated seats', href: nlQuick('awd wagons with heated seats') },
+      { label: 'Black Model 3 under $30k', href: nlQuick('black model 3 under 30k') },
+      { label: 'F-150 under 40k miles with CarPlay', href: nlQuick('f-150 under 40k miles with carplay') },
+      { label: 'Plug-in hybrid SUVs 2022+', href: nlQuick('plug-in hybrid suv 2022+') },
+      { label: 'Corvette, any year, under $60k', href: nlQuick('corvette under 60k') },
+      { label: 'Minivans with 360° camera', href: nlQuick('minivan with 360 camera') },
+      { label: 'Diesel trucks under 80k miles', href: nlQuick('diesel trucks under 80k miles') },
+      { label: 'Blue Bronco with a manual', href: nlQuick('blue bronco manual') },
+      { label: 'Outback under $25k with blind spot monitor', href: nlQuick('outback under 25k with blind spot monitor') },
+      { label: 'Coupes with ventilated seats', href: nlQuick('coupes with ventilated seats') },
+      { label: 'EVs with price drops', href: nlQuick('electric with price drops'), demoOnly: true },
+      { label: 'Roush and RTR Mustangs', href: searchHref({ model: 'Ford Mustang', upfitter: ['Roush', 'RTR'] }), needs: 'upfitter' },
+      { label: 'What sold last month', href: searchHref({ when: 'sold', sort: 'sold-recent' }), needs: 'sold' },
+    ];
+  };
   // Example searches the current data source can actually answer.
-  const quickFor = () => QUICK.filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
+  const quickFor = () => quickList().filter((q) => !isLive() || (!q.demoOnly && (!q.needs || can(q.needs))));
+  // A copy of the list in random order (Fisher–Yates), so the examples change on every visit.
+  const shuffle = (list) => {
+    const out = list.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
 
   /* ---------- Views ---------- */
 
@@ -566,152 +682,858 @@
 
   function setView(name, html) {
     view = { name };
+    if (name !== 'home') stopPanelCycle();
     app.innerHTML = html;
     document.querySelectorAll('.main-nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
     document.body.dataset.view = name;
   }
 
-  /* ----- Home + insights ----- */
+  /* ----- Home: sections and the market carousel ----- */
 
-  function insightsHtml() {
-    const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
-    const movers = Market.priceMovers(LISTINGS, 20);
-    const mv = movers[0];
-    const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR).slice(0, 4);
-    const drops = Market.recentDrops(LISTINGS, 7);
-    const states = Market.stateDeltas(LISTINGS, delta);
-    const values = LISTINGS.filter((l) => l.condition !== 'New' && l.miles < 80000 && l.year >= CURRENT_YEAR - 6)
-      .sort((a, b) => delta(a) - delta(b)).slice(0, 5);
+  // The home page: one big search box, then a strip of tabs, then the one tab you picked. The first
+  // three tabs are the panels of "What the market's doing": National Trends (the week's four callout
+  // cards), Rare Specs and Time Capsules, a carousel the ‹ › pills turn in place. The rest are
+  // sections of their own, each with its own heading. Only the selected tab is on the page.
+  const HOME_CATS = [
+    { id: 'insights', title: 'What the market’s doing', short: 'This Week' },
+    { id: 'map', title: 'On the map', short: 'Map' },
+    { id: 'local', title: 'Your market', short: 'Your Market' },
+    { id: 'trends', title: 'The whole market', short: 'Whole Market' },
+    { id: 'rewind', title: 'Rewind the market', short: 'Rewind' },
+    { id: 'browse', title: 'Browse the market', short: 'Browse' },
+  ];
+  const PANELS = [
+    { id: 'national', route: 'national', label: () => (isLive() && homeZip() ? 'Local Trends' : 'National Trends') },
+    { id: 'rare', route: 'rare-specs', label: () => 'Rare Specs' },
+    { id: 'capsules', route: 'capsules', label: () => 'Time Capsules' },
+  ];
+  const PANEL_MS = 9000; // how long a panel shows before the next comes around on its own
+  const PANEL = { id: 'national', auto: true, hover: false, raf: 0 };
 
-    const arrivalsCard = `<article class="card insight">
-      <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving</h3></header>
+  // The sections the page can show right now: a live source skips the ones that need the demo's sales history.
+  function homeCats() {
+    return HOME_CATS.filter((c) => {
+      if (c.id === 'local') return !!homeZip();
+      if (c.id === 'trends') return !isLive() || SOURCE() === 'visor';
+      if (c.id === 'rewind') return !isLive() || can('snapshots');
+      return true;
+    });
+  }
+  // The panels the carousel can show: Rare Specs and Time Capsules need colors, options and model counts,
+  // which the demo market and Visor have; the free auto.dev plan has neither, so it shows the trends alone.
+  function homePanels() {
+    return PANELS.filter((p) => p.id === 'national' || !isLive() || SOURCE() === 'visor');
+  }
+  const panelById = (id) => homePanels().find((p) => p.id === id) || homePanels()[0];
+
+  // The tab showing: a panel's id ('national', 'rare', 'capsules') shows the carousel on that panel;
+  // a section's id ('map', 'local', 'trends', 'rewind', 'browse') shows that section alone.
+  const TAB = { id: 'national' };
+  const tabIsPanel = (id) => PANELS.some((p) => p.id === id);
+  const tabRoute = (id) => (PANELS.find((p) => p.id === id) || {}).route || id;
+  // The tab a request can actually show: 'insights' means the carousel on its current panel, and a
+  // section or panel the data source can't fill falls back to the first panel.
+  function tabFor(id) {
+    if (id === 'insights') id = PANEL.id;
+    if (tabIsPanel(id)) return panelById(id).id;
+    return homeCats().some((c) => c.id === id && c.id !== 'insights') ? id : homePanels()[0].id;
+  }
+
+  // A section's heading row: title and eyebrow on the left, anything extra on the right.
+  function catHead(cats, id, o) {
+    const cat = cats.find((c) => c.id === id) || HOME_CATS.find((c) => c.id === id);
+    return `<div class="insight-head cat-head">
+        <div><h2>${(o && o.title) || esc(cat.title)}</h2>${o && o.eyebrow ? `<p class="eyebrow">${o.eyebrow}</p>` : ''}</div>
+        ${o && o.extra ? `<div class="cat-switch">${o.extra}</div>` : ''}
+      </div>`;
+  }
+  const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${
+    homePanels().map((p) => `<a href="#/${p.route}" data-action="tab" data-tab="${p.id}">${esc(p.label())}</a>`).join('')
+    + cats.filter((c) => c.id !== 'insights').map((c) => `<a href="#/${c.id}" data-action="tab" data-tab="${c.id}">${esc(c.short)}</a>`).join('')}</div></nav>`;
+
+  // Highlight the tab showing in the strip (the carousel's current panel while you're on it).
+  function syncCatNav() {
+    const active = tabIsPanel(TAB.id) ? panelById(PANEL.id).id : TAB.id;
+    document.querySelectorAll('.cat-nav a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === active));
+    document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView);
+  }
+  // Bring the highlighted tab into view (centred) when it's off the visible part of the strip.
+  function keepActiveTabInView(strip) {
+    const a = strip.querySelector('a.active');
+    const off = a && (a.offsetLeft < strip.scrollLeft || a.offsetLeft + a.offsetWidth > strip.scrollLeft + strip.clientWidth);
+    if (off) strip.scrollTo({ left: a.offsetLeft - (strip.clientWidth - a.offsetWidth) / 2 });
+    catNavEdges(strip);
+  }
+  // Mark which ends of the strip have tabs scrolled past them, for the edge fades in the CSS.
+  function catNavEdges(strip) {
+    const max = strip.scrollWidth - strip.clientWidth;
+    strip.classList.toggle('more-l', strip.scrollLeft > 2);
+    strip.classList.toggle('more-r', strip.scrollLeft < max - 2);
+  }
+  document.addEventListener('scroll', (e) => { if (e.target.classList && e.target.classList.contains('cat-nav-inner')) catNavEdges(e.target); }, true);
+  // Folding or rotating narrows the strip: keep the open tab visible, not just the fades current.
+  addEventListener('resize', () => document.querySelectorAll('.cat-nav-inner').forEach(keepActiveTabInView));
+
+  /* ----- The carousel: a heading with ‹ previous and next › pills, and the panel under it ----- */
+
+  // The heading row. The pills name the panels either side of this one in the ring; while the next
+  // panel is due to come around on its own, its pill wears a ring that fills up.
+  function marketHeadHtml() {
+    const panels = homePanels();
+    const n = panels.length, i = panels.indexOf(panelById(PANEL.id));
+    const pill = (p, dir) => `<a class="cat-pill${dir > 0 ? ' next' : ''}" href="#/${p.route}" data-action="panel" data-panel="${p.id}" aria-label="${dir < 0 ? 'Previous' : 'Next'}: ${esc(p.label())}">${dir < 0 ? '<span aria-hidden="true">‹</span> ' : ''}${esc(p.label())}${dir > 0 ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    const pills = (n > 2 ? pill(panels[(i + n - 1) % n], -1) : '') + (n > 1 ? pill(panels[(i + 1) % n], 1) : '');
+    const eyebrow = isLive()
+      ? `Live · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`
+      : `Week of ${esc(weekOf)}`;
+    const extra = !isLive() ? '' : homeZip() ? radiusSegHtml() : '<p class="muted small">Type a ZIP code above to see the market near you.</p>';
+    return `<div class="insight-head cat-head">
+        <div><h2>What the market’s doing</h2><p class="eyebrow">${eyebrow}</p></div>
+        <div class="cat-switch">${extra}${pills}</div>
+      </div>`;
+  }
+
+  function marketPanelHtml() {
+    const id = panelById(PANEL.id).id;
+    if (id === 'rare') return isLive() ? `<div class="insight-grid spec-grid" id="live-rare">${loadingHtml(`Looking for rare specs ${scopeShort()}…`)}</div>` : rarePanelHtml();
+    if (id === 'capsules') return isLive() ? `<div class="insight-grid spec-grid" id="live-capsules">${loadingHtml(`Looking for time capsules ${scopeShort()}…`)}</div>` : capsulePanelHtml();
+    return isLive() ? `<div class="insight-grid" id="live-insights">${loadingHtml(`Loading the live market ${scopeShort()}…`)}</div>` : weeklyGridHtml();
+  }
+
+  // Show a panel in place, without touching the rest of the page.
+  function showPanel(id) {
+    PANEL.id = panelById(id).id;
+    if (tabIsPanel(TAB.id)) TAB.id = PANEL.id;
+    const head = document.getElementById('market-head'), body = document.getElementById('market-panel');
+    if (!head || !body) return;
+    head.innerHTML = marketHeadHtml();
+    body.innerHTML = marketPanelHtml();
+    fillPanelLive();
+    fillTrimMapIfShown();
+    syncCatNav();
+    startPanelCycle();
+  }
+  // Live data fills whichever panel is showing (and the browse grid); repeats within 30 minutes are free.
+  function fillPanelLive() {
+    if (!isLive()) return;
+    fillLiveInsights();
+    if (document.getElementById('live-capsules')) fillLiveCapsules();
+    if (document.getElementById('live-rare')) fillLiveRare();
+  }
+
+  // The next panel comes around on its own every PANEL_MS, a ring filling on its pill, until you pick
+  // a panel yourself. The clock waits while the pointer or focus is on the section or the tab is
+  // hidden, and never runs for people who asked for reduced motion.
+  function startPanelCycle() {
+    stopPanelCycle();
+    if (!PANEL.auto || !document.getElementById('market-panel') || homePanels().length < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let elapsed = 0, last = performance.now();
+    const tick = (now) => {
+      if (view.name !== 'home') return;
+      if (!document.hidden && !PANEL.hover) elapsed += now - last;
+      last = now;
+      const pill = document.querySelector('#market-head .cat-pill.next');
+      if (pill) { pill.classList.add('auto'); pill.style.setProperty('--ring', `${Math.min(100, (elapsed / PANEL_MS) * 100).toFixed(1)}%`); }
+      // A panel still computing its cards stays until they're in.
+      if (elapsed >= PANEL_MS && !document.querySelector('#market-panel .loading-card')) {
+        const panels = homePanels();
+        showPanel(panels[(panels.indexOf(panelById(PANEL.id)) + 1) % panels.length].id);
+        return;
+      }
+      PANEL.raf = requestAnimationFrame(tick);
+    };
+    PANEL.raf = requestAnimationFrame(tick);
+  }
+  function stopPanelCycle() {
+    if (PANEL.raf) cancelAnimationFrame(PANEL.raf);
+    PANEL.raf = 0;
+  }
+
+  const signedPct = (v, digits) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${pct(Math.abs(v), digits)}`;
+  const soldLabel = (l) => (l.sold.daysAgo === 0 ? 'sold today' : `sold ${l.sold.daysAgo} days ago`);
+
+  /* ----- What the market's doing: this week's four cards ----- */
+
+  const RET_YEARS = 3; // residual value is followed over this many years
+  let TRIM_MAP = null; // the state-scoped trim card's map, to redraw county by county once the counties load
+  const fillTrimMapIfShown = () => { if (TRIM_MAP && document.getElementById('trim-map')) fillTrimMap(TRIM_MAP.st, TRIM_MAP.key, TRIM_MAP.paceClass); };
+  const milesText = (n) => (n < 1000 ? `${num(n)} miles` : `${Math.round(n / 1000)}k miles`);
+
+  // One track per model: the value lost in each year is a segment from the left (year 1 darkest), so
+  // the empty remainder is what the car still asks, printed at the right end.
+  function retTrack(r) {
+    let floor = 1;
+    const segs = r.byAge.map((v, k) => {
+      const next = Math.min(floor, Math.max(0, v));
+      const seg = `<i class="ret-${k + 1}" style="left:${((1 - floor) * 100).toFixed(2)}%;width:${((floor - next) * 100).toFixed(2)}%"><span class="sr-only">Year ${k + 1}: ${Math.round(v * 100)}%</span></i>`;
+      floor = next;
+      return seg;
+    }).join('');
+    return `<div class="ret-track" role="img" aria-label="${esc(r.make)} ${esc(r.model)}: ${r.byAge.map((v, k) => `year ${k + 1} ${Math.round(v * 100)}%`).join(', ')} of MSRP">
+            <span class="ret-fill">${segs}</span>
+            <b>${Math.round(r.byAge[r.byAge.length - 1] * 100)}%</b>
+          </div>`;
+  }
+
+  // One state with its cities as dots, sized by sales and colored by pace.
+  function stateDotMap(st, key, paceClass) {
+    const where = stateName(st.state);
+    return Charts.geoMap((s) => (s === st.state ? { cls: 'geo-state', title: `${where}: ${plural(st.n, 'sale')}, median ${plural(Math.round(st.days), 'day')} to sell` } : null), {
+      focus: st.state, aria: `${where}, with each city's ${key} sales colored by how fast they sold`,
+      dots: st.cities.map((c) => ({ city: c.city, lat: c.lat, lng: c.lng, count: c.n, cls: paceClass(c.days / st.days - 1), title: `${c.city}: ${plural(c.n, 'sale')}, median ${plural(Math.round(c.days), 'day')} to sell` })),
+    });
+  }
+  // The same state county by county, like Visor's: each county with sales colored by its pace against
+  // the state's. Null until js/uscounties.js has loaded.
+  function stateCountyMap(st, key, paceClass) {
+    if (!Charts.countiesLoaded(st.state)) return null;
+    const by = new Map();
+    for (const c of st.cities) {
+      const county = Charts.countyAt(st.state, c.lat, c.lng);
+      if (!county) continue;
+      const v = by.get(county.id) || { n: 0, sum: 0 };
+      v.n += c.n; v.sum += c.days * c.n;
+      by.set(county.id, v);
+    }
+    const where = stateName(st.state);
+    return Charts.countyMap(st.state, (c) => {
+      const v = by.get(c.id);
+      if (!v) return null;
+      const days = v.sum / v.n;
+      return { cls: paceClass(days / st.days - 1), title: `${c.name} County: ${plural(v.n, 'sale')}, ${plural(Math.round(days), 'day')} to sell`, href: searchHref({ model: key, state: st.state, when: 'sold', sort: 'sold-fastest' }) };
+    }, { aria: `${where} county by county, colored by how fast ${key}s sold there` });
+  }
+  // Loads the county outlines once (a separate script, since the file is large and only this card needs it).
+  let countiesLoading = null;
+  function loadCounties() {
+    if (!countiesLoading) countiesLoading = new Promise((resolve) => {
+      if (typeof USCounties !== 'undefined') return resolve(true);
+      const app = document.querySelector('script[src*="js/app.js"]');
+      const v = app && /\?v=([^&"]+)/.exec(app.getAttribute('src'));
+      const el = document.createElement('script');
+      el.src = `js/uscounties.js${v ? `?v=${v[1]}` : ''}`;
+      el.onload = () => resolve(true);
+      el.onerror = () => resolve(false);
+      document.head.appendChild(el);
+    });
+    return countiesLoading;
+  }
+  // Once the counties are in, redraw the trim card's map county by county (if the card is still up).
+  function fillTrimMap(st, key, paceClass) {
+    loadCounties().then((ok) => {
+      const box = document.getElementById('trim-map');
+      if (!ok || !box || !box.isConnected) return;
+      const map = stateCountyMap(st, key, paceClass);
+      if (map) box.innerHTML = map;
+    });
+  }
+
+  // The week's four cards. Each builder takes the numbers it draws, so the demo (computed from every
+  // listing) and a live source (computed from facet requests around your market) share one look.
+  // o.scope adds the market to every link, o.where names it ("nationwide" or "near Kissimmee, FL").
+  const paceClass = (r) => (r <= -0.2 ? 'd-great' : r <= -0.08 ? 'd-good' : r < 0.08 ? 'd-fair' : r < 0.2 ? 'd-high' : 'd-over');
+
+  // Residual value: ret is [{ make, model, byAge, msrp, avgList, avgMiles }], best keeper first.
+  function retentionCardHtml(ret, o) {
+    if (!ret.length) return '';
+    const years = Array.from({ length: RET_YEARS }, (_, k) => CURRENT_YEAR - RET_YEARS + k);
+    const shop = searchHref(Object.assign(o.models ? { model: ret.map((r) => `${r.make} ${r.model}`) } : { q: 'Compact SUV' }, { condition: ['Used', 'Certified'], year: years }, o.scope || {}));
+    return `<article class="card insight">
+      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in residual value over ${RET_YEARS} years</h3>
+      <p class="muted">${years[0]} to ${years[years.length - 1]} <span class="sep">|</span> Under 75k miles${o.where ? ` <span class="sep">|</span> ${esc(o.where)}` : ''}</p></header>
+      <div class="ret-bars">
+        ${ret.map((r) => `<div class="ret-row">
+          <div class="ret-label"><b>${esc(r.make)} ${esc(r.model)}</b><small>MSRP ${money(r.msrp)} <span class="sep">|</span> Avg list ${money(r.avgList)} <span class="sep">|</span> ${milesText(r.avgMiles)}</small></div>
+          ${retTrack(r)}
+        </div>`).join('')}
+      </div>
+      <div class="legend boxed">${years.map((_, k) => `<span><i class="key ret-${k + 1}"></i>Year ${k + 1}</span>`).join('')}</div>
+      <a class="card-cta" href="${shop}">Shop ${years[0]}–${years[years.length - 1]} compact SUVs${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(shop, 'Shop these compact SUVs')}
+    </article>`;
+  }
+
+  // Which trim sells faster: t is { make, model, condition, sc: { n, fast, slow, gap }, where, aside,
+  // map, mapId, scope }; sc is the market the headline is about (a state, your market or the country).
+  function trimCardHtml(t) {
+    const { sc } = t;
+    const key = `${t.make} ${t.model}`;
+    // A strip of pills across the model's range of days to sell, with each trim's pace marked: green up
+    // to the fastest trim, yellow to orange between the two, red past the slowest.
+    const N = 25, max = sc.slow.days * 1.12;
+    const slot = (d) => Math.max(0, Math.min(N - 1, Math.round((d / max) * (N - 1))));
+    const sf = slot(sc.fast.days), ss = Math.max(slot(sc.slow.days), sf + 1);
+    const marks = new Map([[sf, { t: sc.fast, cls: 'mark-fast' }], [ss, { t: sc.slow, cls: 'mark-slow' }]]);
+    const dots = Array.from({ length: N }, (_, k) => {
+      const m = marks.get(k);
+      if (m) return `<i class="${m.cls}" title="${esc(m.t.trim)}: ${plural(Math.round(m.t.days), 'day')}"></i>`;
+      const f = (k - sf) / (ss - sf);
+      return `<i class="${k < sf ? 'p1' : k > ss ? (k - ss <= 2 ? 'p5' : 'p6') : f < 0.34 ? 'p2' : f < 0.67 ? 'p3' : 'p4'}"></i>`;
+    }).join('');
+    const row = (x, cls) => `<div class="trim-row"><i class="key ${cls}"></i><span class="trim-name"><b>${esc(x.trim)}</b> <small>(${num(x.n)} sold)</small></span><b class="trim-days">${plural(Math.round(x.days), 'day')}</b></div>`;
+    const all = searchHref(Object.assign({ model: key, when: 'sold', sort: 'sold-fastest' }, t.scope || {}));
+    return `<article class="card insight">
+      <header><h3>${badge(t.condition, t.condition === 'New' ? 'b-new' : 'b-used')} ${esc(key)} ${esc(/s$/i.test(sc.fast.trim) ? `${sc.fast.trim} models` : `${sc.fast.trim}s`)} sell ${Math.round(sc.gap)} days faster than ${esc(sc.slow.trim)} models ${esc(t.where)}</h3>
+      <p class="muted">Median days from listing to sale over the last 120 days <span class="sep">|</span> ${plural(sc.n, 'sale')} ${esc(t.where)}</p></header>
+      <div class="trim-layout">
+        <div class="trim-vs">
+          <p class="muted">Avg days to sell</p>
+          <div class="days-dots" aria-hidden="true">${dots}</div>
+          ${row(sc.fast, 'mark-fast')}
+          ${row(sc.slow, 'mark-slow')}
+          ${t.aside ? `<p class="muted small">${t.aside}</p>` : ''}
+        </div>
+        <div class="map-paper${t.mapId ? ' state-map' : ''}"${t.mapId ? ` id="${t.mapId}"` : ''}>${t.map}</div>
+      </div>
+      <div class="legend diverging"><span><i class="key d-great"></i>Sells faster than typical</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>Slower</span></div>
+      <a class="card-cta" href="${all}">Every ${esc(t.model)} sold ${esc(t.where)}, fastest first →</a>
+      ${openCorner(all, `Every ${t.model} sold, fastest first`)}
+    </article>`;
+  }
+
+  // A make whose sales climbed (or fell): mv is { make, now, before, change, models, byState }.
+  function momentumCardHtml(mv, o) {
+    const rose = mv.change >= 0;
+    const lead = mv.models.filter((m) => m.change != null && m.now >= 5).sort((a, b) => (rose ? b.change - a.change : a.change - b.change))[0];
+    const chgClass = (d) => (d == null ? 'up-2' : d >= 0.25 ? 'up-3' : d >= 0.1 ? 'up-2' : d > 0.02 ? 'up-1' : d > -0.02 ? 'flat' : d > -0.1 ? 'down-1' : d > -0.25 ? 'down-2' : 'down-3');
+    const sales = `${plural(mv.now, 'sale')} in 30 days vs. ${num(mv.before)} the month before${o.where ? ` ${esc(o.where)}` : ''}`;
+    const scope = o.scope || {};
+    const all = searchHref(Object.assign({ make: mv.make, when: 'sold', sort: 'sold-recent' }, scope));
+    return `<article class="card insight">
+      <header><h3>${badge(o.condition || 'Used', 'b-used')} ${esc(mv.make)} sales${o.near ? ` ${esc(o.near)}` : ''} ${Math.abs(mv.change) < 0.005 ? 'held steady' : `${rose ? 'rose' : 'fell'} ${pct(Math.abs(mv.change))}`} in the last month</h3>
+      <p class="muted">${lead ? `The ${esc(lead.model)} leads the ${rose ? 'climb' : 'slide'}, ${lead.change >= 0 ? 'up' : 'down'} ${pct(Math.abs(lead.change))} in a month` : sales}</p></header>
+      <div class="split-map">
+        <div class="momentum">
+          <ul class="momentum-list">${mv.models.slice(0, 5).map((m) => `<li><a href="${searchHref(Object.assign({ model: `${mv.make} ${m.model}`, when: 'sold', sort: 'sold-recent' }, scope))}"><span>${esc(m.model)}</span><b>${num(m.now)}</b><i class="chg ${m.change == null || m.change >= 0 ? 'up' : 'down'}">${m.change == null ? 'new' : signedPct(m.change, 1)}</i></a></li>`).join('')}</ul>
+          ${lead ? `<p class="muted small">${sales}</p>` : ''}
+        </div>
+        <div class="map-paper">${Charts.geoMap((st) => {
+          const d = mv.byState[st];
+          if (!d || d.now + d.before < 4) return null;
+          return { cls: chgClass(d.change), title: `${st}: ${plural(d.now, 'sale')} this month vs. ${num(d.before)} before${d.change != null ? ` (${signedPct(d.change)})` : ''}`, href: searchHref({ make: mv.make, state: st, when: 'sold', sort: 'sold-recent' }) };
+        }, { aria: `States shaded by the change in ${mv.make} sales` })}${o.mapNote ? `<p class="muted small map-note">${esc(o.mapNote)}</p>` : ''}</div>
+      </div>
+      <div class="legend diverging"><span><i class="key down-2"></i>Fewer sales</span><span><i class="key flat"></i>About the same</span><span><i class="key up-2"></i>More sales</span></div>
+      <a class="card-cta" href="${all}">Every ${esc(mv.make)} sold this month${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(all, `Every ${mv.make} sold this month`)}
+    </article>`;
+  }
+
+  const ARRIVAL_ICON = {
+    lot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5"/></svg>',
+    transit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18l-2 4H5z"/><path d="M5 17V9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8"/><path d="M12 6V3M9 3h6"/></svg>',
+    production: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="9" width="20" height="7" rx="2"/><path d="M6 16v2M18 16v2M6 9l1.5-4h9L18 9M6 12.5h2M16 12.5h2"/></svg>',
+  };
+  // New-model arrivals: arr is { year, make, model, total, byStatus, recent }.
+  function arrivalsCardHtml(arr, o) {
+    const ICON = ARRIVAL_ICON;
+    const statusChip = (st) => (st ? `<span class="chip status">${st === 'In transit' ? ICON.transit : st === 'In production' ? ICON.production : ICON.lot}${esc(st)}</span>` : '');
+    const all = searchHref(Object.assign({ model: arr.make + ' ' + arr.model, year: arr.year, condition: 'New', sort: 'newest' }, o.scope || {}));
+    return `<article class="card insight">
+      <header><h3>${badge('New', 'b-new')} ${arr.year} ${esc(arr.make)} ${esc(arr.model)}s are arriving${o.near ? ` ${esc(o.near)}` : ''}</h3></header>
       <div class="arrivals">
         <dl class="stat-stack">
-          <div class="stat-head">${num(arr.total)} for sale nationwide</div>
-          <div><dt>On lot</dt><dd>${num(arr.byStatus['On lot'])}</dd></div>
-          <div><dt>In transit</dt><dd>${num(arr.byStatus['In transit'])}</dd></div>
-          <div><dt>In production</dt><dd>${num(arr.byStatus['In production'])}</dd></div>
+          <div class="stat-head">${num(arr.total)} for sale ${esc(o.where || 'nationwide')}</div>
+          <div><dt>${ICON.lot} On lot</dt><dd>${num(arr.byStatus['On lot'])}</dd></div>
+          <div><dt>${ICON.production} Production</dt><dd>${num(arr.byStatus['In production'])}</dd></div>
+          <div><dt>${ICON.transit} Transit</dt><dd>${num(arr.byStatus['In transit'])}</dd></div>
         </dl>
         <div class="mini-list">
-          <div class="mini-list-head"><span class="pulse" aria-hidden="true"></span> Recent arrivals</div>
-          <ul>${arr.recent.slice(0, 6).map((l) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${esc(l.status)}</small></span></a></li>`).join('')}</ul>
+          <div class="mini-list-head"><span class="pulse-dots" aria-hidden="true"><i></i><i></i><i></i></span> Recent arrivals</div>
+          <ul>${arr.recent.slice(0, 4).map((l) => `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${badge('New', 'b-new')} <span class="sep">|</span> ${kMiles(l.miles)} <span class="sep">|</span> ${esc(l.city)}, ${esc(l.state)}</small></span><span class="r"><b>${money(l.price)}</b><small>${statusChip(l.status)}</small></span></a></li>`).join('')}</ul>
         </div>
       </div>
-      <a class="card-cta" href="${searchHref({ model: arr.make + ' ' + arr.model, year: arr.year, sort: 'newest' })}">See all ${arr.year} ${esc(arr.model)}s →</a>
+      <a class="card-cta" href="${all}">See all ${arr.year} ${esc(arr.model)}s${o.near ? ` ${esc(o.near)}` : ''} →</a>
+      ${openCorner(all, `See all ${arr.year} ${arr.model}s`)}
     </article>`;
+  }
 
-    let moverCard = '';
-    if (mv) {
-      const down = mv.change < 0;
-      moverCard = `<article class="card insight">
-        <header><h3>${badge('Used', 'b-used')} ${mv.year} ${esc(mv.make)} ${esc(mv.model)} prices ${down ? 'down' : 'up'} ${money(Math.abs(mv.change))} in 30 days</h3>
-        <p class="muted">At ${kMiles(mv.mid)} (the median) · ${plural(mv.count, 'listing')} nationwide</p></header>
-        ${Charts.scatter({
-          series: [
-            { points: mv.then.map(([x, y]) => ({ x, y })), cls: 'then', fit: mv.fThen },
-            { points: mv.now.map(([x, y]) => ({ x, y })), cls: 'now', fit: mv.fNow },
-          ],
-          annotations: [{ x: mv.mid, label: `${money(Math.abs(mv.change))} ${down ? 'less' : 'more'}` }],
-          xLabel: 'Miles', aria: `Price versus mileage, 30 days ago and today, for ${mv.year} ${mv.make} ${mv.model}`,
-        })}
-        <div class="legend"><span><i class="key then"></i>Prices 30 days ago</span><span><i class="key now"></i>Prices today</span></div>
-        <a class="card-cta" href="${searchHref({ model: mv.make + ' ' + mv.model, year: mv.year, condition: ['Used', 'Certified'] })}">Browse these ${esc(mv.model)}s →</a>
-      </article>`;
+  function weeklyGridHtml() {
+    const arr = Market.arrivals(LISTINGS, CURRENT_YEAR);
+    const ret = Market.retention(LISTINGS, 'Compact SUV', CURRENT_YEAR, RET_YEARS).slice(0, 3);
+    const momentum = Market.makeMomentum(SOLD, 30, 20);
+    const mv = momentum.find((m) => m.models.length >= 3 && m.now >= 50) || momentum[0];
+    const tv = Market.trimVelocity(SOLD, 20)[0];
+
+    let trimCard = '';
+    TRIM_MAP = null;
+    if (tv) {
+      const key = `${tv.make} ${tv.model}`;
+      // Like Visor's "in Texas": the state where the same two trims are furthest apart, when each sold
+      // there at least five times; else the whole country.
+      const st = tv.states[0] || null;
+      const others = tv.trims.slice(1, -1);
+      // The map: with a state, that state county by county, each colored by how fast the model sold
+      // there (the counties load on first use; until then, and without them, the state's outline
+      // with its cities as dots); else every state shaded by how fast the model sells there.
+      TRIM_MAP = st ? { st, key, paceClass } : null;
+      trimCard = trimCardHtml({
+        make: tv.make, model: tv.model, condition: tv.condition, sc: st || tv,
+        where: st ? `in ${stateName(st.state)}` : 'nationwide',
+        aside: st
+          ? `Nationwide: ${esc(tv.fast.trim)} ${Math.round(tv.fast.days)}d · ${esc(tv.slow.trim)} ${Math.round(tv.slow.days)}d`
+          : others.map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · '),
+        map: st ? (stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass)) : nationalPaceMap(tv.byState, tv.days, key),
+        mapId: st ? 'trim-map' : null,
+        scope: st ? { state: st.state } : {},
+      });
     }
 
-    const retentionCard = ret.length ? `<article class="card insight">
-      <header><h3>${esc(ret[0].make)} ${esc(ret[0].model)} leads compact SUVs in value kept over 4 years</h3>
-      <p class="muted">${CURRENT_YEAR - 4} to ${CURRENT_YEAR - 1} model years · under 75k miles · average list price vs. original MSRP</p></header>
-      ${Charts.retentionBars(ret.map((r) => ({ title: `${r.make} ${r.model}`, sub: `MSRP ${money(r.msrp)} → avg ${money(r.avgList)}`, values: r.byAge })))}
-      <div class="legend">${[1, 2, 3, 4].map((y) => `<span><i class="key ret-${y}"></i>Year ${y}</span>`).join('')}</div>
-    </article>` : '';
+    return `<div class="insight-grid">${retentionCardHtml(ret, {})}${trimCard}${mv ? momentumCardHtml(mv, {}) : ''}${arrivalsCardHtml(arr, {})}</div>`;
+  }
 
-    const dropsCard = `<article class="card insight">
-      <header><h3>${badge('Price cuts', 'b-drop')} ${num(drops.length)} cars got cheaper this week</h3>
-      <p class="muted">Biggest reductions in the last 7 days</p></header>
-      <ul class="rank-list">${drops.slice(0, 5).map(({ l, c }) => `<li><a href="#/car/${l.id}">
+  // Every state shaded by how fast a model sells there against its pace nationwide.
+  function nationalPaceMap(byState, days, key) {
+    return Charts.geoMap((s) => {
+      const d = byState[s];
+      if (!d || d.n < 5 || d.days == null) return null;
+      return { cls: paceClass(d.days / days - 1), title: `${s}: ${plural(d.n, 'sale')}, median ${plural(Math.round(d.days), 'day')} to sell`, href: searchHref({ model: key, state: s, when: 'sold', sort: 'sold-fastest' }) };
+    }, { aria: `States shaded by how fast ${key}s sell` });
+  }
+
+  /* ----- National trends: the whole market, computed from every listing ----- */
+
+  // The whole market's six cards. Each builder takes the numbers it draws, so the demo (every listing)
+  // and Visor (facets, snapshots and samples of listings) share one look; o.where names the market.
+
+  // The biggest 30-day price move: mv is { year, make, model, count, change, now, then, fNow, fThen, mid }.
+  function moverCardHtml(mv, o) {
+    const down = mv.change < 0;
+    return `<article class="card insight">
+      <header><h3>${badge('Used', 'b-used')} ${mv.year} ${esc(mv.make)} ${esc(mv.model)} prices ${down ? 'down' : 'up'} ${money(Math.abs(mv.change))} in 30 days</h3>
+      <p class="muted">At ${kMiles(mv.mid)} (the median) · ${plural(mv.count, 'listing')} ${esc(o.where || 'nationwide')}</p></header>
+      ${Charts.scatter({
+        series: [
+          { points: mv.then.map(([x, y]) => ({ x, y })), cls: 'then', fit: mv.fThen },
+          { points: mv.now.map(([x, y]) => ({ x, y })), cls: 'now', fit: mv.fNow },
+        ],
+        annotations: [{ x: mv.mid, label: `${money(Math.abs(mv.change))} ${down ? 'less' : 'more'}` }],
+        xLabel: 'Miles', aria: `Price versus mileage, 30 days ago and today, for ${mv.year} ${mv.make} ${mv.model}`,
+      })}
+      <div class="legend"><span><i class="key then"></i>Prices 30 days ago</span><span><i class="key now"></i>Prices today</span></div>
+      <a class="card-cta" href="${searchHref({ model: mv.make + ' ' + mv.model, year: mv.year, condition: ['Used', 'Certified'] })}">Browse these ${esc(mv.model)}s →</a>
+    </article>`;
+  }
+
+  // Price cuts: drops is [{ l, c }], biggest first; o.title and o.sub override the heading for a sample.
+  function dropsCardHtml(drops, o) {
+    return `<article class="card insight">
+      <header><h3>${badge('Price cuts', 'b-drop')} ${o.title || `${num(drops.length)} cars got cheaper this week`}</h3>
+      <p class="muted">${o.sub || 'Biggest reductions in the last 7 days'}</p></header>
+      ${drops.length ? `<ul class="rank-list">${drops.slice(0, 5).map(({ l, c }) => `<li><a href="#/car/${esc(l.id)}">
         <span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}, ${esc(l.state)}</small></span>
-        <span class="r"><b>${money(c.to)}</b><small class="drop">↓ ${money(-c.delta)} from ${money(c.from)}</small></span></a></li>`).join('')}</ul>
+        <span class="r"><b>${money(c.to)}</b><small class="drop">↓ ${money(-c.delta)} from ${money(c.from)}</small></span></a></li>`).join('')}</ul>` : '<p class="muted">No price cuts in the last 7 days among these listings.</p>'}
       <a class="card-cta" href="${searchHref({ dropsOnly: 1, sort: 'newest' })}">All cars with price cuts →</a>
     </article>`;
+  }
 
-    const mapCard = `<article class="card insight">
+  // Where used cars price below market: states is { ST: { n, delta } }; o.min is the fewest cars a state needs.
+  function stateMapCardHtml(states, o) {
+    return `<article class="card insight">
       <header><h3>Where used cars are priced below market</h3>
-      <p class="muted">Median price vs. expected value for the same car, by state. Tap a state to shop it.</p></header>
-      ${Charts.tileMap((st) => {
+      <p class="muted">${o.sub || 'Median price vs. expected value for the same car, by state. Tap a state to shop it.'}</p></header>
+      ${Charts.geoMap((st) => {
         const d = states[st];
-        if (!d || d.n < 8) return null;
-        return { cls: deltaClass(d.delta), value: `${d.delta > 0 ? '+' : ''}${(d.delta * 100).toFixed(1)}%`, title: `${st}: ${plural(d.n, 'used car')}, median ${pct(Math.abs(d.delta), 1)} ${d.delta < 0 ? 'below' : 'above'} market` };
-      }, { clickable: true, aria: 'States shaded by how far used prices sit from market value' })}
+        if (!d || d.n < (o.min || 8) || d.delta == null) return null;
+        return { cls: deltaClass(d.delta), title: `${st}: ${plural(d.n, 'used car')}, ${pct(Math.abs(d.delta), 1)} ${d.delta < 0 ? 'below' : 'above'} ${o.against || 'market'}` };
+      }, { clickable: true, labels: true, aria: 'States shaded by how far used prices sit from market value' })}
       <div class="legend diverging"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div>
     </article>`;
+  }
 
-    const valueCard = `<article class="card insight">
+  // Priced lowest for what they are: values is listings with an expected value, lowest against it first.
+  function valueCardHtml(values, o) {
+    return `<article class="card insight">
       <header><h3>Priced lowest for what they are</h3>
-      <p class="muted">Recent model years under 80k miles, ranked by distance below expected value — not a “deal badge”, just the math.</p></header>
-      <ul class="rank-list">${values.map((l) => {
+      <p class="muted">${o.sub || 'Recent model years under 80k miles, ranked by distance below expected value — not a “deal badge”, just the math.'}</p></header>
+      ${values.length ? `<ul class="rank-list">${values.map((l) => {
         const m = marketText(l);
-        return `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}, ${esc(l.state)}</small></span>
+        return `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}, ${esc(l.state)}</small></span>
         <span class="r"><b>${money(l.price)}</b><small class="good">${money(-m.diff)} below (${pct(-m.d)})</small></span></a></li>`;
-      }).join('')}</ul>
+      }).join('')}</ul>` : '<p class="muted">Nothing priced clearly below its expected value right now.</p>'}
       <a class="card-cta" href="${searchHref({ belowMarket: 1, condition: ['Used', 'Certified'] })}">Everything below market →</a>
     </article>`;
+  }
+
+  // Selling fastest: fast is [{ k, n, med, supply, saleToList }], fastest first.
+  function fastCardHtml(fast, o) {
+    if (!fast.length) return '';
+    return `<article class="card insight">
+      <header><h3>${badge('Sold', 'b-sold')} ${esc(fast[0].k)}s are selling fastest</h3>
+      <p class="muted">Median days from listing to sale, last 45 days · days of supply at the current sales pace${o.where ? ` · ${esc(o.where)}` : ''}</p></header>
+      <ul class="rank-list">${fast.map(({ k, n, med, supply, saleToList }) => `<li><a href="${searchHref({ model: k, when: 'sold', sort: 'sold-fastest' })}">
+        <span><b>${esc(k)}</b><small>${plural(n, 'sale')} · ${supply ? Math.round(supply) + ' days of supply' : '—'}</small></span>
+        <span class="r"><b>${Math.round(med)} days</b><small>${saleToList ? pct(saleToList) + ' of first list price' : ''}</small></span></a></li>`).join('')}</ul>
+      <a class="card-cta" href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Browse recently sold cars →</a>
+    </article>`;
+  }
+
+  // Inventory over time: inv is { series: [{ daysAgo, count, median }], sold30 }, oldest first.
+  function inventoryCardHtml(inv, o) {
+    const first = inv.series[0].count, last = inv.series[inv.series.length - 1].count;
+    return `<article class="card insight">
+      <header><h3>Inventory is ${last >= first ? 'up' : 'down'} ${pct(Math.abs(last / Math.max(1, first) - 1))} over 90 days</h3>
+      <p class="muted">Cars for sale nationwide ${o.daily === false ? 'every two weeks' : 'each day'}, with the median asking price · ${num(inv.sold30)} sold in the last 30 days</p></header>
+      ${Charts.trend(inv.series, { aria: 'Cars for sale nationwide over the last 90 days' })}
+      <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div>
+      <a class="card-cta" href="#/rewind" data-action="jump" data-target="rewind">Rewind the market to an earlier day →</a>
+    </article>`;
+  }
+
+  function trendsHtml(cats) {
+    if (isLive()) {
+      return catHead(cats, 'trends', { eyebrow: `Every car for sale nationwide, live: inventory over 90 days, where prices sit, what moved, what sold and what got cut` }) +
+        `<div class="insight-grid" id="live-trends">${['inv', 'map', 'mover', 'fast', 'drops', 'value'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml('Computing the whole market…')}</div>`).join('')}</div>`;
+    }
+    const mv = Market.priceMovers(LISTINGS, 20)[0];
+    const drops = Market.recentDrops(LISTINGS, 7);
+    const states = Market.stateDeltas(LISTINGS, (l) => (priced(l) && expected(l) ? delta(l) : null));
+    const values = LISTINGS.filter((l) => l.condition !== 'New' && l.miles < 80000 && l.year >= CURRENT_YEAR - 6)
+      .sort((a, b) => delta(a) - delta(b)).slice(0, 5);
 
     // Velocity: which models are selling fastest right now.
     const soldBy = Market.groupBy(SOLD.filter((l) => l.sold.daysAgo < 45), (l) => `${l.make} ${l.model}`);
     const activeBy = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
     const fast = [...soldBy.entries()].filter(([, g]) => g.length >= 12)
-      .map(([k, g]) => ({ k, g, med: Market.median(g.map((l) => l.sold.daysToSell)), v: Market.velocity(activeBy.get(k) || [], SOLD.filter((l) => `${l.make} ${l.model}` === k)) }))
+      .map(([k, g]) => {
+        const v = Market.velocity(activeBy.get(k) || [], SOLD.filter((l) => `${l.make} ${l.model}` === k));
+        return { k, n: g.length, med: Market.median(g.map((l) => l.sold.daysToSell)), supply: v.daysOfSupply, saleToList: v.saleToList };
+      })
       .sort((a, b) => a.med - b.med).slice(0, 5);
-    const fastCard = !fast.length ? '' : `<article class="card insight">
-      <header><h3>${badge('Sold', 'b-sold')} ${esc(fast[0].k)}s are selling fastest</h3>
-      <p class="muted">Median days from listing to sale, last 45 days · days of supply at the current sales pace</p></header>
-      <ul class="rank-list">${fast.map(({ k, g, med, v }) => `<li><a href="${searchHref({ model: k, when: 'sold', sort: 'sold-fastest' })}">
-        <span><b>${esc(k)}</b><small>${plural(g.length, 'sale')} · ${v.daysOfSupply ? Math.round(v.daysOfSupply) + ' days of supply' : '—'}</small></span>
-        <span class="r"><b>${Math.round(med)} days</b><small>${v.saleToList ? pct(v.saleToList) + ' of first list price' : ''}</small></span></a></li>`).join('')}</ul>
-      <a class="card-cta" href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Browse recently sold cars →</a>
-    </article>`;
 
     const inv = Market.inventorySeries(LISTINGS, SOLD, Market.emptyFilters(), CTX, 90);
-    const first = inv.series[0].count, last = inv.series[inv.series.length - 1].count;
-    const trendCard = `<article class="card insight">
-      <header><h3>Inventory is ${last >= first ? 'up' : 'down'} ${pct(Math.abs(last / first - 1))} over 90 days</h3>
-      <p class="muted">Cars for sale nationwide each day, with the median asking price · ${num(inv.sold30)} sold in the last 30 days</p></header>
-      ${Charts.trend(inv.series, { aria: 'Cars for sale nationwide over the last 90 days' })}
-      <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div>
-      <a class="card-cta" href="${searchHref({ when: '90' })}">See the market as it was 3 months ago →</a>
+    const states_n = new Set(LISTINGS.map((l) => l.state)).size;
+    return catHead(cats, 'trends', { eyebrow: `Every one of the ${num(LISTINGS.length)} cars for sale across ${states_n} states, and the ${num(SOLD.length)} that sold in the last 120 days` }) +
+      `<div class="insight-grid">${inventoryCardHtml(inv, {})}${stateMapCardHtml(states, {})}${mv ? moverCardHtml(mv, {}) : ''}${fastCardHtml(fast, {})}${dropsCardHtml(drops, {})}${valueCardHtml(values, {})}</div>`;
+  }
+
+  // Visor: the whole market's six cards, each drawn as soon as its requests are in. They start once the
+  // section is on (or near) the screen.
+  function fillLiveTrends() {
+    const grid = document.getElementById('live-trends');
+    if (!grid || grid.dataset.started) return;
+    const start = () => {
+      if (grid.dataset.started || !grid.isConnected) return;
+      grid.dataset.started = '1';
+      const ctx = liveCtx();
+      const fill = (k, make) => make().then((html) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (!slot || !slot.isConnected) return;
+        if (html) slot.outerHTML = html; else slot.remove();
+      }).catch((e) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (slot && slot.isConnected) slot.outerHTML = `<article class="card insight">${liveErrorHtml(e)}</article>`;
+      });
+      fill('inv', () => Live.inventoryTrend(Market.emptyFilters(), ctx, LATER).then((inv) => inventoryCardHtml(inv, { daily: false })));
+      fill('map', liveStateMapCard);
+      fill('mover', liveMoverCard);
+      fill('fast', liveFastCard);
+      fill('drops', liveDropsCard);
+      fill('value', () => liveValueCard(ctx));
+    };
+    if (typeof IntersectionObserver === 'undefined') return start();
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      start();
+    }, { rootMargin: '600px 0px' });
+    io.observe(grid);
+  }
+
+  const USED_YEARS = () => Array.from({ length: 7 }, (_, k) => CURRENT_YEAR - k).join(','); // up to six years old
+
+  // Where used cars price below market: used cars up to six years old, asking price as a share of MSRP
+  // in each state against the country's (one facets request). It compares like with like better than
+  // a plain median price, which follows each state's mix of cars.
+  async function liveStateMapCard() {
+    const r = await vfacet({ inventory_type: 'used,certified', year: USED_YEARS() }, 'state', { metrics: 'discount_from_msrp.mean' }, LATER);
+    const rows = facetRows(r, 'state').filter((b) => metricOf(b, 'discount_from_msrp.mean') != null);
+    if (!rows.length) return '';
+    const share = (b) => 1 + metricOf(b, 'discount_from_msrp.mean');
+    const n = rows.reduce((t, b) => t + b.count, 0);
+    const nat = rows.reduce((t, b) => t + share(b) * b.count, 0) / n;
+    const states = {};
+    for (const b of rows) states[String(b.value).toUpperCase()] = { n: b.count, delta: share(b) / nat - 1 };
+    return stateMapCardHtml(states, { min: 30, against: 'the national share of MSRP', sub: `Used cars up to six years old: what they ask as a share of their MSRP in each state, against the country’s ${pct(nat)}. Tap a state to shop it.` });
+  }
+
+  // The biggest 30-day price move: the most-listed used models of one model year, their median asking
+  // price today and on the day 30 days ago (two requests), then for the biggest move every listing of it
+  // on both days as price against miles (two).
+  async function liveMoverCard() {
+    const year = CURRENT_YEAR - 3;
+    const base = { inventory_type: 'used,certified', year: String(year) };
+    const snap = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const [now, then] = await Promise.all([
+      vfacet(base, 'model', { facet_value_limit: 25, metrics: 'price.median' }, LATER),
+      vfacet(Object.assign({}, base, { snapshot_date: snap }), 'model', { facet_value_limit: 40, metrics: 'price.median' }, LATER),
+    ]);
+    const before = new Map(facetRows(then, 'model').map((b) => [String(b.value), b]));
+    const moved = (min) => facetRows(now, 'model').filter((b) => b.count >= min && before.has(String(b.value)) && metricOf(b, 'price.median') && metricOf(before.get(String(b.value)), 'price.median'))
+      .map((b) => ({ model: String(b.value), count: b.count, d: Math.abs(metricOf(b, 'price.median') / metricOf(before.get(String(b.value)), 'price.median') - 1) }))
+      .sort((x, y) => y.d - x.d)[0];
+    // Models with 40+ listings that year, or with fewer listings, 15+.
+    const pick = moved(40) || moved(15);
+    if (!pick) return '';
+    const mp = Object.assign({}, base, { model: pick.model, limit: 100 });
+    const [a, b] = await Promise.all([Live.request('/v1/listings', mp, null, LATER), Live.request('/v1/listings', Object.assign({}, mp, { snapshot_date: snap }), null, LATER)]);
+    const pts = (r) => (r.data || []).map(Live.normalize).filter((l) => l.price > 0 && l.miles > 0).map((l) => [l.miles, l.price]);
+    const nowPts = pts(a), thenPts = pts(b);
+    const fNow = Market.linearFit(nowPts), fThen = Market.linearFit(thenPts);
+    if (!fNow || !fThen || thenPts.length < 8) return '';
+    const make = ((a.data || [])[0] && Live.normalize(a.data[0]).make) || '';
+    const mid = Market.median(nowPts.map(([x]) => x));
+    return moverCardHtml({ year, make, model: pick.model, count: pick.count, change: fNow.at(mid) - fThen.at(mid), now: nowPts, then: thenPts, fNow, fThen, mid }, {});
+  }
+
+  // Selling fastest: models sold in the last 45 days by median days to sell (one request) and how many
+  // of each are for sale now (one), for days of supply.
+  async function liveFastCard() {
+    const [sold, active] = await Promise.all([
+      vfacet(soldParams({}, 45), 'model', { facet_value_limit: 60, metrics: 'days_on_market.median' }, LATER),
+      vfacet({}, 'model', { facet_value_limit: 100 }, LATER),
+    ]);
+    const forSale = new Map(facetRows(active, 'model').map((b) => [String(b.value), b.count]));
+    const fast = facetRows(sold, 'model').filter((b) => b.count >= 100 && metricOf(b, 'days_on_market.median') != null)
+      .map((b) => ({ k: String(b.value), n: b.count, med: metricOf(b, 'days_on_market.median'), supply: forSale.has(String(b.value)) ? forSale.get(String(b.value)) / (b.count / 45) : null }))
+      .sort((x, y) => x.med - y.med).slice(0, 5);
+    return fastCardHtml(fast, { where: 'models with 100+ sales nationwide' });
+  }
+
+  // Price cuts this week: used listings two to eight weeks old with their price history (one request,
+  // the same one for an hour so repeats are free), the biggest cuts in the last 7 days among them.
+  async function liveDropsCard() {
+    const r = await Live.request('/v1/listings', { inventory_type: 'used,certified', listed_after: new Date(Date.now() - 56 * 864e5).toISOString().slice(0, 13) + ':00:00Z', sort: '-days_on_market', limit: 100, include: 'price_history' }, null, LATER);
+    const cars = (r.data || []).map(Live.normalize);
+    cars.forEach((l) => LIVE_SEEN.set(l.id, l));
+    const drops = Market.recentDrops(cars, 7);
+    return dropsCardHtml(drops, { title: `${num(drops.length)} of ${num(cars.length)} used listings got cheaper this week`, sub: 'Biggest reductions in the last 7 days, among used cars listed two to eight weeks ago' });
+  }
+
+  // Priced lowest for what they are: 100 listings each of the four most-listed recent used models under
+  // 80k miles (one request to find them, one each), each priced against a fair value fit to its model.
+  async function liveValueCard(ctx) {
+    const base = { inventory_type: 'used,certified', year: USED_YEARS(), max_mileage: 80000 };
+    const models = facetRows(await vfacet(base, 'model', { facet_value_limit: 4 }, LATER), 'model');
+    const pages = await Promise.all(models.map((b) => Live.request('/v1/listings', Object.assign({}, base, { model: b.value, limit: 100 }), null, LATER)));
+    const pool = pages.flatMap((r) => (r.data || []).map(Live.normalize)).filter((l) => l.price > 0);
+    // Each car against its own trim (an F-150 XL against XLs, not Platinums): the fit runs on copies
+    // keyed by model and trim, and trims with fewer than ten cars are left out.
+    const byTrim = new Map(pool.map((l) => [l.id, Object.assign({}, l, { model: `${l.model} ${l.trim}` })]));
+    const fv = Live.fairValueFrom([...byTrim.values()], CURRENT_YEAR);
+    for (const l of pool) {
+      LIVE_SEEN.set(l.id, l);
+      const e = fv(byTrim.get(l.id));
+      if (e) LIVE_EXPECTED.set(l.id, e);
+    }
+    // Over 30% under is more often a salvage title or a typo than a deal.
+    const values = pool.filter((l) => LIVE_EXPECTED.get(l.id) && delta(l) < -0.03 && delta(l) > -0.3).sort((a, b) => delta(a) - delta(b)).slice(0, 5);
+    return valueCardHtml(values, { sub: `The ${models.map((b) => esc(b.value)).join(', ')} under 80k miles, up to six years old, ranked by distance below the value of the same trim, year and miles among ${num(pool.length)} of them — not a “deal badge”, just the math.` });
+  }
+
+  /* ----- Rewind the market: as it stood on an earlier day ----- */
+
+  const CAPSULES = [[7, '1 week ago'], [30, '1 month ago'], [90, '3 months ago']];
+
+  function rewindHtml(cats) {
+    const caps = CAPSULES.map(([d, label]) => Object.assign(Market.timeCapsule(LISTINGS, SOLD, d, { minGroup: 25 }), { label }));
+    const cls = (v, lowGood) => (Math.abs(v) < 0.005 ? '' : (lowGood ? v < 0 : v > 0) ? 'good' : 'warn');
+    const cards = caps.map((c) => {
+      const cnt = c.now.count / c.then.count - 1, med = c.now.median / c.then.median - 1, used = c.now.usedMedian / c.then.usedMedian - 1;
+      return `<article class="card insight capsule">
+        <header><p class="capsule-when">${esc(c.label)}</p><h3>${esc(dateDaysAgo(c.daysAgo))}</h3></header>
+        <dl class="capsule-stats">
+          <div><dt>Cars for sale</dt><dd>${num(c.then.count)}<span class="arrow" aria-hidden="true">→</span>${num(c.now.count)}</dd><small class="${cls(cnt)}">${signedPct(cnt, 1)} since</small></div>
+          <div><dt>Median asking</dt><dd>${money(c.then.median)}<span class="arrow" aria-hidden="true">→</span>${money(c.now.median)}</dd><small class="${cls(med, true)}">${signedPct(med, 1)}</small></div>
+          <div><dt>Used median</dt><dd>${money(c.then.usedMedian)}<span class="arrow" aria-hidden="true">→</span>${money(c.now.usedMedian)}</dd><small class="${cls(used, true)}">${signedPct(used, 1)}</small></div>
+        </dl>
+        <p class="capsule-since"><span><b>${num(c.soldSince)}</b> sold since</span><span><b>${num(c.listedSince)}</b> listed since</span><span><b>${num(c.cutsSince)}</b> price cuts since</span></p>
+        ${c.models.length ? `<ul class="rank-list">${c.models.slice(0, 3).map((m) => `<li><a href="${searchHref({ model: m.key, condition: ['Used', 'Certified'] })}"><span><b>${esc(m.key)}</b><small>used median was ${money(m.thenMedian)}</small></span><span class="r"><b>${money(m.nowMedian)}</b><small class="${cls(m.change, true)}">${signedPct(m.change, 1)}</small></span></a></li>`).join('')}</ul>` : ''}
+        <a class="card-cta" href="${searchHref({ when: String(c.daysAgo) })}">Open the market as it was on ${esc(dateDaysAgo(c.daysAgo))} →</a>
+      </article>`;
+    }).join('');
+    const long = caps[caps.length - 1];
+    const movers = long.models.slice(0, 8);
+    const vsCard = !movers.length ? '' : `<article class="card insight wide">
+      <header><h3>Used prices then and now, by model</h3><p class="muted">Median asking price for each model on ${esc(dateDaysAgo(long.daysAgo))} vs. today, the biggest moves first. Models with 25+ cars both days.</p></header>
+      <ul class="vs-list">${movers.map((m) => {
+        const v = Math.max(-1, Math.min(1, m.change / 0.25));
+        const c = m.change <= -0.03 ? 'good' : m.change >= 0.03 ? 'warn' : '';
+        return `<li><a href="${searchHref({ model: m.key, condition: ['Used', 'Certified'] })}">
+          <span class="vs-model"><b>${esc(m.key)}</b><small>${money(m.thenMedian)} then · ${money(m.nowMedian)} now · ${plural(m.nowCount, 'car')} today</small></span>
+          <span class="vs-bar" aria-hidden="true"><i class="${c}" style="left:${v < 0 ? 50 + v * 50 : 50}%;width:${Math.abs(v) * 50}%"></i></span>
+          <b class="vs-num ${c}">${signedPct(m.change)}</b></a></li>`;
+      }).join('')}</ul>
     </article>`;
-
-    const rare = Market.rareSpecs(LISTINGS, rarity, 10);
-    const rareHtml = `<div class="rare-head" id="rare-specs"><h3>💎 Rare specs</h3><p class="muted">Unusual color and option combinations — few exist anywhere in the country.</p>
-      <div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-dir="1" aria-label="Scroll right">›</button></div></div>
-      <div class="scroller" id="rare-scroller">${rare.map(({ l, r }) => `<article class="card rare-card">
-        <a class="card-link" href="#/car/${l.id}" aria-label="${esc(title(l))}"></a>
-        <div class="card-art" style="--paint:${esc(l.extHex)}">${Charts.car(l.body, l.extHex)}</div>
-        <div class="card-body">
-          <h4>${esc(title(l))}</h4>
-          <p class="card-sub">${conditionBadge(l)} ${esc(l.trim)} · ${kMiles(l.miles)}</p>
-          <p class="price">${money(l.price)} <small class="muted">· ${esc(days(l.daysListed))}</small></p>
-          <p class="muted small">Of the ${num(r.total)} ${esc(l.model)}s for sale nationwide</p>
-          <dl class="rarity">
-            <div><dt>Exterior</dt><dd><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</dd><span class="of">1 of ${r.extCount}</span></div>
-            <div><dt>Interior</dt><dd>${esc(l.intColor)}</dd><span class="of">1 of ${r.intCount}</span></div>
-            <div><dt>Options</dt><dd>${money(r.optionsTotal)}</dd><span class="of">${pct(r.optionsVsAvg)} above avg</span></div>
-          </dl>
-        </div></article>`).join('')}</div>`;
-
-    return `<div class="insight-head">
-        <div><h2>What the market's doing</h2><p class="eyebrow">Week of ${esc(weekOf)}</p></div>
-        <a class="chip-link" href="#rare-specs" data-action="jump" data-target="rare-specs">💎 Rare specs</a>
-      </div>
-      <div class="insight-grid">${arrivalsCard}${moverCard}${fastCard}${trendCard}${retentionCard}${dropsCard}${mapCard}${valueCard}</div>
-      ${rareHtml}`;
+    return catHead(cats, 'rewind', { eyebrow: 'The whole market frozen as it stood 1 week, 1 month and 3 months ago: every car then for sale, at that day’s asking price. Any search can be run on any of those days.' }) +
+      `<div class="capsule-grid">${cards}</div>${vsCard ? `<div class="insight-grid">${vsCard}</div>` : ''}`;
   }
 
-  function liveInsightsShell() {
-    return `<div class="insight-head"><div><h2>What the market's doing</h2><p class="eyebrow">Live from ${esc(srcName())} · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))}</p></div></div>
-      <div class="insight-grid" id="live-insights">${loadingHtml('Loading the live market…')}</div>`;
+  // With live data, the rewind cards are doors into the source's daily snapshots rather than numbers computed here.
+  function liveRewindHtml(cats) {
+    const scope = homeScope();
+    return catHead(cats, 'rewind', { eyebrow: `A daily snapshot of every listing is kept. Open the market ${esc(scopeText())} as it stood on any of these days.` }) +
+      `<div class="capsule-grid">${CAPSULES.map(([d, label]) => `<a class="card insight capsule link" href="${searchHref(Object.assign({ when: String(d) }, scope))}">
+        <p class="capsule-when">${esc(label)}</p><h3>${esc(dateDaysAgo(d))}</h3>
+        <p class="muted">Every car for sale ${esc(scopeText())} that day, at that day’s asking price.</p>
+        <span class="card-cta">Open this capsule →</span></a>`).join('')}</div>`;
   }
+
+  /* ----- Rare Specs and Time Capsules: a card per car ----- */
+
+  const openCorner = (href, label) => `<a class="card-open" href="${href}" aria-label="${esc(label)}" title="${esc(label)}">↗</a>`;
+
+  // A car card for those panels: the title, a line of facts, the car (its photos with live data, else
+  // four drawn views), how many of the model are for sale, and three stat cells, the notable ones marked 💎.
+  function specCard(l, kind, cells, note) {
+    const href = `#/car/${l.id}`;
+    const facts = [conditionBadge(l), esc(l.trim), `${num(l.miles)} miles`, asking(l),
+      l.daysListed == null ? null : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`].filter(Boolean);
+    const photos = (l.photos || []).slice(0, 4);
+    const art = photos.length
+      ? `<div class="spec-photos n${photos.length}">${photos.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join('')}</div>`
+      : `<div class="spec-art" style="--paint:${esc(l.extHex)}">${Charts.carStrip(l)}</div>`;
+    return `<article class="card spec-card">
+      <header class="spec-head">
+        <h3><a href="${href}">${esc(title(l))}</a></h3>
+        <a class="spec-tag" href="${href}">${kind === 'rare' ? '💎 Rare Spec' : '🕰️ Time Capsule'}</a>
+        <p class="spec-facts">${facts.join(' <span class="sep">|</span> ')}</p>
+      </header>
+      <a class="spec-media" href="${href}" aria-label="${esc(title(l))} ${esc(l.trim)}">${art}</a>
+      <p class="spec-of">${note}</p>
+      <dl class="spec-stats">${cells.map((c) => `<div${c.hi ? ' class="hi"' : ''}><dt>${esc(c.label)}${c.hi ? ' <span class="gem" aria-label="rare">💎</span>' : ''}</dt><dd>${c.value}</dd><small>${c.sub}</small></div>`).join('')}</dl>
+      ${openCorner(href, `Open the ${title(l)}`)}
+    </article>`;
+  }
+  // A count is rare at 7 or fewer and a tenth of the model.
+  const rareCount = (c, total) => c != null && c <= 7 && c / Math.max(1, total) <= 0.1;
+  // The three cells: paint and interior counts within the model, and the options value against the
+  // model's average (demo) or, with live data, whether a factory package on the car is itself rare.
+  function rarityCells(l, r) {
+    const rare = (c) => rareCount(c, r.total);
+    const n = (l.options || []).length;
+    let optSub, optHi;
+    if (r.optionsVsAvg != null) {
+      optSub = !r.optionsTotal ? 'No factory options' : r.total < 5 ? 'Few comparable builds' : r.optionsVsAvg >= 0 ? `${pct(r.optionsVsAvg)} more than avg` : `${pct(-r.optionsVsAvg)} less than avg`;
+      optHi = r.optionsTotal > 0 && r.optionsVsAvg >= 0.5;
+    } else {
+      optSub = r.rarePkg ? `${esc(r.rarePkg.name)}: on ${r.rarePkg.count} of ${num(r.total)}` : !n ? 'Options not available' : r.optionsTotal ? `${plural(n, 'factory package')}` : 'Package prices not available';
+      optHi = !!r.rarePkg;
+    }
+    return [
+      { label: 'Exterior Color', value: r.extCount == null ? '—' : `1 of ${num(r.extCount)}`, sub: esc(l.extColor), hi: rare(r.extCount) },
+      { label: 'Interior Color', value: r.intCount == null ? '—' : `1 of ${num(r.intCount)}`, sub: esc(l.intColor), hi: rare(r.intCount) },
+      { label: 'Installed options', value: r.optionsTotal || !n ? money(r.optionsTotal || 0) : plural(n, 'package'), sub: optSub, hi: optHi },
+    ];
+  }
+  const specGrid = (cards, empty) => `<div class="insight-grid spec-grid">${cards.join('') || `<p class="muted">${empty}</p>`}</div>`;
+  const usualMiles = (share) => `${pct(share)} of the usual miles`;
+
+  function rarePanelHtml() {
+    return specGrid(Market.rareSpecs(LISTINGS, rarity, 4).map(({ l, r }) => specCard(l, 'rare', rarityCells(l, r), `Of the ${num(r.total)} for sale nationwide`)), 'No rare specs right now.');
+  }
+  function capsulePanelHtml() {
+    return specGrid(Market.timeCapsuleCars(LISTINGS, CURRENT_YEAR, 4).map(({ l, share }) => {
+      const r = rarity(l);
+      return specCard(l, 'capsules', rarityCells(l, r), `Of the ${num(r.total)} for sale nationwide <span class="sep">|</span> ${num(l.miles)} miles in ${plural(CURRENT_YEAR - l.year, 'year')}, ${usualMiles(share)}`);
+    }), 'No time capsules right now.');
+  }
+  // How rare a live car's paint, interior and packages are among its model year nationwide: one
+  // facets request per model year (cars of the same model year share it, and repeats are free).
+  async function liveRarity(l) {
+    const r = await Live.request('/v1/facets', { make: l.make, model: l.model, year: String(l.year), facets: 'exterior_color,base_interior_color,options_packages', facet_value_limit: 100 });
+    const d = r.data || {}, fx = d.facets || {};
+    const total = d.total || 0;
+    const count = (name, v) => { const b = Live.bucketsOf(fx[name]).find((x) => String(x.value).toLowerCase() === String(v || '').toLowerCase()); return b ? b.count : null; };
+    const codes = (l.options || []).map((o) => ({ key: String(o.code || o.name).toLowerCase(), name: o.name || o.code }));
+    const rarePkg = Live.bucketsOf(fx.options_packages).map((b) => ({ b, o: codes.find((c) => c.key === String(b.value).toLowerCase()) }))
+      .filter((x) => x.o && rareCount(x.b.count, total)).sort((a, b) => a.b.count - b.b.count)[0] || null;
+    return {
+      total, extCount: count('exterior_color', l.extColor), intCount: count('base_interior_color', l.interiorFamily),
+      optionsTotal: (l.options || []).reduce((s, o) => s + (o.price || 0), 0), optionsVsAvg: null,
+      rarePkg: rarePkg ? { name: rarePkg.o.name, count: rarePkg.b.count } : null,
+    };
+  }
+  const liveSpecNote = (l, r) => `Of the ${num(r.total)} for sale nationwide`;
+
+  // With Visor, rare specs are found among the newest used listings in your market (one request):
+  // the model years with the most of them are checked for how common each car's paint, interior and
+  // packages are nationwide (a request per model year), and the four rarest get their option prices
+  // (a request each).
+  async function fillLiveRare() {
+    const grid = document.getElementById('live-rare');
+    if (!grid) return;
+    try {
+      const bp = Live.toParams(Object.assign(Market.emptyFilters(), homeScope()), liveCtx());
+      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', sort: 'days_on_market', limit: 100, fields: 'default,options_packages,photo_urls' }));
+      if (!grid.isConnected) return;
+      const cars = (res.data || []).map(Live.normalize).filter((l) => l.year && l.make && l.model);
+      const groups = [...Market.groupBy(cars, (l) => `${l.make}|${l.model}|${l.year}`)].sort((a, b) => b[1].length - a[1].length).slice(0, 6);
+      const scored = [];
+      await Promise.all(groups.map(async ([, g]) => {
+        for (const l of g) {
+          const r = await liveRarity(l).catch(() => null);
+          if (!r || !r.total) continue;
+          const score = (rareCount(r.extCount, r.total) ? 3 : 0) + (rareCount(r.intCount, r.total) ? 2 : 0) + (r.rarePkg ? 1 : 0) + (r.extCount ? 1 / r.extCount : 0);
+          scored.push({ l, r, score });
+        }
+      }));
+      if (!grid.isConnected) return;
+      // The four rarest, one per model, the ones with a 💎 first.
+      const picks = [];
+      for (const x of scored.sort((a, b) => b.score - a.score)) {
+        if (picks.length >= 4 || picks.some((p) => p.l.make === x.l.make && p.l.model === x.l.model)) continue;
+        picks.push(x);
+      }
+      await Promise.all(picks.map(async (x) => {
+        const full = await Live.listing(x.l.id).catch(() => null);
+        if (full && (full.options || []).some((o) => o.price)) { x.l.options = full.options; x.r.optionsTotal = full.options.reduce((s, o) => s + (o.price || 0), 0); }
+      }));
+      if (!grid.isConnected) return;
+      picks.forEach((x) => LIVE_SEEN.set(x.l.id, x.l));
+      grid.innerHTML = picks.map((x) => specCard(x.l, 'rare', rarityCells(x.l, x.r), liveSpecNote(x.l, x.r))).join('')
+        || `<p class="muted">No rare specs among the newest listings ${esc(scopeText())} right now${homeZip() ? ': widen the radius above to look further' : ''}.</p>`;
+    } catch (e) {
+      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+    }
+  }
+
+  // With Visor, time capsules are the lowest-mileage older used cars listed in your market (one
+  // request), with the same rarity cells as a rare spec (a request per car).
+  async function fillLiveCapsules() {
+    const grid = document.getElementById('live-capsules');
+    if (!grid) return;
+    try {
+      const bp = Live.toParams(Object.assign(Market.emptyFilters(), homeScope()), liveCtx());
+      const years = Array.from({ length: 32 }, (_, k) => CURRENT_YEAR - 5 - k); // model years 5 to 36 years old
+      const res = await Live.request('/v1/listings', Object.assign({}, bp, { inventory_type: 'used', year: years.join(','), max_mileage: 60000, sort: 'miles', limit: 24, fields: 'default,options_packages,photo_urls' }));
+      if (!grid.isConnected) return;
+      const cars = (res.data || []).map(Live.normalize).filter((l) => l.year && l.miles > 0);
+      cars.forEach((l) => LIVE_SEEN.set(l.id, l));
+      const picks = cars.map((l) => { const age = Math.max(1, CURRENT_YEAR - l.year); return { l, age, share: l.miles / (age * 12000) }; })
+        .filter((x) => x.share <= 0.35).sort((a, b) => a.share - b.share).slice(0, 4);
+      const rar = await Promise.all(picks.map((x) => liveRarity(x.l).catch(() => null)));
+      if (!grid.isConnected) return;
+      grid.innerHTML = picks.map(({ l, age, share }, i) => {
+        const r = rar[i];
+        const miles = `${num(l.miles)} miles in ${plural(age, 'year')}, ${usualMiles(share)}`;
+        const cells = r ? rarityCells(l, r) : [
+          { label: 'Miles', value: num(l.miles), sub: usualMiles(share), hi: true },
+          { label: 'Model year', value: String(l.year), sub: `${plural(age, 'year')} old`, hi: false },
+          { label: 'Asking', value: asking(l), sub: l.daysListed == null ? '' : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`, hi: false },
+        ];
+        return specCard(l, 'capsules', cells, `${r ? `${liveSpecNote(l, r)} <span class="sep">|</span> ` : ''}${miles}`);
+      }).join('')
+        || `<p class="muted">No time capsules listed ${esc(scopeText())} right now${homeZip() ? ': widen the radius above to look further' : ''}.</p>`;
+    } catch (e) {
+      if (grid.isConnected) grid.innerHTML = liveErrorHtml(e);
+    }
+  }
+
+  // Live cards cover the market around your home ZIP (the box at the top, or Settings) or, with none set, the whole country.
+  const homeScope = () => (homeZip() ? { near: homeZip(), radius: homeRadius() } : {});
+  const scopeText = () => (homeZip() ? `within ${homeRadius()} miles of ${placeLabel(homeZip())}` : 'nationwide');
+  const scopeShort = () => (homeZip() ? 'near you' : 'nationwide');
 
   async function fillLiveInsights() {
     const grid = document.getElementById('live-insights');
@@ -729,41 +1551,241 @@
             <ul class="price-bars">${o.prices.map((b) => { const [lo, hi] = String(b.value).split('-').map(Number); return `<li><a href="${searchHref({ priceMin: lo, priceMax: hi })}"><span>${moneyK(lo)}–${moneyK(hi)}</span><i style="width:${Math.round(((b.count || 0) / maxP) * 100)}%"></i><b>${b.count != null ? num(b.count) : ''}</b></a></li>`; }).join('')}</ul></article>
           <article class="card insight wide"><header><h3>Most listed body styles</h3><p class="muted">Tap one to browse live listings</p></header>
             <div class="quick">${o.bodies.map((b) => `<a class="chip-link" href="${searchHref({ body: b.value })}">${esc(b.value)} <span class="muted">${b.count != null ? num(b.count) : ''}</span></a>`).join('')}</div>
-            <p class="muted small">Sold-car trends, price drops and inventory history need a source with sales history (Visor). The free auto.dev plan covers cars for sale now.</p></article>`;
+            <p class="muted small">Sold-car trends, price drops and inventory history need a source with sales history. The free auto.dev plan covers cars for sale now.</p></article>`;
       } catch (e) {
         if (document.getElementById('live-insights')) grid.innerHTML = liveErrorHtml(e);
       }
       return;
     }
-    try {
-      const [active, sold30, fast, deals, makes] = await Promise.all([
-        Live.count({ ex: {} }, ctx),
-        Live.count({ ex: {} }, ctx, { inventory_status: 'sold', sold_within_days: 30 }),
-        Live.request('/v1/facets', { inventory_status: 'sold', sold_within_days: 30, facets: 'model', facet_value_limit: 60, metrics: 'days_on_market.median,price.median' }),
-        Live.request('/v1/listings', { inventory_type: 'new', sort: 'discount', limit: 8, min_msrp: 20000 }),
-        Live.request('/v1/facets', { facets: 'make', facet_value_limit: 12, metrics: 'price.median,days_on_market.median' }),
-      ]);
-      if (!document.getElementById('live-insights')) return;
-      const fastest = Live.bucketsOf(fast.data && fast.data.facets && fast.data.facets.model)
-        .filter((b) => b.count >= 50 && b.metrics && b.metrics['days_on_market.median'] != null)
-        .sort((a, b) => a.metrics['days_on_market.median'] - b.metrics['days_on_market.median']).slice(0, 6);
-      const discountCars = (deals.data || []).map(Live.normalize);
-      discountCars.forEach((l) => LIVE_SEEN.set(l.id, l));
-      const makeRows = Live.bucketsOf(makes.data && makes.data.facets && makes.data.facets.make);
-      grid.innerHTML = `
-        <article class="card insight"><header><h3>${badge('Live', 'b-live')} ${num(active)} cars for sale nationwide</h3>
-          <p class="muted">${num(sold30)} sold in the last 30 days, about ${num(sold30 / 30)} a day · ${active && sold30 ? Math.round(active / (sold30 / 30)) + ' days of supply' : ''}</p></header>
-          <ul class="rank-list">${makeRows.map((b) => `<li><a href="${searchHref({ make: b.value })}"><span><b>${esc(b.value)}</b><small>${b.metrics && b.metrics['days_on_market.median'] != null ? Math.round(b.metrics['days_on_market.median']) + ' median days listed' : ''}</small></span>
-            <span class="r"><b>${num(b.count)}</b><small>${b.metrics && b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('')}</ul></article>
-        <article class="card insight"><header><h3>${badge('Sold', 'b-sold')} Selling fastest right now</h3><p class="muted">Median days from listing to sale, last 30 days (models with 50+ sales)</p></header>
-          <ul class="rank-list">${fastest.map((b) => `<li><a href="${searchHref({ model: b.value, when: 'sold' })}"><span><b>${esc(b.value)}</b><small>${plural(b.count, 'sale')}</small></span>
-            <span class="r"><b>${Math.round(b.metrics['days_on_market.median'])} days</b><small>${b.metrics['price.median'] ? 'median ' + money(b.metrics['price.median']) : ''}</small></span></a></li>`).join('') || '<li class="muted">Not enough sales data.</li>'}</ul></article>
-        <article class="card insight wide"><header><h3>${badge('New', 'b-new')} Biggest discounts off MSRP on new cars</h3><p class="muted">Live listings, MSRP over $20,000</p></header>
-          <div class="listing-grid compact">${discountCars.map((l) => listingCard(l)).join('')}</div>
-          <a class="card-cta" href="${searchHref({ condition: 'New', sort: 'discount', msrpMin: 20000 })}">See all new-car discounts →</a></article>`;
-    } catch (e) {
-      if (document.getElementById('live-insights')) grid.innerHTML = liveErrorHtml(e);
+    // Visor: the same four cards as the demo, each computed from facet requests around your market
+    // (or the whole country with no ZIP set) and drawn as soon as its numbers are in; the browse grid
+    // takes one more request.
+    const scope = homeScope();
+    const bp = Live.toParams(Object.assign(Market.emptyFilters(), scope), ctx);
+    const browseEl = document.getElementById('live-browse');
+    if (grid) {
+      grid.innerHTML = ['ret', 'trim', 'momentum', 'arrivals'].map((k) => `<div class="weekly-slot" data-slot="${k}">${loadingHtml(`Computing ${scopeShort() === 'near you' ? 'your market' : 'the market'}…`)}</div>`).join('');
+      const fill = (k, make) => make().then((html) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (!slot || !slot.isConnected) return;
+        if (html) slot.outerHTML = html; else slot.remove();
+        if (k === 'trim') fillTrimMapIfShown();
+      }).catch((e) => {
+        const slot = grid.querySelector(`[data-slot="${k}"]`);
+        if (slot && slot.isConnected) slot.outerHTML = `<article class="card insight">${liveErrorHtml(e)}</article>`;
+      });
+      fill('ret', () => liveRetentionCard(bp, scope, ctx));
+      fill('trim', () => liveTrimCard(bp, scope, ctx));
+      fill('momentum', () => liveMomentumCard(bp, scope, ctx));
+      fill('arrivals', () => liveArrivalsCard(bp, scope));
     }
+    if (browseEl) {
+      try {
+        const models = await Live.request('/v1/facets', Object.assign({}, bp, { facets: 'model', facet_value_limit: 12, metrics: 'price.median' }), null, ON_PAGE);
+        const m = (x, k) => (x.metrics && Number.isFinite(x.metrics[k]) ? x.metrics[k] : null);
+        const modelRows = Live.bucketsOf(models.data && models.data.facets && models.data.facets.model).filter((x) => x.count > 0).sort((x, y) => y.count - x.count);
+        if (browseEl.isConnected) {
+          browseEl.innerHTML = modelRows.map((x) => `<a class="browse-item" href="${searchHref(Object.assign({ model: x.value }, scope))}"><b>${esc(x.value)}</b><small>${plural(x.count, 'car')}${m(x, 'price.median') != null ? ` · median ${money(m(x, 'price.median'))}` : ''}</small></a>`).join('')
+            || `<p class="muted">Nothing listed ${esc(scopeText())} right now.</p>`;
+        }
+      } catch (e) {
+        if (browseEl.isConnected) browseEl.innerHTML = '<p class="muted">Live counts aren’t available right now.</p>';
+      }
+    }
+  }
+
+  /* ----- The week's four cards from Visor ----- */
+
+  // Facet buckets with their metrics unwrapped, from a /v1/facets response.
+  const facetRows = (r, name) => Live.bucketsOf(r && r.data && r.data.facets && r.data.facets[name]).filter((b) => b.count > 0);
+  const metricOf = (b, k) => (b && b.metrics && Number.isFinite(b.metrics[k]) ? b.metrics[k] : null);
+  const vfacet = (params, facet, extra, opts) => Live.request('/v1/facets', Object.assign({}, params, { facets: facet, facet_value_limit: 60 }, extra || {}), null, opts);
+  // The whole-market section is a tab of its own, so when it shows nothing else competes for the screen.
+  const LATER = { priority: Live.PRIORITY.page };
+  const ON_PAGE = { priority: Live.PRIORITY.page };
+  const soldParams = (bp, days) => Object.assign({}, bp, { inventory_status: 'sold', sold_within_days: days });
+  // "near Kissimmee, FL" with a home ZIP, else "nationwide".
+  const nearText = () => (homeZip() ? `near ${Geo.label(Geo.lookup(homeZip()), { short: true })}` : 'nationwide');
+
+  // The compact SUVs the residual-value card compares (Visor has no segment, so they are named).
+  const COMPACT_SUVS = [['Toyota', 'RAV4'], ['Honda', 'CR-V'], ['Mazda', 'CX-5'], ['Mazda', 'CX-50'], ['Nissan', 'Rogue'], ['Hyundai', 'Tucson'], ['Kia', 'Sportage'],
+    ['Chevrolet', 'Equinox'], ['Subaru', 'Forester'], ['Ford', 'Escape'], ['Volkswagen', 'Tiguan'], ['Jeep', 'Compass'], ['Subaru', 'Crosstrek'], ['Ford', 'Bronco Sport']];
+
+  // The markets a card can be about, narrowest first: your radius, your state, the country. A card
+  // takes the first one with enough sales to say something, and names it.
+  function liveLevels(bp, scope, ctx) {
+    const out = [];
+    const home = homeZip() ? Geo.lookup(homeZip()) : null;
+    if (scope.near) out.push({ kind: 'near', params: bp, scope, where: nearText() });
+    if (home && home.state) out.push({ kind: 'state', state: home.state, params: Live.toParams(Object.assign(Market.emptyFilters(), { state: [home.state] }), ctx), scope: { state: home.state }, where: `in ${stateName(home.state)}` });
+    out.push({ kind: 'nation', params: Live.toParams(Market.emptyFilters(), ctx), scope: {}, where: 'nationwide' });
+    return out;
+  }
+  // All the levels are asked at once (waiting on each in turn made a card that ends up nationwide
+  // three round trips slower), except on the smallest usage tier, where the extra requests would
+  // queue behind its rate limit and come out slower than asking one level at a time.
+  async function firstLevel(levels, compute) {
+    const tier = Live.tier();
+    if (tier && tier.cap10 < 40) {
+      for (const lv of levels) {
+        const r = await compute(lv);
+        if (r) return Object.assign(r, { lv });
+      }
+      return null;
+    }
+    const runs = levels.map((lv) => compute(lv));
+    for (const run of runs) run.catch(() => { /* reported below if its level is the one used */ });
+    for (let i = 0; i < levels.length; i++) {
+      const r = await runs[i];
+      if (r) return Object.assign(r, { lv: levels[i] });
+    }
+    return null;
+  }
+
+  // Residual value: used compact SUVs under 75k miles at 1, 2 and 3 years old, average asking over
+  // average MSRP for each model (one facets request per model year), in the narrowest market with
+  // three models to compare.
+  async function liveRetentionCard(bp, scope, ctx) {
+    const makes = [...new Set(COMPACT_SUVS.map(([mk]) => mk))].join(',');
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      const yearOf = (k) => vfacet(Object.assign({}, lv.params, {
+        make: makes, year: String(CURRENT_YEAR - 1 - k), inventory_type: 'used,certified', max_mileage: 75000,
+      }), 'model', { facet_value_limit: 100, metrics: 'price.mean,msrp.mean,miles.mean' });
+      const priced = (b) => metricOf(b, 'price.mean') && metricOf(b, 'msrp.mean');
+      // The oldest year first: a market without three of these models at that age can't make the
+      // card, and finds out for one request instead of three.
+      const oldest = await yearOf(RET_YEARS - 1);
+      if (facetRows(oldest, 'model').filter((b) => priced(b) && COMPACT_SUVS.some(([, model]) => model.toLowerCase() === String(b.value).toLowerCase())).length < 3) return null;
+      const byYear = (await Promise.all(Array.from({ length: RET_YEARS - 1 }, (_, k) => yearOf(k)))).concat([oldest]);
+      const out = [];
+      for (const [make, model] of COMPACT_SUVS) {
+        const at = byYear.map((r) => facetRows(r, 'model').find((b) => String(b.value).toLowerCase() === model.toLowerCase()));
+        const byAge = at.map((b) => (metricOf(b, 'price.mean') && metricOf(b, 'msrp.mean') ? metricOf(b, 'price.mean') / metricOf(b, 'msrp.mean') : null));
+        if (byAge.some((v) => v == null || v <= 0 || v > 1.5)) continue;
+        const oldest = at[RET_YEARS - 1];
+        out.push({ make, model, byAge, msrp: metricOf(oldest, 'msrp.mean'), avgList: metricOf(oldest, 'price.mean'), avgMiles: metricOf(oldest, 'miles.mean') || 0 });
+      }
+      return out.length >= 3 ? { ret: out.sort((x, y) => y.byAge[RET_YEARS - 1] - x.byAge[RET_YEARS - 1]).slice(0, 3) } : null;
+    });
+    if (!found) return '';
+    const { lv } = found;
+    return retentionCardHtml(found.ret, { scope: lv.scope, where: lv.kind === 'nation' ? 'Nationwide' : lv.where.replace(/^in /, ''), near: lv.kind === 'nation' ? '' : lv.where, models: true });
+  }
+
+  // Which trim sells faster: the models sold most over 120 days (one request), their trims' median
+  // days to sell (one request each for the top six), in the narrowest market where two trims of a
+  // model each sold enough to measure. Then that model's sales there for the county map (one
+  // request) and its trims nationwide (one); nationwide, its pace by state instead.
+  async function liveTrimCard(bp, scope, ctx) {
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      const sold = soldParams(lv.params, 120);
+      const minN = lv.kind === 'nation' ? 20 : 5;
+      // Only models with enough sales for two trims to measure, so a small market costs one request, not seven.
+      const models = facetRows(await vfacet(sold, 'model', { facet_value_limit: 12 }), 'model').filter((mb) => mb.count >= 2 * minN).slice(0, 6);
+      const picks = await Promise.all(models.map(async (mb) => {
+        const trims = facetRows(await vfacet(Object.assign({}, sold, { model: mb.value }), 'trim', { facet_value_limit: 20, metrics: 'days_on_market.median' }), 'trim')
+          .map((b) => ({ trim: String(b.value), n: b.count, days: metricOf(b, 'days_on_market.median') }))
+          .filter((x) => x.days != null && x.n >= minN).sort((x, y) => x.days - y.days);
+        if (trims.length < 2) return null;
+        const fast = trims[0], slow = trims[trims.length - 1];
+        return slow.days - fast.days >= 1 ? { model: String(mb.value), trims, fast, slow, gap: slow.days - fast.days, n: trims.reduce((t, x) => t + x.n, 0) } : null;
+      }));
+      const tv = picks.filter(Boolean).sort((x, y) => y.gap - x.gap)[0];
+      return tv ? { tv } : null;
+    });
+    if (!found) return '';
+    const { tv, lv } = found;
+    const mp = Object.assign(soldParams(lv.params, 120), { model: tv.model });
+    const national = lv.kind !== 'nation';
+    const [cars, nat, states] = await Promise.all([
+      Live.request('/v1/listings', Object.assign({}, mp, { limit: 100 })),
+      national ? vfacet(Object.assign(soldParams({}, 120), { model: tv.model }), 'trim', { facet_value_limit: 20, metrics: 'days_on_market.median' }) : null,
+      national ? null : vfacet(mp, 'state', { metrics: 'days_on_market.median' }),
+    ]);
+    const list = (cars.data || []).map(Live.normalize).filter((l) => l.sold);
+    const make = ([...Market.groupBy(list, (l) => l.make)].sort((x, y) => y[1].length - x[1].length)[0] || [''])[0];
+    const condition = list.filter((l) => l.condition === 'New').length / Math.max(1, list.length) >= 0.5 ? 'New' : 'Used';
+    const key = `${make} ${tv.model}`.trim();
+    let map, mapId = null, aside = '';
+    TRIM_MAP = null;
+    if (national) {
+      // The state county by county: each county with sales colored by its pace against the market's.
+      const stCode = lv.state || Geo.lookup(homeZip()).state;
+      const inState = list.filter((l) => l.state === stCode && l.lat != null);
+      const st = {
+        state: stCode, n: inState.length, days: Market.median(inState.map((l) => l.sold.daysToSell)) || tv.fast.days,
+        cities: [...Market.groupBy(inState, (l) => l.city)].map(([city, g]) => ({ city, lat: g[0].lat, lng: g[0].lng, n: g.length, days: Market.median(g.map((l) => l.sold.daysToSell)) })),
+      };
+      TRIM_MAP = { st, key, paceClass };
+      map = stateCountyMap(st, key, paceClass) || stateDotMap(st, key, paceClass);
+      mapId = 'trim-map';
+      const nt = facetRows(nat, 'trim');
+      const nd = (t) => metricOf(nt.find((b) => String(b.value) === t), 'days_on_market.median');
+      if (nd(tv.fast.trim) != null && nd(tv.slow.trim) != null) aside = `Nationwide: ${esc(tv.fast.trim)} ${Math.round(nd(tv.fast.trim))}d · ${esc(tv.slow.trim)} ${Math.round(nd(tv.slow.trim))}d`;
+    } else {
+      const byState = {};
+      for (const b of facetRows(states, 'state')) byState[String(b.value).toUpperCase()] = { n: b.count, days: metricOf(b, 'days_on_market.median') };
+      map = nationalPaceMap(byState, Market.median(Object.values(byState).map((d) => d.days).filter((d) => d != null)), key);
+      aside = tv.trims.slice(1, -1).map((t) => `${esc(t.trim)} ${Math.round(t.days)}d`).join(' · ');
+    }
+    return trimCardHtml({ make, model: tv.model, condition, sc: tv, where: lv.where, aside, map, mapId, scope: lv.scope });
+  }
+
+  // A make whose used sales climbed most: used sales by make over the last 30 and 60 days (two
+  // requests; the month before is the difference), in the narrowest market with enough sales, then
+  // that make's models there (two) and, for the map, its sales by state across the country (two).
+  async function liveMomentumCard(bp, scope, ctx) {
+    const pair = (params, facet) => Promise.all([vfacet(soldParams(params, 30), facet), vfacet(soldParams(params, 60), facet)])
+      .then(([a, b]) => {
+        const now = new Map(facetRows(a, facet).map((x) => [String(x.value), x.count]));
+        return facetRows(b, facet).map((x) => {
+          const n = now.get(String(x.value)) || 0, before = x.count - n;
+          return { value: String(x.value), now: n, before, change: before > 0 ? n / before - 1 : null };
+        });
+      });
+    const usedOf = (params) => Object.assign({}, params, { inventory_type: 'used,certified' });
+    const found = await firstLevel(liveLevels(bp, scope, ctx), async (lv) => {
+      // Enough sales that a month's change means something, from a make that's a real share of the market.
+      const rows = await pair(usedOf(lv.params), 'make');
+      const total = rows.reduce((t, x) => t + x.now, 0);
+      const min = Math.max(lv.kind === 'nation' ? 100 : 30, total * 0.02);
+      const top = rows.filter((x) => x.now >= min && x.before >= min && x.change != null).sort((x, y) => y.change - x.change)[0];
+      return top ? { top } : null;
+    });
+    if (!found) return '';
+    const { top, lv } = found;
+    const [models, states] = await Promise.all([pair(usedOf(Object.assign({}, lv.params, { make: top.value })), 'model'), pair(usedOf({ make: top.value }), 'state')]);
+    const byState = {};
+    for (const x of states) byState[x.value.toUpperCase()] = x;
+    const mv = { make: top.value, now: top.now, before: top.before, change: top.change, models: models.map((x) => ({ model: x.value, now: x.now, before: x.before, change: x.change })).sort((x, y) => y.now - x.now), byState };
+    return momentumCardHtml(mv, lv.kind === 'nation' ? {} : { scope: lv.scope, where: lv.where, near: lv.where, mapNote: `Used ${top.value} sales by state, nationwide` });
+  }
+
+  // New-model arrivals: next model year's new cars in your market by model (one request, this year's
+  // when there are none yet), the top model's cars by status (one) and its newest listings (one).
+  async function liveArrivalsCard(bp, scope) {
+    const newP = Object.assign({}, bp, { inventory_type: 'new' });
+    let year = CURRENT_YEAR + 1;
+    let top = facetRows(await vfacet(Object.assign({}, newP, { year: String(year) }), 'model', { facet_value_limit: 5 }), 'model')[0];
+    if (!top) {
+      year = CURRENT_YEAR;
+      top = facetRows(await vfacet(Object.assign({}, newP, { year: String(year) }), 'model', { facet_value_limit: 5 }), 'model')[0];
+    }
+    if (!top) return '';
+    const mp = Object.assign({}, newP, { year: String(year), model: top.value });
+    const [status, recent] = await Promise.all([
+      vfacet(mp, 'availability_status'),
+      Live.request('/v1/listings', Object.assign({}, mp, { limit: 4, fields: 'default,photo_urls' })),
+    ]);
+    const byStatus = { 'On lot': 0, 'In transit': 0, 'In production': 0 };
+    for (const b of facetRows(status, 'availability_status')) {
+      const k = { stock: 'On lot', transit: 'In transit', build: 'In production' }[String(b.value).toLowerCase()];
+      if (k) byStatus[k] += b.count;
+    }
+    const cars = (recent.data || []).map(Live.normalize);
+    cars.forEach((l) => LIVE_SEEN.set(l.id, l));
+    const make = (cars[0] && cars[0].make) || '';
+    return arrivalsCardHtml({ year, make, model: String(top.value), total: top.count, byStatus, recent: cars }, { scope, where: scope.near ? nearText() : 'nationwide', near: scope.near ? nearText() : '' });
   }
 
   function deltaClass(d) {
@@ -771,70 +1793,386 @@
     return d <= -0.025 ? 'd-great' : d <= -0.008 ? 'd-good' : d < 0.008 ? 'd-fair' : d < 0.025 ? 'd-high' : 'd-over';
   }
 
-  function renderHome(scrollTo) {
+  /* ----- Home: your market, from a ZIP code ----- */
+
+  const RADII = [25, 50, 100, 250];
+  const radiusSegHtml = (radius) => `<div class="radius-seg" role="group" aria-label="Radius">${RADII.map((r) => `<button type="button" data-action="radius" data-r="${r}" aria-pressed="${r === (radius || homeRadius())}">${r} mi</button>`).join('')}</div>`;
+  const WIDE = 500; // the larger market around you, in miles
+  const POPULAR_MARKETS = [['Los Angeles', '90012'], ['New York', '10001'], ['Chicago', '60601'], ['Dallas', '75201'], ['Houston', '77002'], ['Atlanta', '30303'],
+    ['Miami', '33130'], ['Phoenix', '85004'], ['Seattle', '98101'], ['Denver', '80202'], ['Boston', '02108'], ['Bay Area', '94022']];
+  const HOME = { cond: 'All', seq: 0 };
+
+  // Save a ZIP as home. Returns false (with a toast) when it isn't a US ZIP code.
+  function setHomeZip(raw, opts) {
+    const zip = String(raw || '').trim().slice(0, 5);
+    const g = Geo.lookup(zip);
+    if (!g) {
+      toast(zip ? `${zip} isn’t a US ZIP code` : 'Type a 5-digit ZIP code');
+      return false;
+    }
+    const changed = zip !== homeZip();
+    store.update((s) => { s.prefs.homeZip = zip; });
+    if (changed && !(opts && opts.quiet)) toast(`Your market is now ${Geo.label(g, { short: true })}`);
+    // Pin the exact place when the network is there; the built-in table knows the area.
+    Geo.refine(zip).then((exact) => {
+      if (!exact || exact.approx || homeZip() !== zip) return;
+      document.querySelectorAll('[data-home-place]').forEach((el) => { el.textContent = Geo.label(exact, { short: true }); });
+      if (view.name === 'home' && Math.abs(exact.lat - g.lat) + Math.abs(exact.lng - g.lng) > 0.05) renderLocal();
+    });
+    return true;
+  }
+
+  function zipFormHtml(kind) {
+    const zip = homeZip();
+    const g = zip ? Geo.lookup(zip) : null;
+    return `<form class="zip-form" data-zip-form="${kind}" aria-label="Your ZIP code">
+      <label class="zip-field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>
+        <input id="zip-input" type="text" inputmode="numeric" autocomplete="postal-code" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="ZIP code" value="${esc(zip || '')}">
+        <span class="zip-place" data-home-place>${g ? esc(Geo.label(g, { short: true })) : ''}</span>
+      </label>
+      <button class="btn primary" type="submit">${zip ? 'Update' : 'Show my market'}</button>
+      <button class="btn ghost" type="button" data-action="locate" title="Use my current location">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>Near me</button>
+    </form>`;
+  }
+
+  const dealCond = (c) => (c === 'New' ? 'New' : c === 'Used' ? 'Used' : 'All');
+
+  // Everything the local section shows, from a pool of cars (demo inventory or live results).
+  function localData(zip, radius, pool, wide) {
+    const origin = Geo.place(zip);
+    const lm = Market.localMarket(pool, origin, radius, expected);
+    const all = wide ? pool.concat(wide.filter((l) => !pool.includes(l))) : pool;
+    return {
+      origin, lm,
+      deals: Market.bestDeals(lm.local, expected, { limit: 10, condition: HOME.cond, currentYear: CURRENT_YEAR }),
+      drive: Market.worthTheDrive(all, origin, radius, WIDE, expected, { limit: 6, currentYear: CURRENT_YEAR }),
+      vs: Market.localVsNational(all, origin, radius, { limit: 8 }),
+      cities: Market.marketCities(all, origin, radius, expected).filter((c) => c.miles != null && c.miles <= WIDE),
+      cuts: Market.recentDrops(lm.local, 7).slice(0, 6),
+    };
+  }
+
+  const compareLine = (local, nat, fmt, lowIsGood) => {
+    if (local == null || nat == null) return '';
+    const d = local / nat - 1;
+    if (Math.abs(d) < 0.015) return `<small>About the US ${fmt}</small>`;
+    const good = lowIsGood ? d < 0 : d > 0;
+    return `<small class="${good ? 'good' : 'warn'}">${pct(Math.abs(d))} ${d < 0 ? 'under' : 'over'} the US ${fmt}</small>`;
+  };
+
+  function dealsScrollerHtml(d, zip, radius) {
+    const conds = ['All', 'Used', 'New'];
+    return `<div class="row-head">
+        <div class="seg" role="group" aria-label="Condition">${conds.map((c) => `<button type="button" data-action="deal-cond" data-cond="${c}" aria-pressed="${HOME.cond === c}">${c}</button>`).join('')}</div>
+        <div class="scroller-btns"><button class="icon-btn" type="button" data-action="scroll" data-target="deals-scroller" data-dir="-1" aria-label="Scroll left">‹</button><button class="icon-btn" type="button" data-action="scroll" data-target="deals-scroller" data-dir="1" aria-label="Scroll right">›</button></div>
+      </div>
+      ${d.deals.length ? `<div class="scroller deals-scroller" id="deals-scroller">${d.deals.map((x, i) => `<div class="reveal" style="--i:${i}">${listingCard(x.l, { noCompare: true, ribbon: `#${i + 1} · ${money(x.saving)} below fair value` })}</div>`).join('')}</div>`
+        : `<p class="muted empty-note">No ${HOME.cond === 'All' ? '' : HOME.cond.toLowerCase() + ' '}cars priced clearly below fair value within ${radius} miles right now. Widen the radius or check “Worth the drive”.</p>`}`;
+  }
+
+  function localHtml(d, zip, radius, live) {
+    const { lm, origin } = d;
+    const st = lm.stats, nat = lm.national;
+    const g = Geo.lookup(zip);
+    const head = catHead(homeCats(), 'local', {
+      title: `Your market: <span class="place" data-home-place>${esc(Geo.label(g, { short: true }))}</span>`,
+      eyebrow: `${live ? 'Live · ' : ''}within ${radius} miles of ${esc(zip)} · ${plural(live && lm.total != null ? lm.total : st.count, 'car')}${st.dealers ? ` · ${plural(st.dealers, 'seller')}` : ''}${g.approx ? ' · <span title="Only the ZIP’s area is known offline; the exact place loads when online.">approximate</span>' : ''}`,
+      extra: radiusSegHtml(radius),
+    });
+    const strip = `<dl class="market-strip reveal">
+        <div><dt>Cars for sale</dt><dd>${num(live && lm.total != null ? lm.total : st.count)}</dd>${nat.count ? `<small>${pct(((live && lm.total != null ? lm.total : st.count) / nat.count), 1)} of the US market</small>` : ''}</div>
+        <div><dt>Median asking</dt><dd>${money(st.medianPrice)}</dd>${compareLine(st.medianPrice, nat.medianPrice, 'median', true)}</div>
+        <div><dt>Median days listed</dt><dd>${st.medianDays != null ? plural(Math.round(st.medianDays), 'day') : '—'}</dd>${compareLine(st.medianDays, nat.medianDays, 'pace', true)}</div>
+        <div><dt>Priced below market</dt><dd>${st.belowShare != null ? pct(st.belowShare) : '—'}</dd>${nat.belowShare != null ? `<small>US: ${pct(nat.belowShare)}</small>` : ''}</div>
+        <div><dt>Price cuts this week</dt><dd>${num(st.cuts)}</dd><small>${live ? 'In the newest listings' : `Across ${plural(st.dealers, 'seller')}`}</small></div>
+      </dl>`;
+    const dealsCard = `<article class="card insight local-deals wide reveal">
+        <header><h3>${badge('Deals', 'b-deal')} Best deals near you</h3><p class="muted">Cars priced furthest below their fair value within ${radius} miles. Fair value counts the year, miles, trim and spec of ${live ? 'the cars for sale near you' : 'every car on the market'}, not a dealer’s badge.</p></header>
+        <div id="deals-body">${dealsScrollerHtml(d, zip, radius)}</div>
+        <a class="card-cta" href="${searchHref(Object.assign({ near: zip, radius, sort: 'best' }, live ? {} : { belowMarket: 1 }))}">See every car near you, best price first →</a>
+      </article>`;
+    const groups = d.cities.map((c) => ({
+      city: c.city, lat: c.lat, lng: c.lng, count: c.count, cls: `${deltaClass(c.delta)}${c.inside ? ' inside' : ' outside'}`,
+      title: `${c.city}: ${plural(c.count, 'car')}, ${Math.round(c.miles)} mi away${c.delta != null ? `, prices ${pct(Math.abs(c.delta), 1)} ${c.delta < 0 ? 'below' : 'above'} fair value` : ''}`,
+    }));
+    const mapCard = `<article class="card insight local-map reveal">
+        <header><h3>Where the cars are</h3><p class="muted">Inside your ${radius}-mile radius, and the ${num(WIDE)}-mile market around it. Color is how a city prices against fair value; click one to search there.</p></header>
+        ${Charts.localMap(groups.map((g, i) => Object.assign(g, { inside: d.cities[i].inside })), { center: [origin[2], origin[3]], rings: [radius, WIDE], aria: `Map of cars for sale around ${zip}` })}
+        <div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span><span><i class="key home"></i>You</span></div>
+      </article>`;
+    const vsCard = `<article class="card insight local-vs reveal">
+        <header><h3>What your market charges</h3><p class="muted">Median used asking price near you vs. ${live ? 'the wider market' : 'the whole US'}, for the models with the most cars nearby.</p></header>
+        ${d.vs.length ? `<ul class="vs-list">${d.vs.map((r) => {
+          const v = Math.max(-1, Math.min(1, r.diff / 0.25));
+          const cls = r.diff <= -0.03 ? 'good' : r.diff >= 0.03 ? 'warn' : '';
+          return `<li><a href="${searchHref({ model: r.model, near: zip, radius, condition: ['Used', 'Certified'] })}">
+            <span class="vs-model"><b>${esc(r.model)}</b><small>${plural(r.local, 'car')} near you · ${money(r.localMedian)} vs ${money(r.nationalMedian)}</small></span>
+            <span class="vs-bar" aria-hidden="true"><i class="${cls}" style="left:${v < 0 ? 50 + v * 50 : 50}%;width:${Math.abs(v) * 50}%"></i></span>
+            <b class="vs-num ${cls}">${r.diff > 0 ? '+' : r.diff < 0 ? '−' : ''}${pct(Math.abs(r.diff))}</b></a></li>`;
+        }).join('')}</ul>` : '<p class="muted">Not enough cars of one model nearby to compare yet. Widen the radius.</p>'}
+      </article>`;
+    const driveCard = `<article class="card insight local-drive wide reveal">
+        <header><h3>${badge(`${radius}–${num(WIDE)} mi`, 'b-status')} Worth the drive</h3><p class="muted">Cars outside your radius that still come out ahead after the round-trip fuel (about ${Math.round(Market.FUEL_PER_MILE * 100)}¢ a mile) and the best deal on the same model near you.</p></header>
+        ${d.drive.length ? `<ol class="drive-list">${d.drive.map((x, i) => `<li class="reveal" style="--i:${i}"><a href="#/car/${x.l.id}">
+            <span class="drive-art" style="--paint:${esc(x.l.extHex)}">${Charts.car(x.l.body, x.l.extHex, { label: `${x.l.extColor} ${x.l.model}` })}</span>
+            <span class="drive-main"><b>${esc(title(x.l))} ${esc(x.l.trim)}</b><small>${esc(x.l.city)}, ${esc(x.l.state)} · ${num(x.miles)} mi away · ${kMiles(x.l.miles)} · ${asking(x.l)}</small></span>
+            <span class="drive-math"><b class="good">${money(x.saving)} below fair value</b><small>− ${money(x.fuel)} fuel there and back${x.nearbyBest ? ` − ${money(x.nearbyBest)} best nearby` : ''}</small><b class="net">${money(x.net)} ahead</b></span>
+          </a></li>`).join('')}</ol>` : `<p class="muted empty-note">Nothing between ${radius} and ${num(WIDE)} miles beats what you can already get nearby.</p>`}
+      </article>`;
+    const cutsCard = `<article class="card insight local-cuts reveal">
+        <header><h3>${badge('↓', 'b-drop')} Price cuts near you this week</h3></header>
+        ${d.cuts.length ? `<ul class="rank-list">${d.cuts.map(({ l, c }) => `<li><a href="#/car/${l.id}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${esc(l.city)}, ${esc(l.state)}${lm.distance.get(l.id) != null ? ` · ${num(lm.distance.get(l.id))} mi` : ''} · ${c.daysAgo <= 1 ? 'today' : c.daysAgo + ' days ago'}</small></span>
+            <span class="r"><b class="drop">↓ ${money(-c.delta)}</b><small>now ${money(c.to)}</small></span></a></li>`).join('')}</ul>` : '<p class="muted">No cuts in the last 7 days within your radius.</p>'}
+        <a class="card-cta" href="${searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' })}">All price cuts near you →</a>
+      </article>`;
+    return `${head}${strip}<div class="local-grid">${dealsCard}${mapCard}${vsCard}${driveCard}${cutsCard}</div>`;
+  }
+
+  /* ----- Home: the market on a map ----- */
+
+  // The whole country on one map: every city with cars for sale as a dot sized by how many and colored
+  // by how they price against fair value. Click a city to search around it; the link under it opens
+  // the search page in its map view. With a live source the counts come from the source, by state.
+  function homeMapGroups(pool, o) {
+    return [...Market.groupBy(pool, (l) => `${l.city}, ${l.state}`).entries()].filter(([, g]) => g[0].lat != null).map(([city, g]) => {
+      const d = o && o.noDelta ? null : Market.median(positions(g));
+      return {
+        city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: deltaClass(d),
+        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}${d != null ? `, ${pct(Math.abs(d), 1)} ${d < 0 ? 'below' : 'above'} market` : ''}`,
+      };
+    });
+  }
+  const mapLegend = `<div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div>`;
+
+  function mapSectionHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    const cats = homeCats();
+    const full = searchHref(Object.assign({ layout: 'map' }, zip ? { near: zip, radius: WIDE } : {}));
+    const cta = `<a class="card-cta" href="${full}">Open the full map view${zip ? `, ${num(WIDE)} miles around ${esc(zip)}` : ''} →</a>`;
+    if (isLive()) {
+      return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `Where the listings are. Click a state or city to shop it.` })}
+        <article class="card insight home-map"><div id="home-map-body">${loadingHtml('Counting listings by state…')}</div>${cta}</article></section>`;
+    }
+    const groups = homeMapGroups(LISTINGS);
     const states = new Set(LISTINGS.map((l) => l.state)).size;
-    const featured = (Market.rareSpecs(LISTINGS, rarity, 1)[0] || { l: LISTINGS[0] }).l;
+    return `<section class="section cat" id="map">${catHead(cats, 'map', { eyebrow: `${num(LISTINGS.length)} cars for sale in ${num(groups.length)} ${groups.length === 1 ? 'city' : 'cities'} across ${plural(states, 'state')}. Circle size is the number of cars; color is how the city prices against fair value. Click a city to shop it.` })}
+      <article class="card insight home-map">
+        ${Charts.usMap(groups, Object.assign({ aria: 'Map of cars for sale by city' }, zip && CTX.origin ? { center: [CTX.origin[2], CTX.origin[3]], radius } : {}))}
+        ${mapLegend}${cta}
+      </article></section>`;
+  }
+
+  // Live: counts by state from the source (one facets request). A source without facet metrics
+  // (the free auto.dev plan) gets the cities of the newest listings instead.
+  async function fillLiveMap() {
+    const body = () => document.getElementById('home-map-body');
+    if (!body()) return;
+    const ctx = liveCtx();
+    ensureLiveVocab(ON_PAGE); // for the search box; the map's own requests don't need it
+    try {
+      let html;
+      try {
+        const rows = (await Live.facetMetrics(Market.emptyFilters(), ctx, 'state', ON_PAGE)).filter((r) => r.value && r.count);
+        const by = new Map(rows.map((r) => [String(r.value).toUpperCase(), r]));
+        const hi = Math.max(1, ...rows.map((r) => r.count));
+        html = Charts.geoMap((st) => {
+          const r = by.get(st);
+          if (!r) return null;
+          const n = r.count;
+          const cls = n >= hi * 0.5 ? 'cnt-4' : n >= hi * 0.2 ? 'cnt-3' : n >= hi * 0.07 ? 'cnt-2' : 'cnt-1';
+          return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${r.avgPrice ? `, average ${money(r.avgPrice)}` : ''}`, href: searchHref({ state: st, layout: 'map' }) };
+        }, { clickable: true, labels: true, aria: 'Cars for sale by state' }) +
+          `<div class="legend"><span><i class="key cnt-1"></i>Fewer</span><span><i class="key cnt-4"></i>More cars for sale</span></div>`;
+      } catch (e) {
+        const zip = homeZip();
+        const f = Object.assign(Market.emptyFilters(), { sort: 'newest' }, zip ? { near: zip, radius: WIDE } : {});
+        const r = await Live.search(f, ctx, { lite: true });
+        const groups = homeMapGroups(r.results, { noDelta: true });
+        html = Charts.usMap(groups, { aria: 'Map of the newest cars for sale by city' }) +
+          `<p class="muted small">The ${plural(r.results.length, 'newest listing')}${zip ? ` within ${num(WIDE)} miles of ${esc(zip)}` : ''}; the full count by state needs a source with sales history.</p>`;
+      }
+      if (body()) body().innerHTML = html;
+    } catch (e) {
+      if (body()) body().innerHTML = `<p class="muted">Couldn’t load the map: ${esc(e.message || String(e))}</p>`;
+    }
+  }
+
+  function localSectionHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    if (!zip) return '';
+    if (isLive()) return `<section class="section cat local" id="local"><div id="local-body">${loadingHtml(`Loading the market around ${zip}…`)}</div></section>`;
+    return `<section class="section cat local" id="local"><div id="local-body">${localHtml(localData(zip, radius, LISTINGS), zip, radius, false)}</div></section>`;
+  }
+
+  // Redraw the local section in place (radius change, exact location found).
+  function renderLocal() {
+    const sec = document.getElementById('local');
+    if (!sec) return showTab('local');
+    sec.outerHTML = localSectionHtml();
+    if (isLive()) fillLiveLocal();
+  }
+
+  async function fillLiveLocal() {
+    const zip = homeZip(), radius = homeRadius();
+    const seq = ++HOME.seq;
+    const body = () => document.getElementById('local-body');
+    if (!zip || !body()) return;
+    const ctx = liveCtx();
+    const near = (r) => Object.assign(Market.emptyFilters(), { near: zip, radius: r, sort: 'newest' });
+    ensureLiveVocab(ON_PAGE); // for the search box; a radius search doesn't need it
+    try {
+      const [local, wide, national] = await Promise.all([
+        Live.search(near(radius), ctx, ON_PAGE),
+        Live.search(near(Math.min(WIDE, 500)), ctx, Object.assign({ lite: true }, ON_PAGE)).catch(() => ({ results: [] })),
+        Live.count({ ex: {} }, ctx, null, ON_PAGE).catch(() => null),
+      ]);
+      if (seq !== HOME.seq || !body()) return;
+      const pool = [...new Map(local.results.concat(wide.results).map((l) => [l.id, l])).values()];
+      for (const l of pool) LIVE_SEEN.set(l.id, l);
+      const fv = Live.fairValueFrom(pool, CURRENT_YEAR);
+      for (const l of pool) setLiveValue(fv, l);
+      const d = localData(zip, radius, local.results, wide.results);
+      d.lm.total = local.total;
+      if (local.stats) {
+        if (local.stats.medianPrice) d.lm.stats.medianPrice = local.stats.medianPrice;
+        if (local.stats.avgDays != null) d.lm.stats.medianDays = local.stats.avgDays;
+      }
+      d.lm.national = { count: national, medianPrice: null, medianDays: null, belowShare: null };
+      body().innerHTML = localHtml(d, zip, radius, true);
+    } catch (e) {
+      if (seq === HOME.seq && body()) body().innerHTML = liveErrorHtml(e);
+    }
+  }
+
+  function locateMe(btn) {
+    if (!navigator.geolocation) return toast('This browser can’t share your location. Type your ZIP code instead.');
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Locating…';
+    const done = () => { btn.disabled = false; btn.innerHTML = label; };
+    navigator.geolocation.getCurrentPosition((pos) => {
+      done();
+      const g = Geo.nearest(pos.coords.latitude, pos.coords.longitude);
+      if (!g) return toast('Couldn’t match your location to a US ZIP code.');
+      setHomeZip(g.zip, { quiet: true });
+      toast(`You’re near ${Geo.label(g, { short: true })}`);
+      renderHome('local');
+    }, (err) => {
+      done();
+      toast(err.code === 1 ? 'Location access was denied. Type your ZIP code instead.' : 'Couldn’t get your location. Type your ZIP code instead.');
+    }, { timeout: 8000, maximumAge: 600000 });
+  }
+
+  // The "Try" row under the search box: six examples, different on every load. One local
+  // example (when you have a home market) always leads so the row stays grounded in your
+  // area; the rest are a fresh draw from everything else.
+  function tryChips(localQuick) {
+    const local = shuffle(localQuick);
+    const lead = local.slice(0, 1);
+    const rest = shuffle(local.slice(1).concat(quickFor()));
+    return lead.concat(rest).slice(0, 6);
+  }
+
+  // The top of the home page: one big search box, then where your market is.
+  function homeTopHtml() {
+    const zip = homeZip(), radius = homeRadius();
+    const g = zip ? Geo.lookup(zip) : null;
+    const eyebrow = isLive() ? 'Live listings' : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${new Set(LISTINGS.map((l) => l.state)).size} states · ${num(SOLD.length)} recent sales · demo data`;
+    const localQuick = zip ? [
+      { label: `Best deals within ${radius} mi`, href: searchHref(Object.assign({ near: zip, radius, sort: 'best' }, isLive() ? {} : { belowMarket: 1 })) },
+      { label: 'Trucks near me', href: searchHref({ near: zip, radius, body: 'Truck' }) },
+      { label: 'Price cuts near me', href: searchHref({ near: zip, radius, dropsOnly: 1, sort: 'newest' }), demoOnly: true },
+    ].filter((q) => !isLive() || !q.demoOnly) : [];
+    const market = zip
+      ? `<div class="home-market" id="home-market">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>
+          <span>Your market is <b data-home-place>${esc(Geo.label(g, { short: true }))}</b> <span class="muted">${esc(zip)} · within ${radius} mi</span></span>
+          <button class="link-btn" type="button" data-action="edit-zip">Change</button>
+          <a class="link-btn" href="#/local" data-action="jump" data-target="local">Best deals near you →</a>
+        </div>`
+      : `<div class="home-market open" id="home-market">
+          ${zipFormHtml('home')}
+          <div class="market-chips"><span class="muted small">Or start from a big market:</span>${POPULAR_MARKETS.map(([n, z]) => `<button class="chip-link" type="button" data-action="set-zip" data-zip="${z}">${esc(n)} <span class="muted">${z}</span></button>`).join('')}</div>
+          <p class="muted small">Your ZIP stays on this device. It sets the home page, the distance on every car and the “Distance from home” sort.</p>
+        </div>`;
+    return `<section class="home-top">
+        <div class="home-top-inner">
+          <p class="eyebrow">${eyebrow}</p>
+          <div id="hero-search" class="home-search"></div>
+          ${market}
+          <div class="quick"><span class="muted">Try</span>${tryChips(localQuick).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
+        </div>
+      </section>`;
+  }
+
+  function browseHtml(cats) {
+    const zip = homeZip();
     const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
     const popular = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
+    return catHead(cats, 'browse', { eyebrow: isLive() ? `The most-listed models ${esc(scopeText())}, with live counts and median asking prices.` : 'The most-listed models, with how many are for sale and the median used asking price.' }) +
+      (isLive() ? `<div class="browse-grid" id="live-browse">${loadingHtml('Counting live listings…')}</div>` : `<div class="browse-grid">
+        ${popular.map(([key, g]) => {
+          const used = g.filter((l) => l.condition !== 'New');
+          return `<a class="browse-item" href="${searchHref(Object.assign({ model: key }, zip ? { near: zip, radius: WIDE } : {}))}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(prices(used)))}</small></a>`;
+        }).join('')}
+      </div>`);
+  }
+
+  // The selected tab's section: the carousel for a panel tab, else the section itself.
+  function tabHtml() {
+    const cats = homeCats(), id = TAB.id;
+    if (tabIsPanel(id)) return `<section class="section cat" id="insights"><div id="market-head">${marketHeadHtml()}</div><div id="market-panel">${marketPanelHtml()}</div></section>`;
+    if (id === 'map') return mapSectionHtml();
+    if (id === 'local') return localSectionHtml();
+    if (id === 'trends') return `<section class="section cat" id="trends">${trendsHtml(cats)}</section>`;
+    if (id === 'rewind') return `<section class="section cat" id="rewind">${isLive() ? liveRewindHtml(cats) : rewindHtml(cats)}</section>`;
+    return `<section class="section cat" id="browse">${browseHtml(cats)}</section>`;
+  }
+  // Wire up the tab just put on the page: pause the carousel under the pointer, fill it with live data, start the clock.
+  function mountTab() {
+    const carousel = document.getElementById('insights');
+    if (carousel) for (const [ev, on] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) carousel.addEventListener(ev, () => { PANEL.hover = on; });
+    fillPanelLive(); // the carousel's panel, or the browse grid
+    fillTrimMapIfShown();
+    if (isLive()) { fillLiveMap(); fillLiveTrends(); if (homeZip()) fillLiveLocal(); }
+    syncCatNav();
+    startPanelCycle();
+  }
+  // Show a tab in place: the search box and the strip stay, the section under them changes.
+  function showTab(id) {
+    TAB.id = tabFor(id);
+    if (tabIsPanel(TAB.id)) PANEL.id = TAB.id;
+    const host = document.getElementById('home-tab');
+    if (!host) return renderHome(TAB.id);
+    stopPanelCycle();
+    host.innerHTML = tabHtml();
+    mountTab();
+    history.replaceState(null, '', `#/${tabRoute(TAB.id)}`);
+    // If you'd scrolled down into the old section, bring the new one up under the strip.
+    const sec = host.firstElementChild;
+    if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView();
+  }
+
+  function renderHome(tab, params) {
+    if (params && params.get('zip')) {
+      setHomeZip(params.get('zip'), { quiet: true });
+      history.replaceState(null, '', '#/');
+      tab = tab || 'local';
+    }
+    const zip = homeZip();
+    PANEL.id = panelById(PANEL.id).id;
+    TAB.id = tabFor(tab || TAB.id);
+    if (tab && location.hash.replace(/\?.*/, '') !== `#/${tabRoute(TAB.id)}`) history.replaceState(null, '', `#/${tabRoute(TAB.id)}`);
     setView('home', `
-      <section class="hero">
-        <div class="hero-grid" aria-hidden="true"></div>
-        <div class="hero-inner">
-          <p class="eyebrow">${isLive() ? `Live listings from ${esc(srcName())}` : `${num(LISTINGS.length)} cars · ${num(DATA.dealers.length)} dealers · ${states} states · ${num(SOLD.length)} recent sales · demo data`}</p>
-          <h1>See the whole market.<span>Not just pages of listings.</span></h1>
-          <div id="hero-search"></div>
-          <div class="quick"><span class="muted">Try</span>${quickFor().slice(0, 6).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
-        </div>
-        ${isLive() ? `<div class="hero-feature" aria-hidden="true">${Charts.car('Coupe', '#2367b2', { cls: 'hero-car' })}</div>` : `<a class="hero-feature" href="#/car/${featured.id}" style="--paint:${esc(featured.extHex)}">
-          ${Charts.car(featured.body, featured.extHex, { cls: 'hero-car' })}
-          <span class="hero-caption"><b>${esc(title(featured))} in ${esc(featured.extColor)}</b><small>${money(featured.price)} · ${esc(featured.city)}, ${esc(featured.state)}</small></span>
-        </a>`}
-      </section>
-
-      <section class="section" id="insights">${isLive() ? liveInsightsShell() : insightsHtml()}</section>
-
-      <section class="section pitch">
-        <h2 class="center">Built to help you buy a car, not to help a dealer sell one.</h2>
-        <div class="pitch-grid">
-          <div class="card pitch-them">
-            <h3>Typical listing sites</h3>
-            <p class="muted">are built for <b>dealers</b>, by</p>
-            <ul class="x-list">
-              <li>Selling your contact info as “leads”</li>
-              <li>Ranking paid placements above better cars</li>
-              <li>Hiding price history and time on the lot</li>
-              <li>Opaque “great deal” badges you can’t check</li>
-              <li>Filters that happily return zero results</li>
-            </ul>
-          </div>
-          <div class="card pitch-us">
-            <h3>Gridline</h3>
-            <p class="muted">is built for <b>you</b>, the buyer — every pro tool included</p>
-            <ul class="feature-list">
-              <li><span>💬</span><div><b>Search the way you talk</b><p>“4x4 trucks under 50k miles near Denver” or “RAV4 hybrid without sunroof”.</p></div></li>
-              <li><span>🧩</span><div><b>Filter by what’s actually on the car</b><p>Installed options, top features, upfitter, assembly plant, MSRP and VIN patterns — include or exclude.</p></div></li>
-              <li><span>⏳</span><div><b>Sold cars and the market over time</b><p>See what sold and how fast, or rewind the market a week, a month or three months.</p></div></li>
-              <li><span>🧮</span><div><b>Transparent fair value & Deal Check</b><p>Every price compared with the same car, and any deal broken into price, fees, add-ons and trade.</p></div></li>
-              <li><span>🏁</span><div><b>Leaderboard & comparables</b><p>Where a car ranks among its true peers — same trim, nearby, similar MSRP.</p></div></li>
-              <li><span>📄</span><div><b>Window sticker, seller history, pricing breakdown</b><p>What it left the factory with, where it was listed before, and what the ad leaves out.</p></div></li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section class="section browse">
-        <h2>Browse the market</h2>${isLive() ? '<p class="muted small">Counts below are from the demo sample; each link searches live listings.</p>' : ''}
-        <div class="browse-grid">
-          ${popular.map(([key, g]) => {
-            const used = g.filter((l) => l.condition !== 'New');
-            return `<a class="browse-item" href="${searchHref({ model: key })}"><b>${esc(key)}</b><small>${plural(g.length, 'car')} · used median ${money(Market.median(used.map((l) => l.price)))}</small></a>`;
-          }).join('')}
-        </div>
-      </section>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg' });
-    if (isLive()) fillLiveInsights();
-    if (scrollTo) requestAnimationFrame(() => document.getElementById(scrollTo)?.scrollIntoView({ behavior: 'smooth' }));
-    else window.scrollTo(0, 0);
+      ${homeTopHtml()}
+      ${catNavHtml(homeCats())}
+      <div id="home-tab">${tabHtml()}</div>`);
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…', placeholders: ['Search models, VINs or dealers…', 'Search cars or VINs…', 'Search cars…'] });
+    mountTab();
+    if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
+    window.scrollTo(0, 0);
   }
 
   /* ----- Search ----- */
@@ -848,7 +2186,7 @@
     ['sold-recent', 'Recently sold'], ['sold-fastest', 'Sold fastest']];
 
   function renderSearch(params) {
-    S = { f: filtersFromParams(params), shown: PAGE, layout: S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
+    S = { f: filtersFromParams(params), shown: PAGE, layout: ['grid', 'table', 'map'].includes(params.get('layout')) ? params.get('layout') : S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
     setView('search', `
       <div class="search-layout">
         <aside class="filters" id="filters" aria-label="Filters"></aside>
@@ -856,12 +2194,12 @@
           <div class="results-top">
             <button class="btn ghost filters-toggle" type="button" data-action="toggle-filters">⚙ Filters</button>
             <form class="q-wrap" id="q-form" role="search"><svg class="sb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" aria-label="Refine results" value="${esc(S.f.q)}"></form>
+              <input id="q-input" type="search" placeholder="Refine, or type a whole search: “white 4runner with tow package”" data-placeholders="Refine, or type a whole search…|Refine or search again…|Refine…" aria-label="Refine results" value="${esc(S.f.q)}"></form>
             <label class="sort"><span class="sr-only">Sort</span><select id="sort-select"></select></label>
             <div class="seg" role="group" aria-label="Layout">
-              <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦</button>
-              <button type="button" data-action="layout" data-layout="table" aria-label="Table view" title="Table">☰</button>
-              <button type="button" data-action="layout" data-layout="map" aria-label="Map view" title="Map">◎</button>
+              <button type="button" data-action="layout" data-layout="grid" aria-label="Grid view" title="Grid">▦<span class="seg-label"> Grid</span></button>
+              <button type="button" data-action="layout" data-layout="table" aria-label="Table view" title="Table">☰<span class="seg-label"> Table</span></button>
+              <button type="button" data-action="layout" data-layout="map" aria-label="Map view" title="Map">◎<span class="seg-label"> Map</span></button>
             </div>
             <button class="btn primary" type="button" data-action="save-search" title="Save this search and get notified when a new match is listed or one drops its price">🎯 Hunt this</button>
           </div>
@@ -930,7 +2268,7 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     } else {
       resultsEl.classList.add('is-loading');
-      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml(`Searching live listings from ${srcName()}…`);
+      if (!S.results || !S.live) resultsEl.innerHTML = loadingHtml('Searching live listings…');
     }
     try {
       await ensureLiveVocab();
@@ -956,9 +2294,11 @@
       S.shown = S.results.length;
       renderSearchParts();
     } catch (e) {
-      if (seq !== liveSeq) return;
+      // The search page may be gone by the time a request fails: then there is nowhere to show it.
+      if (seq !== liveSeq || !resultsEl.isConnected) return;
       resultsEl.innerHTML = liveErrorHtml(e);
-      document.getElementById('filters').innerHTML = '';
+      const filters = document.getElementById('filters');
+      if (filters) filters.innerHTML = '';
     } finally {
       if (seq === liveSeq) resultsEl.classList.remove('is-loading');
     }
@@ -1035,11 +2375,11 @@
       ${S.live && !can('exclude') ? '' : `<button type="button" class="mode-btn${exMode ? ' on' : ''}" data-action="ex-mode" data-key="${key}" aria-pressed="${exMode}" title="Exclude mode: checked values are left out">${exMode ? 'Excluding' : 'Exclude'}</button>`}</span></legend>${hint}${body}${more}</fieldset>`;
   }
 
-  const HEX = (() => {
+  const HEX = lazy(new Map(), () => {
     const m = new Map();
     for (const l of ALL) if (!m.has(l.extColor)) m.set(l.extColor, l.extHex);
     return m;
-  })();
+  });
   const FAMILY_HEX = { White: '#f4f4f2', Black: '#151515', Gray: '#6b6e72', Silver: '#b9bcc0', Blue: '#2f4a6b', Red: '#a3141d', Green: '#3e5a3e',
     Brown: '#7a5a3a', Beige: '#c9bfa8', Orange: '#d2691e', Yellow: '#e3b51b', Purple: '#5b3d72', Other: '#999' };
 
@@ -1052,7 +2392,7 @@
         <button type="button" class="link-btn" data-action="reset">Reset all</button>
         <button type="button" class="icon-btn filters-close" data-action="toggle-filters" aria-label="Close filters">✕</button></div>
       <div class="finder">
-        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
+        <input id="finder-input" type="search" placeholder="Search filters: “brown interior”, “without sunroof”" data-placeholders="Search filters: “brown interior”…|Search filters…" aria-label="Search filters" value="${esc(S.finder)}" autocomplete="off">
         <ul class="finder-list" id="finder-list" role="listbox" hidden></ul>
       </div>
       ${S.live && can('historyFilters') ? `<div class="toggle-row">
@@ -1087,8 +2427,10 @@
         </fieldset>
         ${facetList('year', facets, { limit: 6, sort: (a, b) => b.value - a.value })}
         <fieldset class="facet"><legend><span>Location</span></legend>
-          <select id="near" data-near>
-            <option value="">Anywhere in the US</option>
+          <form class="zip-mini" data-zip-form="search"><input type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="ZIP code" value="${Geo.isZip(f.near) ? esc(f.near) : ''}" data-focus-key="zip-near"><button class="btn" type="submit">Go</button></form>
+          ${Geo.isZip(f.near) ? `<p class="f-note">${esc(Geo.label(Geo.lookup(f.near)))}</p>` : homeZip() && !f.near ? `<button type="button" class="link-btn f-note" data-action="near-home">Near me · ${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))} ${esc(homeZip())}</button>` : ''}
+          <select id="near" data-near aria-label="Demo market">
+            <option value="">${S.live ? 'Anywhere in the US' : 'Or pick a demo market'}</option>
             ${CITY_NAMES.map((c) => `<option ${f.near === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
           </select>
           ${f.near ? `<label class="radius"><span>Within <b>${f.radius} mi</b></span><input type="range" id="radius" min="25" max="1000" step="25" value="${f.radius}" data-num="radius"></label>` : ''}
@@ -1111,7 +2453,7 @@
         ${facetList('upfitter', facets, { limit: 8, hint: 'Aftermarket builders like Roush, Rocky Ridge or BraunAbility.', fmt: S.live ? Live.titleCase : null })}`)}
       ${group('Origin & seller', `
         ${facetList('assembly', facets, { limit: 6 })}
-        ${facetList('seller', facets, { hint: S.live ? `Franchise or independent dealer. ${esc(srcName())} covers dealer listings only.` : null })}
+        ${facetList('seller', facets, { hint: S.live ? 'Franchise or independent dealer. Live data covers dealer listings only.' : null })}
         ${facetList('state', facets, { limit: 6 })}
         ${S.live && !can('vinPattern') ? '' : `<fieldset class="facet"><legend><span>VIN pattern</span></legend>
           <input type="text" id="vin-pattern" data-text="vin" class="mono-input" maxlength="17" placeholder="e.g. 5TF*B5D or JTE??????N" value="${esc(f.vin)}" spellcheck="false" autocapitalize="characters">
@@ -1159,7 +2501,7 @@
     if (f.msrpMin != null) chips.push({ label: `MSRP over ${money(f.msrpMin)}`, k: 'msrpMin' });
     if (f.msrpMax != null) chips.push({ label: `MSRP under ${money(f.msrpMax)}`, k: 'msrpMax' });
     if (f.milesMax != null) chips.push({ label: `Under ${kMiles(f.milesMax)}`, k: 'milesMax' });
-    if (f.near) chips.push({ label: `${f.radius} mi of ${f.near}`, k: 'near' });
+    if (f.near) chips.push({ label: `${f.radius} mi of ${placeLabel(f.near)}`, k: 'near' });
     if (f.dropsOnly) chips.push({ label: 'Has price cuts', k: 'dropsOnly' });
     if (f.belowMarket) chips.push({ label: 'Below market', k: 'belowMarket' });
     if (f.noAccidents) chips.push({ label: 'No accidents', k: 'noAccidents' });
@@ -1196,7 +2538,7 @@
         <div><p class="eyebrow">Market overview · ${esc(m.seg)}</p><h2>${esc(key)}</h2></div>
         <dl class="kpis">
           <div><dt>For sale</dt><dd>${num(all.length)}</dd></div>
-          <div><dt>Used median</dt><dd>${money(Market.median(used.map((l) => l.price)))}</dd></div>
+          <div><dt>Used median</dt><dd>${money(Market.median(prices(used)))}</dd></div>
           <div><dt>Sold, 30 days</dt><dd>${num(v.sold30)}</dd></div>
           <div><dt>Median days to sell</dt><dd>${v.medianDaysToSell != null ? Math.round(v.medianDaysToSell) : '—'}</dd></div>
           <div><dt>Days of supply</dt><dd>${v.daysOfSupply ? Math.round(v.daysOfSupply) : '—'}</dd></div>
@@ -1205,13 +2547,12 @@
       </div>
       <div class="overview-grid">
         <div><h4>Median price by model year</h4>
-          ${Charts.columns(byYear.map(([y, g]) => {
-            const med = Market.median(g.map((l) => l.price));
-            return { label: String(y).slice(2).padStart(3, "'"), value: med, display: '$' + Math.round(med / 1000) + 'k', title: `${y}: ${plural(g.length, 'car')}, median ${money(med)}` };
-          }), { aria: `Median ${key} price by model year` })}
+          ${Charts.columns(byYear.map(([y, g]) => [y, g, Market.median(prices(g))]).filter(([, , med]) => med != null).map(([y, g, med]) => (
+            { label: String(y).slice(2).padStart(3, "'"), value: med, display: '$' + Math.round(med / 1000) + 'k', title: `${y}: ${plural(g.length, 'car')}, median ${money(med)}` }
+          )), { aria: `Median ${key} price by model year` })}
         </div>
         <div><h4>Trims</h4>
-          <ul class="trim-list">${trims.map(([t, g]) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t)}"><span>${esc(t)}</span><span class="muted">${num(g.length)}</span><span>${money(Market.median(g.map((l) => l.price)))}</span></button></li>`).join('')}</ul>
+          <ul class="trim-list">${trims.map(([t, g]) => `<li><button type="button" class="link-row" data-action="pick-trim" data-trim="${esc(t)}"><span>${esc(t)}</span><span class="muted">${num(g.length)}</span><span>${money(Market.median(prices(g)))}</span></button></li>`).join('')}</ul>
         </div>
       </div>
     </section>`;
@@ -1232,13 +2573,13 @@
     const sold = S.f.when === 'sold';
     const when = Number(S.f.when) || 0;
     const liveNotes = live ? [
-      S.f.q ? `${esc(srcName())} doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
-      S.dropped ? `${esc(srcName())} doesn’t support one of these filters (<code>${esc(S.dropped)}</code>), so it was skipped.` : '',
+      S.f.q ? `Live search doesn’t support free-text search, so “${esc(S.f.q)}” isn’t applied. Try describing it in the main search box.` : '',
+      S.dropped ? `Live search doesn’t support one of these filters (<code>${esc(S.dropped)}</code>), so it was skipped.` : '',
       S.f.belowMarket || S.f.dropsOnly ? '“Below market only” and “Has price cuts” apply to demo data only.' : '',
     ].filter(Boolean) : [];
     const head = `${activeChips()}
       <div class="results-summary" aria-live="polite">${sentenceHtml(sum.count)}
-        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings from ${srcLink()}</span>` : ''}</p>
+        <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings</span>` : ''}</p>
         ${liveNotes.map((n) => `<p class="live-note">${n}</p>`).join('')}
       </div>`;
     if (!results.length) {
@@ -1253,21 +2594,22 @@
     </dl>`;
 
     // Chart: plot up to 600 matches; color by market position.
-    const sample = results.length > 600 ? results.filter((_, i) => i % Math.ceil(results.length / 600) === 0) : results;
+    const plotted = results.filter(priced);
+    const sample = plotted.length > 600 ? plotted.filter((_, i) => i % Math.ceil(plotted.length / 600) === 0) : plotted;
     const scatter = Charts.scatter({
       series: [{ points: sample.map((l) => ({ x: l.miles, y: l.price, id: l.id, cls: sold ? 'mk-sold' : 'mk-' + (marketText(l) || { tone: 'fair' }).tone, label: `${title(l)} ${l.trim} · ${money(l.price)} · ${kMiles(l.miles)}` })), cls: 'res' }],
       xLabel: 'Miles', aria: 'Matching cars plotted by price and mileage', height: 260, r: 3.6,
     });
     const byState = Market.groupBy(results, (l) => l.state);
     const liveStates = live ? new Map((S.facets.state || []).map((x) => [x.value, x.count])) : null;
-    const tiles = Charts.tileMap((st) => {
+    const tiles = Charts.geoMap((st) => {
       const g = byState.get(st);
       const n = live ? liveStates.get(st) || 0 : g ? g.length : 0;
       if (!n) return S.f.state.includes(st) ? { cls: 'cnt-0', value: 0, selected: true, title: st } : null;
       const hi = live ? Math.max(1, ...liveStates.values()) : 60;
       const cls = n >= hi * (live ? 0.5 : 1) ? 'cnt-4' : n >= hi * (live ? 0.2 : 25 / 60) ? 'cnt-3' : n >= hi * (live ? 0.07 : 10 / 60) ? 'cnt-2' : 'cnt-1';
-      return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${g && !live ? `, median ${money(Market.median(g.map((l) => l.price)))}` : ''}`, selected: S.f.state.includes(st) };
-    }, { clickable: true, size: 40, aria: 'Matching cars by state' });
+      return { cls, value: n >= 10000 ? Math.round(n / 1000) + 'k' : n, title: `${st}: ${plural(n, 'car')}${g && !live ? `, median ${money(Market.median(prices(g)))}` : ''}`, selected: S.f.state.includes(st) };
+    }, { clickable: true, aria: 'Matching cars by state' });
 
     let trendCard;
     if (!live) {
@@ -1283,7 +2625,7 @@
         ${Charts.trend(S.liveTrend.series, { width: 1100, height: 200, aria: 'Matching cars for sale over the last 90 days' })}
         <div class="legend"><span><i class="key inv"></i>For sale</span><span><i class="key med"></i>Median price</span></div></div>`;
     } else {
-      trendCard = `<div class="card viz trend-card trend-cta"><div><h3>Inventory over time</h3><p class="muted small">See how many of these cars were for sale over the last 90 days and how many sold. Uses 9 Visor requests (about 3¢).</p></div>
+      trendCard = `<div class="card viz trend-card trend-cta"><div><h3>Inventory over time</h3><p class="muted small">See how many of these cars were for sale over the last 90 days and how many sold. Uses 9 requests (about 3¢).</p></div>
         <button class="btn" type="button" data-action="live-trend">Load 90-day trend</button></div>`;
     }
 
@@ -1327,14 +2669,13 @@
 
   function mapHtml(results) {
     const groups = [...Market.groupBy(results, (l) => `${l.city}, ${l.state}`).entries()].map(([city, g]) => {
-      const meds = g.map(delta);
-      const d = Market.median(meds);
+      const d = Market.median(positions(g));
       return {
         city, lat: g[0].lat, lng: g[0].lng, count: g.length, cls: S.f.when === 'sold' ? 'mp-sold' : deltaClass(d),
-        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(g.map((l) => l.price)))}`,
+        title: `${city}: ${plural(g.length, 'car')}, median ${money(Market.median(prices(g)))}`,
       };
     });
-    const c = S.f.near ? cityByName(S.f.near) : null;
+    const c = S.f.near ? placeOf(S.f.near) : null;
     return `<div class="card map-card"><div class="viz-head"><h3>Map</h3><span class="muted small">Circle size is the number of cars; color is the median price vs. market. Click a city to search around it.</span></div>
       ${Charts.usMap(groups, { center: c ? [c[2], c[3]] : null, radius: S.f.near ? S.f.radius : null, aria: 'Map of matching cars by city' })}
       <div class="legend"><span><i class="key d-great"></i>Below market</span><span><i class="key d-fair"></i>At market</span><span><i class="key d-over"></i>Above market</span></div></div>
@@ -1347,7 +2688,7 @@
       <thead><tr><th>Car</th><th class="num">${sold ? 'Sold for' : 'Price'}</th><th>${sold ? 'Sold' : 'vs. market'}</th><th class="num">MSRP</th><th class="num">Miles</th><th>Color</th><th>${prefs().showDealer ? 'Seller' : 'Location'}</th><th class="num">Days</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${rows.map((l) => `<tr>
         <td><a href="#/car/${l.id}"><b>${esc(title(l))}</b> <span class="muted">${esc(l.trim)}</span></a><div class="small">${conditionBadge(l)}${l.status && l.status !== 'On lot' && !l.sold ? ' ' + badge(l.status, 'b-status') : ''} ${upfitBadge(l)}</div></td>
-        <td class="num"><b>${money(l.price)}</b></td><td>${sold ? ago(l.sold.daysAgo) : deltaChip(l)}</td><td class="num">${money(l.msrp)}</td><td class="num">${num(l.miles)}</td>
+        <td class="num"><b>${asking(l)}</b></td><td>${sold ? ago(l.sold.daysAgo) : deltaChip(l)}</td><td class="num">${money(l.msrp)}</td><td class="num">${num(l.miles)}</td>
         <td><span class="swatch-line"><i style="background:${esc(l.extHex)}"></i>${esc(l.extColor)}</span></td>
         <td>${esc(whereText(l))}</td><td class="num">${sold ? l.sold.daysToSell : l.daysListed}</td>
         <td>${compareButton(l)}</td></tr>`).join('')}</tbody></table></div>`;
@@ -1371,7 +2712,7 @@
   }
 
   async function loadLiveCar(id) {
-    setView('car', `<section class="narrow">${loadingHtml(`Loading listing from ${srcName()}…`)}</section>`);
+    setView('car', `<section class="narrow">${loadingHtml('Loading listing…')}</section>`);
     try {
       const l = await Live.listing(id);
       const comps = await Live.comparables(l, liveCtx(), { years: 1, condition: 'same' });
@@ -1420,7 +2761,7 @@
           <div class="badges">${conditionBadge(l)}${l.sold ? badge('Sold', 'b-sold') : ''}${l.status && !l.sold ? badge(l.status, 'b-status') : ''}${l.seller === 'Private' ? badge('Private seller', 'b-private') : ''}${upfitBadge(l)}${r && r.extCount <= 3 ? badge(`💎 1 of ${r.extCount} in this color`, 'b-rare') : ''}${l.windowStickerVerified ? badge('✓ Window sticker verified', 'b-verified') : ''}${live ? badge('Live', 'b-live') : ''}</div>
           <h1>${esc(title(l))} <span>${esc(l.trim)}</span></h1>
           <p class="muted">${miles(l.miles)} · ${esc(l.drivetrain)}${l.transmission ? ` · ${esc(l.transmission)}` : ''} · ${esc(l.fuel)} · ${esc(l.city)}, ${esc(l.state)}${distanceTo(l) != null ? ` · ${num(distanceTo(l))} mi from home` : ''}</p>
-          <div class="big-price">${money(l.price)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
+          <div class="big-price">${asking(l)}${cut && cut.delta < 0 ? `<s>${money(firstPrice)}</s>` : ''}</div>
           ${m ? `<div class="gauge" aria-label="Price position versus market">
               <div class="gauge-bar"><span class="gauge-mark" style="left:${gaugePos}%"></span></div>
               <div class="gauge-scale"><span>15% below</span><span>Market</span><span>15% above</span></div>
@@ -1641,8 +2982,10 @@
     const lb = Market.leaderboard(l, comps, opts.rankBy, delta);
     const rankLabel = { value: 'price vs. market', price: 'lowest price', miles: 'lowest miles', days: 'newest listing', discount: 'discount from MSRP' }[opts.rankBy];
     const statOf = (x) => ({
-      value: deltaChip(x), price: money(x.price), miles: kMiles(x.miles), days: days(x.daysListed), discount: x.msrp ? `-${pct(Market.discountOf(x))}` : '—',
+      value: deltaChip(x), price: asking(x), miles: kMiles(x.miles), days: days(x.daysListed), discount: x.msrp && priced(x) ? `-${pct(Market.discountOf(x))}` : '—',
     }[opts.rankBy]);
+    // Ranked on price, value or discount, a car with no price has no place: it is listed last and unnumbered.
+    const unranked = (x) => !priced(x) && ['value', 'price', 'discount'].includes(opts.rankBy);
     const top = lb.rows.slice(0, 10);
     const rows = top.includes(l) ? top : [...top, null, l];
     const y = (x) => (opts.msrpAdjusted ? (x.price / x.msrp) * 100 : x.price);
@@ -1659,11 +3002,11 @@
     document.getElementById('mc-body').innerHTML = `
       <div class="mc-grid">
         <div class="leaderboard">
-          <p class="lb-rank"><b>#${lb.rank}</b> of ${num(lb.total)} by ${rankLabel}</p>
+          <p class="lb-rank">${unranked(l) ? `Not ranked by ${rankLabel}: this car has no listed price` : `<b>#${lb.rank}</b> of ${num(lb.rows.filter((x) => !unranked(x)).length)} by ${rankLabel}`}</p>
           <ol class="lb-list">${rows.map((x, i) => x === null ? '<li class="gap">…</li>' : `<li class="${x === l ? 'me' : ''}">
-            <span class="lb-pos">${lb.rows.indexOf(x) + 1}</span>
+            <span class="lb-pos">${unranked(x) ? '–' : lb.rows.indexOf(x) + 1}</span>
             <a href="#/car/${x.id}"><b>${x.year} ${esc(x.trim)}</b><small>${kMiles(x.miles)} · ${esc(x.city)}, ${esc(x.state)}</small></a>
-            <span class="lb-stat">${x === l ? '<b>This car</b>' : ''}<span>${money(x.price)}</span>${opts.rankBy !== 'price' ? `<small>${statOf(x)}</small>` : ''}</span></li>`).join('')}</ol>
+            <span class="lb-stat">${x === l ? '<b>This car</b>' : ''}<span>${asking(x)}</span>${opts.rankBy !== 'price' ? `<small>${statOf(x)}</small>` : ''}</span></li>`).join('')}</ol>
         </div>
         <div class="mc-chart" data-action-zone="scatter">${chart}
           <div class="legend"><span><i class="key self"></i>This car</span><span><i class="key comp"></i>For sale (${num(comps.length)})</span>${opts.includeSold ? `<span><i class="key sold"></i>Sold (${num(soldComps.length)})</span>` : ''}</div>
@@ -1686,16 +3029,17 @@
         ${items.map((x) => `<div class="${x.role === 'displayed_price' ? 'sub' : ''}"><dt>${esc(x.raw_label || Live.titleCase(x.role || 'Item'))}${x.applicability && x.applicability !== 'all_buyers' ? ` <span class="tag warn">${esc(Live.titleCase(x.applicability))}</span>` : x.role === 'seller_add_on' ? ' <span class="tag">add-on</span>' : x.role === 'seller_fee' ? ' <span class="tag">fee</span>' : ''}</dt>
           <dd class="${sign(x) < 0 ? 'good' : ''}">${x.amount_usd == null ? '—' : (sign(x) > 0 ? '+' : sign(x) < 0 ? '−' : '') + money(Math.abs(x.amount_usd))}</dd></div>`).join('')}
         ${before ? `<div class="sub"><dt>Seller total before tax</dt><dd>${money(before)}</dd></div>` : ''}
-        <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(base * taxRate / 100)}</dd></div>
-        <div class="total"><dt>Est. out the door</dt><dd>${money(base * (1 + taxRate / 100))}</dd></div>
+        ${base > 0 ? `<div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(base * taxRate / 100)}</dd></div>
+        <div class="total"><dt>Est. out the door</dt><dd>${money(base * (1 + taxRate / 100))}</dd></div>` : ''}
       </dl>
+      ${base > 0 ? '' : '<p class="muted small">The dealer hasn’t listed a price, so there is no tax or total to estimate. Ask for an out-the-door price in writing.</p>'}
       ${gap > 0 ? `<p class="price-gap">Possible price gap: <b>${money(gap)}</b> on top of the advertised price before tax.</p>` : ''}
       ${conditional.length ? `<p class="muted small">Discounts marked “${esc(Live.titleCase(conditional[0].applicability))}” only apply if you qualify.</p>` : ''}`
+      : !priced(l) ? '<p class="muted small">The dealer hasn’t listed a price for this car. Ask for an out-the-door price in writing.</p>'
       : `<p class="muted small">This dealer’s fee and add-on details aren’t available. Ask for an out-the-door price in writing.</p>
         <dl class="spec pricing"><div class="sub"><dt>Advertised price</dt><dd>${money(l.price)}</dd></div>
         <div><dt>Est. sales tax (${taxRate}%)</dt><dd>+${money(l.price * taxRate / 100)}</dd></div>
         <div class="total"><dt>Est. before fees</dt><dd>${money(l.price * (1 + taxRate / 100))}</dd></div></dl>`}
-      <p class="muted small">Listing data from ${srcLink()}.</p>
     </section>`;
   }
 
@@ -1817,11 +3161,11 @@
         </section>
         <section><h3>Origin</h3>
           <p>Final assembly point: <b>${esc(l.assembly.plant)}</b>${l.assembly.country ? `<br>Country of assembly: ${esc(l.assembly.country)}` : ''}</p>
-          ${l.windowStickerVerified ? `<p class="st-note">${esc(srcName())} verified this VIN against its original window sticker.</p>` : ''}
+          ${l.windowStickerVerified ? `<p class="st-note">This VIN was verified against its original window sticker.</p>` : ''}
           ${l.upfitter ? `<p class="st-note">Upfitted after delivery by <b>${esc(l.upfitter.name)}</b> (${esc(l.upfitter.category.toLowerCase())}). Upfit content is not part of the factory MSRP.</p>` : ''}
         </section>
       </div>
-      <p class="st-foot">Reconstructed from listing data${l.live ? ` (${esc(srcName())})` : ''} for reference. Confirm with the original Monroney label from the seller.</p>
+      <p class="st-foot">Reconstructed from listing data for reference. Confirm with the original Monroney label from the seller.</p>
     </article>`;
   }
 
@@ -1836,7 +3180,7 @@
       <table class="st-price"><tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join('')}</tbody></table>
       <h3>Factory options</h3>
       <table class="st-price"><tbody>${l.options.map((x, i) => `<tr><td><span class="mono">${esc(x.code || l.make.slice(0, 2).toUpperCase() + String(100 + i * 7))}</span> ${esc(x.name)}</td><td>${x.price ? money(x.price) : '—'}</td></tr>`).join('') || '<tr><td>None</td><td></td></tr>'}</tbody></table>
-      <p class="st-foot">${l.live && l.options.length ? `Option codes from ${esc(srcName())}.` : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
+      <p class="st-foot">${l.live && l.options.length ? 'Option codes from the listing.' : 'Option codes are illustrative.'} Reconstructed from listing data.</p>
     </article>`;
   }
 
@@ -1849,10 +3193,10 @@
       Live.vin(d.vin).then((l) => {
         const el = document.getElementById('vin-live');
         if (!el) return;
-        if (!l) { el.innerHTML = `<p class="muted">${esc(srcName())} has no listing for this VIN.</p>`; return; }
+        if (!l) { el.innerHTML = '<p class="muted">No live listing for this VIN.</p>'; return; }
         rememberLive(l);
         el.innerHTML = `<h2 class="sec-title">${l.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(l)}</div>`;
-      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? `<p class="muted">${esc(srcName())} hasn’t seen this VIN.</p>` : liveErrorHtml(e); });
+      }, (e) => { const el = document.getElementById('vin-live'); if (el) el.innerHTML = e.code === 'not_found' ? '<p class="muted">This VIN hasn’t been seen in live listings.</p>' : liveErrorHtml(e); });
     }
     setView('vin', `<section class="narrow">
       <h1>VIN <span class="mono">${esc(d.vin)}</span></h1>
@@ -1868,7 +3212,7 @@
         </dl>
         ${d.errors.length ? `<ul class="errors">${d.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
       </div>
-      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml(`Looking up this VIN on ${srcName()}…`)}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
+      ${isLive() && d.wellFormed ? `<div id="vin-live">${loadingHtml('Looking up this VIN…')}</div>` : match ? `<h2 class="sec-title">${match.sold ? 'This VIN sold recently' : 'This VIN is for sale'}</h2><div class="listing-grid compact">${listingCard(match)}</div>` : `<p class="muted">No current listing matches this VIN.${d.make && d.year ? ` <a href="${searchHref({ make: d.make, year: d.year })}">See ${d.year} ${esc(d.make)}s for sale →</a>` : ''}</p>`}
       ${d.wellFormed ? `<p><a href="${searchHref({ vin: d.vin.slice(0, 8) })}">Find other cars with the same first 8 characters →</a></p>` : ''}
     </section>`);
     window.scrollTo(0, 0);
@@ -1882,17 +3226,19 @@
       setView('compare', `<section class="narrow empty-state"><h1>Compare cars</h1><p class="muted">Add up to four cars with <b>+ Compare</b> on any listing to line them up here.</p><a class="btn primary" href="#/search">Start searching</a></section>`);
       return;
     }
+    // Marks the best value in a row. A car with nothing to compare (null) never wins.
     const best = (vals, low) => {
-      const target = low ? Math.min(...vals) : Math.max(...vals);
-      return vals.map((v) => cars.length > 1 && v === target);
+      const known = vals.filter((v) => v != null);
+      const target = low ? Math.min(...known) : Math.max(...known);
+      return vals.map((v) => cars.length > 1 && v != null && v === target);
     };
     const optTotal = (l) => l.options.reduce((s, o) => s + o.price, 0);
     const rows = [
-      ['Price', cars.map((l) => money(l.price) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => l.price), true)],
-      ['vs. market', cars.map((l) => deltaChip(l) || '—'), best(cars.map(delta), true)],
+      ['Price', cars.map((l) => asking(l) + (l.sold ? ' <span class="muted">sold</span>' : '')), best(cars.map((l) => (priced(l) ? l.price : null)), true)],
+      ['vs. market', cars.map((l) => deltaChip(l) || '—'), best(cars.map((l) => (marketText(l) ? delta(l) : null)), true)],
       ['Expected value', cars.map((l) => money(expected(l))), []],
       ['Original MSRP', cars.map((l) => money(l.msrp)), []],
-      ['Discount from MSRP', cars.map((l) => pct(Market.discountOf(l))), best(cars.map(Market.discountOf), false)],
+      ['Discount from MSRP', cars.map((l) => (l.msrp && priced(l) ? pct(Market.discountOf(l)) : '—')), best(cars.map((l) => (l.msrp && priced(l) ? Market.discountOf(l) : null)), false)],
       ['Mileage', cars.map((l) => miles(l.miles)), best(cars.map((l) => l.miles), true)],
       ['Year', cars.map((l) => String(l.year)), best(cars.map((l) => l.year), false)],
       ['Trim', cars.map((l) => esc(l.trim)), []],
@@ -1961,7 +3307,7 @@
       return { results, complete: true, total: results.length };
     }
     await ensureLiveVocab();
-    const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true });
+    const r = await Live.search(Object.assign({}, f, { sort: 'newest' }), liveCtx(), { lite: true, fresh: true });
     for (const l of r.results) LIVE_SEEN.set(l.id, l);
     const fv = Live.fairValueFrom(r.results, CURRENT_YEAR);
     for (const l of r.results) if (!LIVE_EXPECTED.has(l.id)) setLiveValue(fv, l);
@@ -2061,7 +3407,7 @@
     let body;
     if (lead) {
       const m = marketText(lead);
-      body = `${title(lead)} ${lead.trim} · ${money(lead.price)}${m && m.d < -0.01 ? ` · ${m.label} market` : ''} · ${lead.city}, ${lead.state}`;
+      body = `${title(lead)} ${lead.trim} · ${asking(lead)}${m && m.d < -0.01 ? ` · ${m.label} market` : ''} · ${lead.city}, ${lead.state}`;
     } else {
       const c = d.cut[0];
       body = `${title(c.l)} ${c.l.trim} dropped ${money(c.from - c.to)} to ${money(c.to)}`;
@@ -2187,7 +3533,7 @@
       const { results, complete, total } = await huntMatches(x);
       const recent = results.filter((l) => l.daysListed <= 30).length;
       const st = { forSale: total, perMonth: complete ? recent : recent || null, perMonthAtLeast: !complete, sold: null, medianDaysToSell: null,
-        medianPrice: complete ? Market.median(results.map((l) => l.price)) : null, medianSoldPrice: null };
+        medianPrice: complete ? Market.median(prices(results)) : null, medianSoldPrice: null };
       if (can('velocity')) {
         const v = await Live.velocity(f, liveCtx()).catch(() => null);
         if (v) {
@@ -2197,8 +3543,8 @@
         }
       }
       st.rarity = Market.rarityLabel(st.perMonth);
-      st.best = results.filter((l) => expected(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
-      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')} on ${esc(srcName())}${can('velocity') ? '' : '. Sales history needs a Visor key'}.</p>`;
+      st.best = results.filter((l) => expected(l) && priced(l)).sort((a, b) => delta(a) - delta(b))[0] || null;
+      const note = `<p class="muted small">From ${complete ? 'all' : `the newest ${num(results.length)} of`} ${plural(total, 'match')}${can('velocity') ? '' : '. Sales history needs a source that has it (see Settings)'}.</p>`;
       if (el()) el().innerHTML = huntMarketHtml(st, f, note);
     } catch (e) {
       if (el()) el().innerHTML = liveErrorHtml(e);
@@ -2272,15 +3618,17 @@
       <p class="muted small">Live data works in the desktop app or with <code>npm start</code>. Both services only accept browser requests from their own websites, so the public web version stays on demo data. Recalls and complaints come from NHTSA and work everywhere.</p>
       <h2 class="sec-title">Hunts</h2>
       <div class="card settings">
-        <label class="set-row"><span><b>Check watched hunts</b><small>While Gridline is open, including in the background. ${isLive() ? `Each check uses 1 ${esc(srcName())} request per hunt${SOURCE() === 'autodev' ? huntBudgetText() : ''}.` : 'Demo checks are free.'}</small></span>
+        <label class="set-row"><span><b>Check watched hunts</b><small>While Gridline is open, including in the background. ${isLive() ? `Each check uses 1 request per hunt${SOURCE() === 'autodev' ? huntBudgetText() : ''}.` : 'Demo checks are free.'}</small></span>
           <select data-pref="huntEvery">${HUNT_EVERY.map(([v, t]) => `<option value="${v}" ${p.huntEvery === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <div class="set-row"><span><b>Notifications</b><small>${{ desktop: 'Native notifications from the desktop app. You can turn them off in your system’s notification settings.', granted: 'This browser will show notifications from Gridline.', denied: 'Blocked in this browser. Allow notifications for this site in its settings to get them.', unsupported: 'This browser can’t show notifications. Use the desktop app.' }[notifyState()] || 'Allow notifications to hear about new matches and price cuts.'}</small></span>
           ${notifyState() === 'default' ? '<button class="btn ghost" type="button" data-action="notify-allow">Allow notifications</button>' : ''}</div>
       </div>
       <h2 class="sec-title">Display</h2>
       <div class="card settings">
-        <label class="set-row"><span><b>Home location</b><small>Used for distances on every listing and the “Distance from home” sort.</small></span>
-          <select data-pref="homeCity"><option value="">Not set</option>${CITY_NAMES.map((c) => `<option ${p.homeCity === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+        <div class="set-row"><span><b>Home ZIP code</b><small>Sets your market on the home page, the distance on every listing and the “Distance from home” sort.${homeZip() ? ` Now <b data-home-place>${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))}</b> ${esc(homeZip())}.` : ' Stays on this device.'}</small></span>
+          <form class="zip-mini" data-zip-form="settings"><input type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" aria-label="Home ZIP code" value="${esc(homeZip() || '')}"><button class="btn primary" type="submit">Save</button>${homeZip() ? '<button class="btn ghost" type="button" data-action="clear-zip">Clear</button>' : ''}</form></div>
+        <label class="set-row"><span><b>Market radius</b><small>How far around your ZIP the home page looks for deals. “Worth the drive” looks out to ${num(WIDE)} miles.</small></span>
+          <select data-pref="homeRadius">${RADII.map((r) => `<option value="${r}" ${homeRadius() === r ? 'selected' : ''}>${r} miles</option>`).join('')}</select></label>
         <label class="set-row"><span><b>Show on listings</b><small>Seller name or the car’s location.</small></span>
           <select data-pref="showDealer"><option value="0" ${!p.showDealer ? 'selected' : ''}>Location</option><option value="1" ${p.showDealer ? 'selected' : ''}>Seller name</option></select></label>
         <label class="set-row"><span><b>Compact cards</b><small>Fit more cars on screen.</small></span>
@@ -2300,7 +3648,7 @@
     const route = await Live.transport();
     try {
       const n = await Live.count({ ex: {} }, liveCtx());
-      out.innerHTML = `<span class="good">✓ Connected to ${esc(srcName())}</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
+      out.innerHTML = `<span class="good">✓ Connected</span> · ${num(n)} cars for sale nationwide · via ${route === 'desktop' ? 'the desktop app' : route === 'proxy' ? 'the local server' : 'direct browser request'}`;
     } catch (e) {
       out.innerHTML = `<span class="bad">✕ ${esc(e.message)}</span>`;
     }
@@ -2312,7 +3660,7 @@
     const pill = document.getElementById('mode-pill');
     if (pill) {
       pill.textContent = live ? 'Live' : 'Demo';
-      pill.title = live ? `Searching live listings from ${srcName()}` : 'Showing sample data. Switch to live data in Settings.';
+      pill.title = live ? 'Searching live listings' : 'Showing sample data. Switch to live data in Settings.';
     }
     const att = document.getElementById('data-attribution');
     if (att) att.innerHTML = live
@@ -2330,7 +3678,7 @@
     const dot = e.target.closest('circle.dot[data-id]');
     if (dot) { location.hash = `#/car/${dot.dataset.id}`; return; }
     const tile = e.target.closest('[data-state]');
-    if (tile) { onTile(tile.dataset.state); return; }
+    if (tile) { onTile(tile.dataset.state, tile.dataset.href); return; }
     const pt = e.target.closest('.map-pt[data-city]');
     if (pt) { onMapCity(pt.dataset.city); return; }
     const fl = e.target.closest('#finder-list li[data-i]');
@@ -2370,10 +3718,48 @@
       if (el.dataset.doc === 'sticker') showDoc(stickerHtml(l), `Window sticker · ${title(l)} ${l.trim}`);
       else showDoc(buildSheetHtml(l), `Build sheet · ${title(l)} ${l.trim}`);
     } else if (a === 'scroll') {
-      document.getElementById('rare-scroller').scrollBy({ left: Number(el.dataset.dir) * 320, behavior: 'smooth' });
+      document.getElementById(el.dataset.target || 'rare-scroller')?.scrollBy({ left: Number(el.dataset.dir) * 320, behavior: 'smooth' });
+    } else if (a === 'radius') {
+      store.update((s) => { s.prefs.homeRadius = Number(el.dataset.r); });
+      if (isLive()) showTab(TAB.id);
+      else renderLocal();
+    } else if (a === 'deal-cond') {
+      HOME.cond = dealCond(el.dataset.cond);
+      const zip = homeZip(), radius = homeRadius();
+      const bodyEl = document.getElementById('deals-body');
+      if (bodyEl && zip) {
+        const pool = isLive() ? [...LIVE_SEEN.values()].filter((l) => !l.sold) : LISTINGS;
+        bodyEl.innerHTML = dealsScrollerHtml(localData(zip, radius, pool), zip, radius);
+      }
+    } else if (a === 'locate') {
+      locateMe(el);
+    } else if (a === 'set-zip') {
+      if (setHomeZip(el.dataset.zip)) renderHome('local');
+    } else if (a === 'edit-zip') {
+      const box = document.getElementById('home-market');
+      if (!box) return;
+      box.classList.add('open');
+      box.innerHTML = `${zipFormHtml('home')}<button class="link-btn" type="button" data-action="cancel-zip">Keep ${esc(Geo.label(Geo.lookup(homeZip()), { short: true }))}</button>`;
+      box.querySelector('#zip-input')?.focus();
+    } else if (a === 'cancel-zip') {
+      renderHome();
+    } else if (a === 'clear-zip') {
+      store.update((s) => { s.prefs.homeZip = null; s.prefs.homeCity = null; });
+      toast('Home ZIP cleared');
+      renderSettings();
+    } else if (a === 'near-home') {
+      updateFilters((f) => { f.near = homeZip(); f.radius = homeRadius(); });
+    } else if (a === 'tab') {
+      e.preventDefault();
+      if (tabIsPanel(el.dataset.tab)) PANEL.auto = false;
+      showTab(el.dataset.tab);
+    } else if (a === 'panel') {
+      e.preventDefault();
+      PANEL.auto = false;
+      showPanel(el.dataset.panel);
     } else if (a === 'jump') {
       e.preventDefault();
-      document.getElementById(el.dataset.target)?.scrollIntoView({ behavior: 'smooth' });
+      showTab(el.dataset.target);
     } else if (a === 'toggle-filters') {
       S.filtersOpen = !S.filtersOpen;
       document.getElementById('filters').classList.toggle('open', S.filtersOpen);
@@ -2473,6 +3859,21 @@
   });
 
   app.addEventListener('submit', (e) => {
+    const zipForm = e.target.dataset && e.target.dataset.zipForm;
+    if (zipForm) {
+      e.preventDefault();
+      const raw = e.target.querySelector('input').value;
+      if (zipForm === 'search') {
+        const zip = raw.trim();
+        if (!zip) return updateFilters((f) => { if (Geo.isZip(f.near)) f.near = null; });
+        if (!Geo.lookup(zip)) return toast(`${zip} isn’t a US ZIP code`);
+        return updateFilters((f) => { f.near = zip; f.radius = f.radius && f.radius !== 150 ? f.radius : homeRadius(); });
+      }
+      if (!setHomeZip(raw)) return;
+      if (zipForm === 'settings') renderSettings();
+      else renderHome('local');
+      return;
+    }
     const prov = e.target.dataset && e.target.dataset.provider;
     if (!prov) return;
     e.preventDefault();
@@ -2490,7 +3891,7 @@
   app.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-state]')) {
       e.preventDefault();
-      onTile(e.target.dataset.state);
+      onTile(e.target.dataset.state, e.target.dataset.href);
     } else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.map-pt[data-city]')) {
       e.preventDefault();
       onMapCity(e.target.dataset.city);
@@ -2503,8 +3904,9 @@
     }
   });
 
-  function onTile(st) {
-    if (view.name === 'search') {
+  function onTile(st, href) {
+    if (href) location.hash = href;
+    else if (view.name === 'search') {
       updateFilters((f) => { f.state = f.state.includes(st) ? f.state.filter((x) => x !== st) : [...f.state, st]; });
     } else {
       location.hash = searchHref({ state: st, condition: ['Used', 'Certified'], belowMarket: 1 });
@@ -2512,6 +3914,7 @@
   }
 
   function onMapCity(city) {
+    if (view.name !== 'search') { location.hash = searchHref({ near: city, radius: 100 }); return; }
     updateFilters((f) => {
       f.near = city;
       f.radius = f.radius && f.radius !== 150 ? f.radius : 100;
@@ -2523,7 +3926,7 @@
     if (t.dataset.pref) {
       const k = t.dataset.pref;
       store.update((s) => {
-        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : k === 'huntEvery' ? Number(t.value) : t.value || null;
+        s.prefs[k] = t.type === 'checkbox' ? t.checked : k === 'showDealer' ? t.value === '1' : k === 'huntEvery' || k === 'homeRadius' ? Number(t.value) : t.value || null;
         if (k === 'dataSource') s.prefs.sourceChosen = true;
       });
       if (k === 'dataSource') {
@@ -2531,7 +3934,7 @@
         LIVE_KNOWN = null;
         applyModeUi();
         renderSettings();
-        toast(t.value === 'demo' ? 'Using demo data' : isLive() ? `Live data from ${srcName()}` : `Add your ${Live.info(t.value).name} API key to use live data`);
+        toast(t.value === 'demo' ? 'Using demo data' : isLive() ? 'Using live data' : 'Add your API key to use live data');
       } else toast('Saved');
       return;
     }
@@ -2617,9 +4020,15 @@
     const [path, qs] = hash.split('?');
     const parts = path.split('/').filter(Boolean);
     const params = new URLSearchParams(qs || '');
-    document.getElementById('header-search').hidden = !parts.length;
-    if (!parts.length) return renderHome();
-    if (parts[0] === 'insights') return renderHome('insights');
+    const home = !parts.length || (parts.length === 1 && (PANELS.some((p) => p.route === parts[0]) || HOME_CATS.some((c) => c.id === parts[0])));
+    document.getElementById('header-search').hidden = home;
+    if (!parts.length) return renderHome(null, params);
+    if (parts.length === 1 && PANELS.some((p) => p.route === parts[0])) {
+      PANEL.id = PANELS.find((p) => p.route === parts[0]).id;
+      PANEL.auto = false;
+      return renderHome('insights');
+    }
+    if (parts.length === 1 && HOME_CATS.some((c) => c.id === parts[0])) return renderHome(parts[0]);
     if (parts[0] === 'search') return renderSearch(params);
     if (parts[0] === 'car') return renderCar(parts[1], params);
     if (parts[0] === 'vin') return renderVin(parts[1] || '');
@@ -2630,14 +4039,14 @@
     return renderNotFound();
   }
 
+  // The most listed models, by the share of the market each has (the weights the demo market is drawn from).
   function footerLinks() {
-    const counts = Market.groupBy(LISTINGS, (l) => `${l.make} ${l.model}`);
-    const top = [...counts.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 12);
+    const top = [...DATA.models].sort((a, b) => b.weight - a.weight).slice(0, 12).map((m) => [`${m.make} ${m.model}`]);
     const segs = [...new Set(DATA.models.map((m) => m.seg))];
     document.getElementById('footer-links').innerHTML = `
       <div><h4>Popular searches</h4>${top.map(([k]) => `<a href="${searchHref({ model: k })}">${esc(k)}</a>`).join('')}</div>
       <div><h4>Used prices by segment</h4>${segs.map((s) => `<a href="${searchHref({ q: s, condition: ['Used', 'Certified'] })}">${esc(s)}</a>`).join('')}</div>
-      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Hunts</a><a href="#/vin/${LISTINGS[0].vin}">VIN decoder</a><a href="#/settings">Settings</a></div>`;
+      <div><h4>Tools</h4><a href="#/insights">Market insights</a><a href="${searchHref({ when: 'sold', sort: 'sold-recent' })}">Recently sold</a><a href="#/compare">Compare cars</a><a href="#/saved">Hunts</a><a href="#/vin">VIN decoder</a><a href="#/settings">Settings</a></div>`;
   }
 
   applyTheme(store.get().theme);

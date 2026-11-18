@@ -51,7 +51,7 @@ function filter(q) {
     pool = Market.snapshot(listings, sold, d).map(record);
   } else pool = ACTIVE;
   const eq = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', body_type: 'body_type', fuel_type: 'fuel_type', drivetrain: 'drivetrain', transmission: 'transmission',
-    base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color', state: 'state', dealer_type: 'dealer_type', assembly_location: '_assembly' };
+    base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color', state: 'state', dealer_type: 'dealer_type', assembly_location: '_assembly', availability_status: 'availability_status' };
   for (const [p, field] of Object.entries(eq)) {
     const inc = list(q, p), exc = list(q, 'exclude_' + p);
     if (inc) pool = pool.filter((r) => inc.includes(String(r[field]).toLowerCase()));
@@ -86,17 +86,43 @@ const pctl = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort
 const stat = (arr) => (arr.length ? { min: Math.min(...arr), max: Math.max(...arr), mean: arr.reduce((a, b) => a + b, 0) / arr.length, median: pctl(arr, 0.5) } : null);
 const FACET_FIELD = { inventory_type: 'inventory_type', make: 'make', model: 'model', trim: 'trim', year: 'year', body_type: 'body_type', fuel_type: 'fuel_type',
   drivetrain: 'drivetrain', transmission: 'transmission', base_exterior_color: 'base_exterior_color', exterior_color: 'exterior_color', base_interior_color: 'base_interior_color',
-  features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state' };
+  features: 'features', options_packages: 'options_packages', upfitter: 'upfitters', assembly_location: '_assembly', dealer_type: 'dealer_type', state: 'state',
+  availability_status: 'availability_status' };
+
+const RATE = Number(process.env.MOCK_RATE) || 0;
+// MOCK_RATE10=n and MOCK_RATE60=n refuse like Visor's usage tiers (n requests per 10 and per 60 seconds);
+// MOCK_LATENCY=ms answers that many milliseconds late, like a real round trip.
+const RATE10 = Number(process.env.MOCK_RATE10) || 0, RATE60 = Number(process.env.MOCK_RATE60) || 0;
+const LATENCY = Number(process.env.MOCK_LATENCY) || 0;
+const recent = [];
+let served = 0, refused = 0;
 
 function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const send = (status, body) => {
-    res.writeHead(status, { 'Content-Type': 'application/json', 'X-Usage-Cost-Micros': status === 200 ? '2000' : '0' });
-    res.end(JSON.stringify(body));
+    const go = () => {
+      res.writeHead(status, { 'Content-Type': 'application/json', 'X-Usage-Cost-Micros': status === 200 ? '2000' : '0' });
+      res.end(JSON.stringify(body));
+    };
+    if (LATENCY) setTimeout(go, LATENCY); else go();
   };
+  if (url.pathname === '/__stats') return send(200, { served, refused });
   if ((req.headers.authorization || '') !== `Bearer ${KEY}`) {
     return send(401, { error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key.' } });
   }
+  // MOCK_RATE=n answers like Visor's rate limiter when more than n requests arrive within a second.
+  const t = Date.now();
+  while (recent.length && t - recent[0] > 60000) recent.shift();
+  recent.push(t);
+  const within = (ms) => recent.filter((x) => t - x <= ms).length;
+  if ((RATE && within(1000) > RATE) || (RATE10 && within(10000) > RATE10) || (RATE60 && within(60000) > RATE60)) {
+    refused++;
+    recent.pop(); // a refused request doesn't count against the window, as with Visor
+    res.setHeader('Retry-After', '1');
+    return send(429, { error: { type: 'rate_limit_error', code: 'rate_limit_exceeded', message: 'Rate limit exceeded. Retry after 1 seconds.' } });
+  }
+  served++;
+  if (RATE60) res.setHeader('X-RateLimit-Remaining-60s', String(Math.max(0, RATE60 - within(60000))));
   const q = url.searchParams;
   const p = url.pathname;
   if (p === '/v1/listings') {
@@ -106,7 +132,8 @@ function handle(req, res) {
     const field = { days_on_market: 'days_on_market', price: 'price', miles: 'miles', msrp: 'msrp', discount: 'discount_from_msrp', distance: 'distance_miles', listed_at: 'listed_at' }[sort.replace('-', '')];
     pool = [...pool].sort((a, b) => ((a[field] ?? 0) > (b[field] ?? 0) ? 1 : (a[field] ?? 0) < (b[field] ?? 0) ? -1 : 0) * (desc ? -1 : 1));
     const limit = Math.min(100, Number(q.get('limit')) || 50), offset = Number(q.get('offset')) || 0;
-    const page = pool.slice(offset, offset + limit).map(strip);
+    const withHistory = (q.get('include') || '').split(',').includes('price_history');
+    const page = pool.slice(offset, offset + limit).map((r) => Object.assign(strip(r), withHistory ? { price_history: r._price_history } : {}));
     return send(200, { data: page, pagination: { limit, offset, total: pool.length, next_offset: offset + limit < pool.length ? offset + limit : null }, meta: {} });
   }
   if (p === '/v1/facets') {
@@ -114,9 +141,21 @@ function handle(req, res) {
     const names = (q.get('facets') || '').split(',').filter(Boolean);
     const limit = Number(q.get('facet_value_limit')) || 20;
     const metrics = q.get('metrics') ? q.get('metrics').split(',') : null;
-    const facets = {}, stats = {};
+    if (metrics && names.length !== 1) return send(400, { error: { type: 'invalid_request', code: 'bad_request', message: 'metric other than count requires exactly one facet.' } });
+    const facets = {}, stats = {}, range_facets = {};
     for (const n of names) {
-      if (['price', 'miles', 'days_on_market', 'msrp'].includes(n)) { stats[n] = stat(pool.map((r) => r[n]).filter((v) => v != null)); continue; }
+      if (['price', 'miles', 'days_on_market', 'msrp'].includes(n)) {
+        const vals = pool.map((r) => r[n]).filter((v) => v != null);
+        stats[n] = stat(vals);
+        // Fixed-width buckets, like the real API's numeric range facets.
+        if (vals.length) {
+          const lo = Math.min(...vals), hi = Math.max(...vals), interval = Math.max(1, Math.round((hi - lo) / 10));
+          const buckets = [];
+          for (let b = lo; b < hi; b += interval) buckets.push({ min: b, max: b + interval, count: vals.filter((v) => v >= b && v < b + interval).length });
+          range_facets[n] = { buckets, interval, min: lo, max: hi };
+        }
+        continue;
+      }
       const field = FACET_FIELD[n];
       if (!field) continue;
       const by = new Map();
@@ -128,13 +167,15 @@ function handle(req, res) {
           for (const m of metrics) {
             const [measure, agg] = m.split('.');
             const vals = rs.map((r) => r[measure]).filter((v) => v != null);
-            b.metrics[m] = vals.length ? (agg === 'mean' ? vals.reduce((x, y) => x + y, 0) / vals.length : pctl(vals, agg === 'median' ? 0.5 : 0.5)) : null;
+            // Same envelope as the real API: { value } with null below ten samples.
+            const v = vals.length >= 10 ? (agg === 'mean' ? vals.reduce((x, y) => x + y, 0) / vals.length : pctl(vals, agg === 'median' ? 0.5 : 0.5)) : null;
+            b.metrics[m] = v == null ? { value: null, null_reason: 'insufficient_sample' } : { value: v };
           }
         }
         return b;
       });
     }
-    return send(200, { data: { total: pool.length, facets, range_facets: {}, stats }, meta: { facets: names, metric: 'count' } });
+    return send(200, { data: { total: pool.length, facets, range_facets, stats }, meta: { facets: names, metric: 'count' } });
   }
   let m;
   if ((m = p.match(/^\/v1\/listings\/([^/]+)$/))) {

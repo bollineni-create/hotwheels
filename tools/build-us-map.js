@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+/* Builds js/usmap.js: every state's outline as an SVG path, projected with the
+   Albers USA projection (Alaska and Hawaii inset at the bottom left) onto a
+   975 x 610 canvas, plus the projection itself so dots land on the right spot.
+
+   Source: us-atlas states-10m.json (US Census TIGER, public domain; the arcs
+   are longitude/latitude). Usage:
+     curl -L -o /tmp/states-10m.json https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json
+     node tools/build-us-map.js /tmp/states-10m.json > js/usmap.js */
+'use strict';
+const fs = require('fs');
+
+// d3-geo's albersUsa, with its default scale 1300 / translate [487.5, 305] for a 975 x 610 map.
+function albersUsa() {
+  const RAD = Math.PI / 180;
+  const conic = (y0, y1) => {
+    const sy0 = Math.sin(y0 * RAD), n = (sy0 + Math.sin(y1 * RAD)) / 2;
+    const c = 1 + sy0 * (2 * n - sy0), r0 = Math.sqrt(c) / n;
+    return (lng, lat) => { const r = Math.sqrt(c - 2 * n * Math.sin(lat * RAD)) / n; const x = lng * RAD * n; return [r * Math.sin(x), r0 - r * Math.cos(x)]; };
+  };
+  const make = (rotate, center, parallels, k, tx, ty) => {
+    const raw = conic(parallels[0], parallels[1]);
+    const [cx, cy] = raw(center[0], center[1]);
+    return (lat, lng) => {
+      let l = lng + rotate; while (l > 180) l -= 360; while (l < -180) l += 360;
+      const [px, py] = raw(l, lat);
+      return [tx + k * (px - cx), ty - k * (py - cy)];
+    };
+  };
+  const K = 1300, TX = 487.5, TY = 305;
+  const lower48 = make(96, [-0.6, 38.7], [29.5, 45.5], K, TX, TY);
+  const alaska = make(154, [-2, 58.5], [55, 65], K * 0.35, TX - 0.307 * K, TY + 0.201 * K);
+  const hawaii = make(157, [-3, 19.9], [8, 18], K, TX - 0.205 * K, TY + 0.212 * K);
+  return (lat, lng) => {
+    if (lat > 50 && (lng < -128 || lng > 170)) return alaska(lat, lng);
+    if (lat < 23 && lng < -150) return hawaii(lat, lng);
+    return lower48(lat, lng);
+  };
+}
+
+const FIPS = { '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND', '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI', '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI', '56': 'WY' };
+
+// Douglas-Peucker, in projected pixels.
+function simplify(pts, tol) {
+  if (pts.length < 4) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const [ax, ay] = pts[a], [bx, by] = pts[b];
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    let maxD = 0, idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = pts[i];
+      let d;
+      if (!len2) d = Math.hypot(px - ax, py - ay);
+      else { const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)); d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy)); }
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > tol) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+function build(topo, tol) {
+  const project = albersUsa();
+  const { scale, translate } = topo.transform;
+  const arcs = topo.arcs.map((arc) => {
+    let x = 0, y = 0;
+    return arc.map(([dx, dy]) => { x += dx; y += dy; return project(y * scale[1] + translate[1], x * scale[0] + translate[0]); });
+  });
+  const ring = (indexes) => {
+    const pts = [];
+    for (const i of indexes) {
+      const a = i < 0 ? arcs[~i].slice().reverse() : arcs[i];
+      for (let k = pts.length ? 1 : 0; k < a.length; k++) pts.push(a[k]);
+    }
+    return pts;
+  };
+  const paths = {};
+  for (const g of topo.objects.states.geometries) {
+    const st = FIPS[g.id];
+    if (!st) continue;
+    let d = '';
+    for (const poly of (g.type === 'Polygon' ? [g.arcs] : g.arcs)) {
+      for (const r of poly) {
+        const pts = simplify(ring(r), tol);
+        if (pts.length < 4) continue;
+        d += 'M' + pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L') + 'Z';
+      }
+    }
+    paths[st] = d;
+  }
+  return paths;
+}
+
+if (require.main === module) {
+  const src = process.argv[2];
+  if (!src) { console.error('usage: node tools/build-us-map.js states-10m.json > js/usmap.js'); process.exit(1); }
+  const topo = JSON.parse(fs.readFileSync(src, 'utf8'));
+  const paths = build(topo, Number(process.env.TOL || 0.8));
+  process.stdout.write(`/* US state outlines for the maps: us-atlas states-10m (US Census TIGER, public domain),
+   drawn with the Albers USA projection onto 975 x 610. Generated by tools/build-us-map.js; don't edit by hand. */
+(function (root) {
+  'use strict';
+  const albersUsa = ${albersUsa.toString().split('\n').map((l, i) => (i ? '  ' + l : l)).join('\n')};
+  const api = { W: 975, H: 610, project: albersUsa(), paths: ${JSON.stringify(paths)} };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.USMap = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+`);
+}
+module.exports = { albersUsa, build, simplify, FIPS };

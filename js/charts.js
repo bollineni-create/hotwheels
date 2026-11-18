@@ -165,17 +165,68 @@
     Truck: 'M50 36 L61 19 C62 17 64 16 67 16 L84 16 L84 36 Z M88 16 L105 16 C108 16 110 18 110 20 L113 36 L88 36 Z',
     Minivan: 'M42 34 L61 17 C63 15 66 14 70 14 L98 14 L98 34 Z M102 14 L140 14 L140 34 L102 34 Z M144 14 L168 14 C173 14 176 16 177 20 L182 34 L144 34 Z',
   };
-  function car(body, hex, opts) {
+  // The side profile's parts, shared by the single drawing and the four-view strip.
+  function carParts(body, hex) {
     const b = BODIES[body] ? body : 'Sedan';
     const front = b === 'Truck' ? 48 : 52;
     const rear = b === 'Truck' ? 164 : 160;
-    return `<svg class="car-art${opts && opts.cls ? ' ' + opts.cls : ''}" viewBox="0 0 210 84" role="img" aria-label="${esc((opts && opts.label) || b)}">` +
-      `<ellipse class="car-shadow" cx="105" cy="74" rx="92" ry="5"/>` +
+    return `<ellipse class="car-shadow" cx="105" cy="74" rx="92" ry="5"/>` +
       `<path d="${BODIES[b]}" fill="${esc(hex)}" class="car-body"/>` +
       `<path d="${WINDOWS[b]}" class="car-glass"/>` +
       `<path d="${BODIES[b]}" class="car-shine"/>` +
-      [front, rear].map((x) => `<circle cx="${x}" cy="64" r="13" class="car-tire"/><circle cx="${x}" cy="64" r="6.5" class="car-rim"/>`).join('') +
-      `</svg>`;
+      [front, rear].map((x) => `<circle cx="${x}" cy="64" r="13" class="car-tire"/><circle cx="${x}" cy="64" r="6.5" class="car-rim"/>`).join('');
+  }
+  function car(body, hex, opts) {
+    const b = BODIES[body] ? body : 'Sedan';
+    return `<svg class="car-art${opts && opts.cls ? ' ' + opts.cls : ''}" viewBox="0 0 210 84" role="img" aria-label="${esc((opts && opts.label) || b)}">${carParts(b, hex)}</svg>`;
+  }
+
+  // Interior colors as paint, for the interior view.
+  const INTERIOR_HEX = { Black: '#1b1d21', Gray: '#6b6f76', Charcoal: '#3a3d42', Beige: '#c9b99a', Ivory: '#e9e3d3', Blond: '#d9c9a6', Sepia: '#5a3f2c',
+    Cognac: '#8a4b2a', Brown: '#5c3d2e', Red: '#8a1c22', 'Rioja Red': '#7a1a26', Navy: '#1f2a4a', Tan: '#c9b99a', White: '#e9e6df', Blue: '#2c3e6b', Green: '#2f4a3a' };
+  const interiorHex = (name) => INTERIOR_HEX[name] || INTERIOR_HEX[Object.keys(INTERIOR_HEX).find((k) => String(name || '').toLowerCase().includes(k.toLowerCase()))] || '#3a3d42';
+  const TALL = new Set(['SUV', 'Truck', 'Minivan', 'Wagon']);
+
+  /* Four views of a car, in place of dealer photos: the side, the front, the interior in its own
+     color, and a wheel against the paint. Each view is an SVG tile; the strip is a 4-up grid. */
+  function carStrip(l, opts) {
+    const b = BODIES[l.body] ? l.body : 'Sedan';
+    const hex = l.extHex || '#888', ih = interiorHex(l.intColor);
+    const label = (opts && opts.label) || `${l.extColor || ''} ${l.model || ''}`.trim();
+    const tile = (inner, name) => `<svg class="car-view" viewBox="0 0 140 100" role="img" aria-label="${esc(name)}">${inner}</svg>`;
+    const side = tile(`<g transform="translate(0 20) scale(0.6667)">${carParts(b, hex)}</g>`, `${label}, side`);
+    const top = TALL.has(b) ? 16 : 24;
+    const front = tile(
+      `<ellipse class="car-shadow" cx="70" cy="88" rx="52" ry="5"/>` +
+      `<path class="car-body" fill="${esc(hex)}" d="M28 82 L28 54 C28 44 32 40 42 37 L52 ${top + 4} C55 ${top} 58 ${top - 2} 64 ${top - 2} L76 ${top - 2} C82 ${top - 2} 85 ${top} 88 ${top + 4} L98 37 C108 40 112 44 112 54 L112 82 Z"/>` +
+      `<path class="car-glass" d="M48 38 L55 ${top + 6} C57 ${top + 2} 60 ${top + 1} 64 ${top + 1} L76 ${top + 1} C80 ${top + 1} 83 ${top + 2} 85 ${top + 6} L92 38 Z"/>` +
+      `<rect class="car-mirror" fill="${esc(hex)}" x="19" y="44" width="10" height="7" rx="2"/><rect class="car-mirror" fill="${esc(hex)}" x="111" y="44" width="10" height="7" rx="2"/>` +
+      `<rect class="car-lamp" x="34" y="56" width="18" height="7" rx="3"/><rect class="car-lamp" x="88" y="56" width="18" height="7" rx="3"/>` +
+      `<rect class="car-grille" x="56" y="58" width="28" height="11" rx="2"/>` +
+      `<rect class="car-bumper" x="30" y="72" width="80" height="10" rx="3"/>` +
+      `<rect class="car-tire" x="30" y="80" width="14" height="10" rx="2"/><rect class="car-tire" x="96" y="80" width="14" height="10" rx="2"/>`,
+      `${label}, front`);
+    const interior = tile(
+      `<rect class="int-cabin" x="0" y="0" width="140" height="100"/>` +
+      `<path class="int-dash" fill="${esc(ih)}" d="M6 42 C40 26 100 26 134 42 L134 60 C100 48 40 48 6 60 Z"/>` +
+      `<path class="int-dash-shade" d="M6 42 C40 26 100 26 134 42 L134 60 C100 48 40 48 6 60 Z"/>` +
+      `<rect class="int-screen" x="60" y="36" width="24" height="13" rx="2"/>` +
+      `<circle class="int-wheel" cx="40" cy="60" r="15"/><circle class="int-hub" cx="40" cy="60" r="4.5"/>` +
+      `<rect class="int-seat" fill="${esc(ih)}" x="30" y="64" width="14" height="9" rx="4"/><rect class="int-seat" fill="${esc(ih)}" x="96" y="64" width="14" height="9" rx="4"/>` +
+      `<rect class="int-seat" fill="${esc(ih)}" x="16" y="72" width="42" height="30" rx="9"/><rect class="int-seat" fill="${esc(ih)}" x="82" y="72" width="42" height="30" rx="9"/>` +
+      `<path class="int-seat-shade" d="M16 81 C16 76 20 72 25 72 L49 72 C54 72 58 76 58 81 L58 102 L16 102 Z M82 81 C82 76 86 72 91 72 L115 72 C120 72 124 76 124 81 L124 102 L82 102 Z"/>`,
+      `${l.intColor || ''} interior`.trim());
+    const spokes = [0, 72, 144, 216, 288].map((a) => `<rect class="car-spoke" x="-3" y="-25" width="6" height="25" rx="2" transform="rotate(${a})"/>`).join('');
+    const wheel = tile(
+      `<rect class="car-body" fill="${esc(hex)}" x="0" y="0" width="140" height="100"/>` +
+      `<path class="car-shine" d="M0 30 C40 22 100 22 140 30"/>` +
+      `<circle class="car-well" cx="70" cy="86" r="48"/>` +
+      `<circle class="car-tire" cx="70" cy="86" r="42"/>` +
+      `<circle class="car-rim" cx="70" cy="86" r="27"/>` +
+      `<g transform="translate(70 86)">${spokes}</g>` +
+      `<circle class="car-hub" cx="70" cy="86" r="6"/>`,
+      `${label}, wheel`);
+    return `<div class="spec-strip">${side}${front}${interior}${wheel}</div>`;
   }
 
   /* Area chart of a count over the last N days, with optional median price line. */
@@ -207,6 +258,136 @@
     return `<svg class="chart trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Inventory over time')}">${g}<path class="trend-area" d="${area}"/><path class="trend-line" d="${line}"/>${med}${labels}${hits}</svg>`;
   }
 
+  /* ----- Real US geography (js/usmap.js): state outlines in the Albers USA projection ----- */
+
+  const usGeo = () => (typeof USMap !== 'undefined' ? USMap : root.USMap) || null;
+  const PX_PER_MILE = 1300 * (Math.PI / 180) / 69; // the projection's scale, in map pixels per mile
+  const geoCache = new Map();
+  // Bounding box and visual center of a state's outline, from its largest ring.
+  function geoShape(st) {
+    if (geoCache.has(st)) return geoCache.get(st);
+    const d = usGeo().paths[st];
+    let best = null, bestArea = 0;
+    const box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const ring of d.split('Z')) {
+      if (!ring) continue;
+      const pts = ring.slice(1).split('L').map((p) => p.split(',').map(Number));
+      let a = 0, cx = 0, cy = 0;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const f = pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+        a += f; cx += (pts[j][0] + pts[i][0]) * f; cy += (pts[j][1] + pts[i][1]) * f;
+        box[0] = Math.min(box[0], pts[i][0]); box[1] = Math.min(box[1], pts[i][1]); box[2] = Math.max(box[2], pts[i][0]); box[3] = Math.max(box[3], pts[i][1]);
+      }
+      if (Math.abs(a) > bestArea) { bestArea = Math.abs(a); best = [cx / (3 * a), cy / (3 * a)]; }
+    }
+    const out = { box, center: best || [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] };
+    geoCache.set(st, out);
+    return out;
+  }
+  // States too small to carry a label on a full-size map.
+  const TINY = new Set(['RI', 'DE', 'DC', 'CT', 'NJ', 'MD', 'MA', 'NH', 'VT', 'HI']);
+
+  // City dots on top of a map: area tracks the count, color is `cls`.
+  function dotsHtml(groups, proj, maxN, opts) {
+    const scale = (opts && opts.dotScale) || 1;
+    return [...groups].sort((a, b) => b.count - a.count).map((g) => {
+      const [x, y] = proj(g.lat, g.lng);
+      const r = (3 + Math.sqrt(g.count / maxN) * 16) * scale;
+      return `<g class="map-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
+        (g.count >= maxN * 0.25 || r > 9 * scale ? `<text x="${x.toFixed(1)}" y="${(y + 3.5 * scale).toFixed(1)}" style="font-size:${(10 * scale).toFixed(1)}px" text-anchor="middle">${g.count}</text>` : '') +
+        `<title>${esc(g.title)}</title></g>`;
+    }).join('');
+  }
+
+  /* Choropleth of the US drawn from real state outlines. cell(state) -> { cls, value, title, selected, href } or null.
+     opts: { clickable, aria, labels, focus: 'TX' (zoom to one state), dots: [{ city, lat, lng, count, cls, title }] } */
+  function geoMap(cell, opts) {
+    const o = opts || {};
+    const U = usGeo();
+    if (!U) return tileMap(cell, opts);
+    let vb = [0, 0, U.W, U.H], scale = 1;
+    if (o.focus && U.paths[o.focus]) {
+      const b = geoShape(o.focus).box;
+      const w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.08;
+      vb = [b[0] - pad, b[1] - pad, w + pad * 2, h + pad * 2];
+      scale = vb[2] / U.W;
+    }
+    // Zoomed to one state, only the states that reach into the view are drawn (never the Alaska and
+    // Hawaii insets, which sit under the lower-left of the country), and dots grow to stay readable.
+    const inView = (st) => { const b = geoShape(st).box; return b[2] >= vb[0] && b[0] <= vb[0] + vb[2] && b[3] >= vb[1] && b[1] <= vb[1] + vb[3]; };
+    const dotScale = o.focus ? scale * 2.6 : 1;
+    let out = '', labels = '';
+    for (const st of Object.keys(U.paths)) {
+      if (o.focus && st !== o.focus && (st === 'AK' || st === 'HI' || !inView(st))) continue;
+      const c = cell(st);
+      const cls = c ? c.cls : 'geo-empty';
+      const act = c && (o.clickable || c.href) ? ` data-state="${st}"${c.href ? ` data-href="${esc(c.href)}"` : ''} role="button" tabindex="0" aria-label="${esc(c.title || st)}"` : '';
+      out += `<path class="geo ${cls}${c && c.selected ? ' selected' : ''}${o.focus === st ? ' focus' : ''}" d="${U.paths[st]}"${act}>${c && c.title ? `<title>${esc(c.title)}</title>` : ''}</path>`;
+      if (o.labels && c && !TINY.has(st) && (!o.focus || o.focus === st)) {
+        const [x, y] = geoShape(st).center;
+        const fs = o.focus ? 18 * scale : 16;
+        labels += `<text class="geo-label${c.value != null ? ' has-val' : ''}" x="${x.toFixed(1)}" y="${(y + (c.value != null ? -1 : 3.5)).toFixed(1)}" text-anchor="middle" style="font-size:${fs.toFixed(1)}px">${st}</text>` +
+          (c.value != null ? `<text class="geo-val" x="${x.toFixed(1)}" y="${(y + fs * 0.95).toFixed(1)}" text-anchor="middle" style="font-size:${(fs * 0.85).toFixed(1)}px">${esc(c.value)}</text>` : '');
+      }
+    }
+    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale }) : '';
+    return `<svg class="chart geomap${o.focus ? ' focused' : ''}" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || 'Map of the United States by state')}">${out}${labels}${dots}</svg>`;
+  }
+
+  /* ----- One state county by county (js/uscounties.js, loaded only when a card needs it) ----- */
+
+  const usCounties = () => (typeof USCounties !== 'undefined' ? USCounties : root.USCounties) || null;
+  const countyRings = new Map();
+  // A county's rings as point arrays, parsed from its path once.
+  function ringsOf(c) {
+    if (!countyRings.has(c.id)) countyRings.set(c.id, c.d.split('Z').filter(Boolean).map((r) => r.slice(1).split('L').map((p) => p.split(',').map(Number))));
+    return countyRings.get(c.id);
+  }
+  const inRing = (pts, x, y) => {
+    let on = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) on = !on;
+    }
+    return on;
+  };
+  // The county of a state that a point falls in, or null (also null until the counties are loaded).
+  function countyAt(st, lat, lng) {
+    const C = usCounties();
+    const list = C && C.byState[st];
+    if (!list || !usGeo()) return null;
+    const [x, y] = usGeo().project(lat, lng);
+    for (const c of list) {
+      let hits = 0;
+      for (const r of ringsOf(c)) if (inRing(r, x, y)) hits++;
+      if (hits % 2 === 1) return c;
+    }
+    return null;
+  }
+  const countiesLoaded = (st) => { const C = usCounties(); return !!(C && C.byState[st]); };
+
+  /* One state drawn county by county, like Visor's "in Texas" map. cell(county) -> { cls, title, href } or null;
+     counties with nothing to say stay white. opts: { aria, dots } */
+  function countyMap(st, cell, opts) {
+    const o = opts || {};
+    const U = usGeo(), C = usCounties();
+    if (!U || !C || !C.byState[st] || !U.paths[st]) return null;
+    const b = geoShape(st).box;
+    const w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.06;
+    const vb = [b[0] - pad, b[1] - pad, w + pad * 2, h + pad * 2];
+    const scale = vb[2] / U.W;
+    let out = '';
+    for (const c of C.byState[st]) {
+      const v = cell(c);
+      const act = v && v.href ? ` data-state="${st}" data-href="${esc(v.href)}" role="button" tabindex="0" aria-label="${esc(v.title || c.name)}"` : '';
+      out += `<path class="county${v ? ' ' + (v.cls || '') : ' county-empty'}" d="${c.d}"${act}>${v && v.title ? `<title>${esc(v.title)}</title>` : ''}</path>`;
+    }
+    out += `<path class="county-state" d="${U.paths[st]}"/>`;
+    const dots = o.dots && o.dots.length ? dotsHtml(o.dots, U.project, Math.max(1, ...o.dots.map((g) => g.count)), { dotScale: scale * 2.6 }) : '';
+    return `<svg class="chart geomap focused counties" viewBox="${vb.map((v) => v.toFixed(1)).join(' ')}" role="img" aria-label="${esc(o.aria || `Map of ${st} by county`)}">${out}${dots}</svg>`;
+  }
+
   /* Dot map of the US. Points are grouped by city; the circle area tracks the
      count and its color the median market position. */
   const US_OUTLINE = [[-124.7, 48.4], [-122.8, 49], [-95.2, 49], [-95.15, 49.38], [-94.6, 48.7], [-93, 48.6], [-91.4, 48.05], [-89.6, 48], [-88.4, 48.3],
@@ -221,38 +402,87 @@
     [-122.5, 37.8], [-123.7, 39], [-124.4, 40.4], [-124.2, 42], [-124.6, 43], [-124, 46.3]];
 
   function usMap(groups, opts) {
-    const W = 760, H = 430;
+    const U = usGeo();
+    const W = U ? U.W : 760, H = U ? U.H : 430;
     const lower = (lat, lng) => [20 + (lng + 125) * 12.1 * 0.82, 16 + (50 - lat) * 13.6];
-    const proj = (lat, lng) => {
+    const proj = U ? U.project : (lat, lng) => {
       if (lat > 51) return [36 + (lng + 170) * 3.1, 330 + (72 - lat) * 4.4];  // Alaska inset
       if (lng < -150) return [205 + (lng + 160.5) * 14, 360 + (22.5 - lat) * 14]; // Hawaii inset
       return lower(lat, lng);
     };
-    const outline = 'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z';
+    const land = U ? Object.entries(U.paths).map(([st, d]) => `<path class="map-land map-state" d="${d}"><title>${st}</title></path>`).join('')
+      : `<path class="map-land" d="${'M' + US_OUTLINE.map(([lng, lat]) => lower(lat, lng).map((v) => v.toFixed(1)).join(',')).join('L') + 'Z'}"/>` +
+        `<rect class="map-inset" x="14" y="318" width="150" height="100" rx="8"/><text class="map-inset-label" x="22" y="410">AK</text>` +
+        `<rect class="map-inset" x="176" y="350" width="110" height="68" rx="8"/><text class="map-inset-label" x="184" y="410">HI</text>`;
     const maxN = Math.max(1, ...groups.map((g) => g.count));
     let ring = '';
-    if (opts && opts.center && opts.radius) {
+    // One ring for `radius`, or several for `rings` (the first is the main one; the rest are wider).
+    const radii = opts && opts.center ? (opts.rings || (opts.radius ? [opts.radius] : [])) : [];
+    radii.forEach((r, i) => {
       const [cx, cy] = proj(opts.center[0], opts.center[1]);
-      const rx = (opts.radius / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
-      const ry = (opts.radius / 69) * 13.6;
-      ring = `<ellipse class="map-ring" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>`;
+      const rx = U ? r * PX_PER_MILE : (r / 69 / Math.cos(opts.center[0] * Math.PI / 180)) * 12.1 * 0.82;
+      const ry = U ? r * PX_PER_MILE : (r / 69) * 13.6;
+      ring = `<ellipse class="map-ring${i ? ' map-ring-wide' : ''}" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>` + ring;
+    });
+    if (opts && opts.center) {
+      const [cx, cy] = proj(opts.center[0], opts.center[1]);
+      ring += `<g class="map-home"><circle cx="${cx}" cy="${cy}" r="9"/><circle cx="${cx}" cy="${cy}" r="3.5"/></g>`;
     }
-    const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
-      const [x, y] = proj(g.lat, g.lng);
-      const r = 3 + Math.sqrt(g.count / maxN) * 16;
-      return `<g class="map-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
-        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
-        (g.count >= maxN * 0.25 || r > 9 ? `<text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${g.count}</text>` : '') +
-        `<title>${esc(g.title)}</title></g>`;
-    }).join('');
-    return `<svg class="chart usmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Map of listings')}">` +
-      `<path class="map-land" d="${outline}"/>` +
-      `<rect class="map-inset" x="14" y="318" width="150" height="100" rx="8"/><text class="map-inset-label" x="22" y="410">AK</text>` +
-      `<rect class="map-inset" x="176" y="350" width="110" height="68" rx="8"/><text class="map-inset-label" x="184" y="410">HI</text>` +
-      ring + dots + `</svg>`;
+    const dots = dotsHtml(groups, proj, maxN);
+    return `<svg class="chart usmap${U ? ' geo' : ''}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc((opts && opts.aria) || 'Map of listings')}">` +
+      land + ring + dots + `</svg>`;
   }
 
-  const api = { scatter, retentionBars, tileMap, priceHistory, columns, car, trend, usMap, niceTicks, esc, TILES };
+
+  // A map centered on you: rings at each radius in `rings` (miles), cities as dots sized by
+  // count and colored by `cls`, the biggest labeled. Distance from the center is drawn on a
+  // square-root scale, so the cars near you get the room and the far ones still fit.
+  // groups: [{ city, lat, lng, count, cls, title, inside }].
+  function localMap(groups, opts) {
+    const W = 560, H = 420, cx = W / 2, cy = H / 2;
+    const [lat0, lng0] = opts.center;
+    const rings = (opts.rings || []).filter(Boolean).sort((a, b) => a - b);
+    const outer = rings[rings.length - 1] || 500;
+    const R = Math.min(W, H) / 2 - 24;
+    const px = (miles) => R * Math.sqrt(Math.min(miles, outer * 1.05) / outer);
+    const proj = (lat, lng) => {
+      const dx = (lng - lng0) * Math.cos(lat0 * Math.PI / 180) * 69.17, dy = (lat - lat0) * 69.17;
+      const d = Math.hypot(dx, dy);
+      if (!d) return [cx, cy, 0];
+      const r = px(d);
+      return [cx + (dx / d) * r, cy - (dy / d) * r, d];
+    };
+    const ringsHtml = rings.map((r, i) => {
+      const rp = px(r);
+      const a = i === rings.length - 1 ? -Math.PI / 2 : Math.PI / 2; // top for the outer ring, bottom for inner ones
+      return `<circle class="lm-ring${i === rings.length - 1 ? ' lm-ring-wide' : ''}" cx="${cx}" cy="${cy}" r="${rp.toFixed(1)}"/>` +
+        `<text class="lm-ring-label" x="${(cx + Math.cos(a) * (rp + 9)).toFixed(1)}" y="${(cy + Math.sin(a) * (rp + 9) + 4).toFixed(1)}" text-anchor="middle">${r} mi</text>`;
+    }).join('');
+    const maxN = Math.max(1, ...groups.map((g) => g.count));
+    const placed = [];
+    const dots = [...groups].sort((a, b) => b.count - a.count).map((g) => {
+      const [x, y, d] = proj(g.lat, g.lng);
+      if (d > outer) return '';
+      const r = 4 + Math.sqrt(g.count / maxN) * 15;
+      const name = g.city.split(',')[0];
+      const want = g.inside || g.count >= maxN * 0.25;
+      const clash = placed.some((p) => Math.abs(p[0] - x) < 90 && Math.abs(p[1] - y) < 15);
+      const label = want && !clash;
+      if (label) placed.push([x + r + 30, y]);
+      return `<g class="map-pt lm-pt ${g.cls || ''}" data-city="${esc(g.city)}" role="button" tabindex="0" aria-label="${esc(g.title)}">` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>` +
+        (r > 9 ? `<text class="lm-count" x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${g.count}</text>` : '') +
+        (label ? `<text class="lm-name" x="${(x + r + 4).toFixed(1)}" y="${(y + 4).toFixed(1)}">${esc(name)}</text>` : '') +
+        `<title>${esc(g.title)}</title></g>`;
+    }).join('');
+    const cross = `<path class="lm-grid" d="M${cx} ${cy - R}V${cy + R}M${cx - R} ${cy}H${cx + R}"/>`;
+    const home = `<g class="map-home"><circle cx="${cx}" cy="${cy}" r="9"/><circle cx="${cx}" cy="${cy}" r="3.5"/></g>`;
+    return `<svg class="chart localmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.aria || 'Map of cars for sale around you')}">` +
+      `<circle class="lm-bg" cx="${cx}" cy="${cy}" r="${R.toFixed(1)}"/>` + cross + ringsHtml + home + dots +
+      `<text class="lm-you" x="${cx - 13}" y="${cy - 10}" text-anchor="end">You</text></svg>`;
+  }
+
+  const api = { scatter, retentionBars, tileMap, geoMap, countyMap, countyAt, countiesLoaded, priceHistory, columns, car, carStrip, trend, usMap, localMap, niceTicks, esc, TILES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Charts = api;
 })(typeof window !== 'undefined' ? window : globalThis);
