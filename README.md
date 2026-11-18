@@ -5,7 +5,26 @@
 <p align="center"><b>Type your ZIP code. See the best car deals around you, and the ones worth the drive.</b><br>
 A local, dependency-free car search and market-insights site, modeled on <a href="https://visor.vin">visor.vin</a> and extended past it. It runs as a desktop app (Electron) or as a plain website: HTML, CSS and JavaScript with no build step.</p>
 
-<p align="center"><b><a href="https://bollineni-create.github.io/hotwheels/">Open Gridline in your browser</a></b></p>
+<p align="center"><b><a href="https://bollineni-create.github.io/hotwheels/">Open Gridline in your browser</a></b> · <a href="#install-it-on-a-mac-simplest">Get the Mac app</a></p>
+
+![Gridline's home page: a search box, a ZIP code box and what the market is doing this week](docs/screenshot-home.jpg)
+
+## What it does
+
+- **Starts from where you are.** Type a ZIP code and the home page becomes your market: the best deals near you, the cars worth the drive, what your area charges against the rest of the country, and this week's price cuts.
+- **Search the way you talk.** "Manual Miata under $30k", "4x4 trucks near 94022" or "red convertibles under 40k with leather seats". Every filter shows how many cars you'd get by picking it, and every search is a link you can share or bookmark.
+- **A fair price for every car.** Gridline works out what each model is worth for its age, mileage, transmission and paint, then shows every car's dollar gap to that price, with the working shown.
+- **The whole result on a chart.** Each search plots price against miles and maps where the cars are. Pick one model to see prices by year, the trim mix, how fast they sell and how many have had price cuts.
+- **Hunts.** Press **🎯 Hunt this** on any search and Gridline keeps watching it. It tells you when a new match is listed or one drops its price, what changed since you last looked, and how rare the car really is.
+- **Everything about one car.** Its price history, the price against the market, a breakdown to the out-the-door total, a payment calculator, a VIN decode, the window sticker and build sheet, and how rare its color and options are.
+- **What the market's doing.** Cards worked out from the data itself: which cars hold their value, rare specs, cars with far fewer miles than their age implies, and a map of where cars are priced below market.
+- **Compare.** Line up four cars side by side, with the best value in each row highlighted.
+- **Real listings, free.** Connect a free [auto.dev](https://auto.dev/pricing) key or a [Visor](https://visor.vin/account/api) key for cars for sale right now. Without a key it runs on a realistic demo market, which is what these screenshots show.
+- **Private.** Your ZIP code, hunts, favorites and keys stay on your device.
+
+![Searching for a Toyota Tacoma: price against miles, and where the trucks are](docs/screenshot-search.jpg)
+
+![One listing: its price against the market, its price history and the out-the-door breakdown](docs/screenshot-car.jpg)
 
 ## Install it on a Mac (simplest)
 
