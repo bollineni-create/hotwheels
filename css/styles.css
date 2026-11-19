@@ -1163,3 +1163,13 @@ section.cat { scroll-margin-top: 108px; }
   .hbars .hb-label small { white-space: normal; }
   .live-kpis { gap: 12px 20px; }
 }
+
+/* Narrow phones (iPhone SE, 320 px): the header needed ~358 px and pushed the page sideways. */
+@media (max-width: 600px) {
+  .main-nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .main-nav::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 374px) {
+  .header-inner { gap: 6px; padding: 10px 10px; }
+  .main-nav a { padding: 6px 4px; font-size: .78rem; }
+}
