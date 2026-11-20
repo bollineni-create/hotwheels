@@ -366,7 +366,7 @@
       });
     }
 
-    return {
+    const api = {
       status,
       // Whether this site has sync at all (the hosted site does; the desktop app and a local copy don't).
       async available() {
@@ -376,10 +376,11 @@
           return !!(d && d.sync && Array.isArray(d.apps) && d.apps.includes(o.url.split('/').pop()));
         } catch (e) { return false; }
       },
-      // Starts sync on this device with a new code.
-      create() {
+      // Starts sync on this device with a new code, or with `code` when the site already has one
+      // (bollineni.co keeps one code for all its apps) and nothing is synced for Gridline under it yet.
+      create(code) {
         if (meta) return Promise.resolve(status());
-        meta = { code: newCode(), version: null, doc: emptyDoc(), shadow: null, syncedAt: null, dirty: true };
+        meta = { code: normalizeCode(code) || newCode(), version: null, doc: emptyDoc(), shadow: null, syncedAt: null, dirty: true };
         keys = null;
         return run(async () => { keys = await derive(meta.code); await push(0); }).then(status, (e) => { meta = null; keys = null; persist(); tell('idle'); throw e; });
       },
@@ -403,6 +404,10 @@
           meta.syncedAt = now();
           if (meta.dirty) await push(3).catch(() => {});
         }).then(status, (e) => { if (joined) return status(); meta = null; keys = null; persist(); tell('idle'); throw e; });
+      },
+      // Follows a code the site already uses: joins it, or starts Gridline's save under it.
+      adopt(code) {
+        return api.join(code).catch((e) => { if (e && e.reason === 'empty') return api.create(code); throw e; });
       },
       // Stops syncing here. What is saved on this device and on the others stays.
       leave() {
@@ -429,6 +434,7 @@
       // Fetches what other devices changed and sends what this one did.
       sync() { return meta ? run(pull) : Promise.resolve(); },
     };
+    return api;
   }
 
   const api = { newCode, normalizeCode, formatCode, derive, seal, open, snapshot, stamp, merge, apply, cleanCar, same, emptyDoc, createEngine, PREF_KEYS, MESSAGES };

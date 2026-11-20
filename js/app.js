@@ -3854,6 +3854,8 @@
     } else if (a === 'sync-on') {
       el.disabled = true;
       syncEngine.create().then(() => { toast('Sync is on'); renderSettings(); }, (err) => { toast(err.message); renderSettings(); });
+    } else if (a === 'sync-panel') {
+      window.BollineniSync.openPanel({ app: 'gridline', tint: '#34D399' });
     } else if (a === 'sync-now') {
       syncEngine.sync().catch(onSyncProblem);
     } else if (a === 'sync-off') {
@@ -4047,6 +4049,12 @@
   function syncSettingsHtml() {
     if (!syncEngine || !SYNC.available) return '';
     const st = syncEngine.status();
+    // On bollineni.co one code links every app; its panel adds devices and manages the code.
+    if (window.BollineniSync) return `<h2 class="sec-title">Sync</h2>
+      <div class="card settings">
+        <div class="set-row"><span><b>${st.on ? 'Sync is on' : 'Sync across devices'}</b><small id="sync-status">${st.on ? syncStatusText() : 'Keeps your hunts, favorites, compare list and display settings the same on every device, along with your other bollineni.co apps. No account: scan a QR code or open a link on the other device. Everything is encrypted before it leaves this one.'}</small></span>
+          <span class="sync-actions">${st.on ? '<button class="btn ghost" type="button" data-action="sync-now">Sync now</button>' : ''}<button class="btn ${st.on ? 'ghost' : 'primary'}" type="button" data-action="sync-panel">${st.on ? 'Devices' : 'Turn on sync'}</button></span></div>
+      </div>`;
     if (!st.on) return `<h2 class="sec-title">Sync</h2>
       <div class="card settings">
         <div class="set-row"><span><b>Sync across devices</b><small>Keeps your hunts, favorites, compare list and display settings the same on every device. There is no account: this device gets a sync code, and you enter it on the others. Your saves are encrypted with the code before they leave this device.</small></span>
@@ -4093,6 +4101,33 @@
       onStatus: () => { const el = document.getElementById('sync-status'); if (el) el.innerHTML = syncStatusText(); },
     });
   }
+  // On bollineni.co Gridline follows the site's one sync code, so turning sync on in any app (or
+  // opening a link from another device) syncs Gridline too. A Gridline code from before is
+  // promoted to the site's code, so the other apps join it.
+  const SHARED_KEY = 'gridline:sync-shared';
+  function followSite() {
+    const S = window.BollineniSync;
+    if (!S || !syncEngine) return;
+    const flat = (c) => S.normalizeCode(c);
+    const settle = () => { if (view.name === 'settings' && !typing()) renderSettings(); };
+    const align = () => {
+      const site = S.site.code();
+      const st = syncEngine.status();
+      const mine = st.on ? flat(st.code) : null;
+      const shared = localStorage.getItem(SHARED_KEY);
+      if (!site) {
+        if (mine && shared === mine) return syncEngine.leave().then(() => localStorage.removeItem(SHARED_KEY)).then(settle); // unlinked from the panel
+        if (mine) { localStorage.setItem(SHARED_KEY, mine); S.site.set(mine, 'gridline'); }
+        return Promise.resolve();
+      }
+      if (mine === site) { localStorage.setItem(SHARED_KEY, site); return Promise.resolve(); }
+      return (mine ? syncEngine.leave() : Promise.resolve())
+        .then(() => syncEngine.adopt(site))
+        .then(() => { localStorage.setItem(SHARED_KEY, site); SYNC.available = true; settle(); }, onSyncProblem);
+    };
+    S.site.onChange(() => { align(); });
+    align().then(() => { if (S.site.code()) S.site.uses('gridline'); });
+  }
   // Sync when Gridline opens, when its window comes back, and every few minutes while it is in view.
   function startSync() {
     if (!syncEngine) return;
@@ -4103,6 +4138,7 @@
       syncEngine.sync().catch(onSyncProblem);
     };
     SYNC.available = syncEngine.status().on;
+    followSite();
     go();
     syncEngine.available().then((ok) => {
       SYNC.available = ok || syncEngine.status().on;
