@@ -1393,7 +1393,7 @@
       l.daysListed == null ? null : l.daysListed < 1 ? 'Listed today' : `${plural(l.daysListed, 'day')} for sale`].filter(Boolean);
     const photos = (l.photos || []).slice(0, 4);
     const art = photos.length
-      ? `<div class="spec-photos n${photos.length}">${photos.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join('')}</div>`
+      ? `<div class="spec-photos n${photos.length}">${photos.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`).join('')}</div>`
       : `<div class="spec-art" style="--paint:${esc(l.extHex)}">${Charts.carStrip(l)}</div>`;
     return `<article class="card spec-card">
       <header class="spec-head">
