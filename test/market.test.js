@@ -675,3 +675,34 @@ test('an older reply shows at once while it refreshes behind, hunts wait for a f
     fresh().PROVIDERS.visor.base = 'https://api.visor.vin';
   }
 });
+
+test('natural-language search understands near me, nicknames and categories', () => {
+  let r = NLQ.parse('aston martins near me', vocab);
+  assert.deepEqual(r.filters.make, ['Aston Martin']);
+  assert.equal(r.filters.nearMe, true);
+  assert.equal(r.rest, '');
+
+  r = NLQ.parse('luxury electric cars under 25k', vocab);
+  assert.ok(r.filters.make.includes('Tesla') && r.filters.make.includes('BMW'));
+  assert.deepEqual(r.filters.fuel, ['Electric']);
+  assert.equal(r.filters.priceMax, 25000);
+  assert.equal(r.rest, '');
+
+  r = NLQ.parse('luxury bmw under 40k', vocab);
+  assert.deepEqual(r.filters.make, ['BMW']);
+
+  r = NLQ.parse('cheap mercedes within 50 miles of me', vocab);
+  assert.deepEqual(r.filters.make, ['Mercedes-Benz']);
+  assert.equal(r.filters.radius, 50);
+  assert.equal(r.filters.nearMe, true);
+
+  r = NLQ.parse('family suv', vocab);
+  assert.deepEqual(r.filters.body, ['SUV']);
+  r = NLQ.parse('sports cars nearby', vocab);
+  assert.deepEqual(r.filters.body, ['Coupe', 'Convertible']);
+  r = NLQ.parse('tacoma with off-road package', vocab);
+  assert.deepEqual(r.filters.features, ['Off-Road Package']);
+  assert.equal(r.filters.drivetrain, undefined);
+  r = NLQ.parse('minivan', vocab);
+  assert.deepEqual(r.filters.body, ['Minivan']);
+});

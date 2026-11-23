@@ -292,9 +292,30 @@
     return '#/search?' + p.toString();
   };
 
+  // "Near me" in a query: point it at your home ZIP code. False when there's no home
+  // ZIP yet, so the caller can ask the device where you are first.
+  function resolveNearMe(filters) {
+    if (!filters.nearMe) return true;
+    if (!homeZip()) return false;
+    filters.near = homeZip();
+    filters.radius = filters.radius || homeRadius();
+    delete filters.nearMe;
+    return true;
+  }
+  // Runs then() once any "near me" in the query has a place: right away with a home ZIP,
+  // after a location prompt without one. A refused prompt still runs the search, nationwide.
+  function withNearMe(parsed, then) {
+    if (resolveNearMe(parsed.filters)) return then();
+    locateZip((g) => { setHomeZip(g.zip, { quiet: true }); toast(`Searching near ${Geo.label(g, { short: true })}`); resolveNearMe(parsed.filters); then(); },
+      (msg) => { toast(msg + ' Showing every match instead.'); delete parsed.filters.nearMe; then(); });
+  }
+  const nearYouLabel = (u) => (u === 'near you' && homeZip() ? `near ${placeLabel(homeZip())}` : u.endsWith(' of you') && homeZip() ? u.replace(/you$/, placeLabel(homeZip())) : u);
+
   // A parsed natural-language query, as a search URL.
   function nlHref(parsed) {
-    const f = Object.assign(Market.emptyFilters(), parsed.filters, { q: parsed.rest || '' });
+    const pf = Object.assign({}, parsed.filters);
+    resolveNearMe(pf);
+    const f = Object.assign(Market.emptyFilters(), pf, { q: parsed.rest || '' });
     f.ex = parsed.filters.ex || {};
     return '#/search?' + paramsFromFilters(f).toString();
   }
@@ -512,7 +533,7 @@
       const f = Object.assign(Market.emptyFilters(), parsed.filters, { q: parsed.rest });
       f.ex = parsed.filters.ex || {};
       const sub = isLive() ? 'Plain-English search · live listings' : `${plural(Market.search(LISTINGS, f, CTX).results.length, 'car')} match · plain-English search`;
-      out.push({ icon: '✦', label: parsed.understood.join(' · ') + (parsed.rest ? ` · “${parsed.rest}”` : ''), sub, href: nlHref(parsed) });
+      out.push({ icon: '✦', label: parsed.understood.map(nearYouLabel).join(' · ') + (parsed.rest ? ` · “${parsed.rest}”` : ''), sub, href: nlHref(parsed), parsed });
     }
 
     const toks = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -615,7 +636,8 @@
       const s = items[i];
       open(false);
       input.blur();
-      if (s) location.hash = s.href;
+      if (s && s.parsed && s.parsed.filters.nearMe && !homeZip()) withNearMe(s.parsed, () => { location.hash = nlHref(s.parsed); });
+      else if (s) location.hash = s.href;
       else if (input.value.trim()) location.hash = searchHref({ q: input.value.trim() });
     }
     input.addEventListener('input', render);
@@ -643,6 +665,8 @@
     if (home) trucks.filters.radius = homeRadius();
     return [
       { label: 'Manual Miata under $30k', href: nlQuick('manual miata under 30k') },
+      { label: 'Luxury EVs under $25k', href: nlQuick('luxury electric cars under 25k') },
+      { label: 'Exotics under $100k', href: nlQuick('exotics under 100k') },
       { label: 'Red convertibles under 40k with leather seats', href: nlQuick('red convertibles under 40k with leather seats') },
       { label: `4x4 trucks under 50k miles near ${home ? Geo.lookup(home).place : 'Denver'}`, href: nlHref(trucks) },
       { label: 'Used RAV4 hybrid 2021+ without sunroof', href: nlQuick('used rav4 hybrid 2021+ without sunroof') },
@@ -2048,23 +2072,26 @@
     }
   }
 
+  // Asks the device where it is and hands back the nearest US ZIP code (or a reason it couldn't).
+  function locateZip(ok, fail) {
+    if (!navigator.geolocation) return fail('This browser can’t share your location.');
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const g = Geo.nearest(pos.coords.latitude, pos.coords.longitude);
+      g ? ok(g) : fail('Couldn’t match your location to a US ZIP code.');
+    }, (err) => fail(err.code === 1 ? 'Location access was denied.' : 'Couldn’t get your location.'), { timeout: 8000, maximumAge: 600000 });
+  }
+
   function locateMe(btn) {
-    if (!navigator.geolocation) return toast('This browser can’t share your location. Type your ZIP code instead.');
     const label = btn.innerHTML;
     btn.disabled = true;
     btn.textContent = 'Locating…';
     const done = () => { btn.disabled = false; btn.innerHTML = label; };
-    navigator.geolocation.getCurrentPosition((pos) => {
+    locateZip((g) => {
       done();
-      const g = Geo.nearest(pos.coords.latitude, pos.coords.longitude);
-      if (!g) return toast('Couldn’t match your location to a US ZIP code.');
       setHomeZip(g.zip, { quiet: true });
       toast(`You’re near ${Geo.label(g, { short: true })}`);
       renderHome('local');
-    }, (err) => {
-      done();
-      toast(err.code === 1 ? 'Location access was denied. Type your ZIP code instead.' : 'Couldn’t get your location. Type your ZIP code instead.');
-    }, { timeout: 8000, maximumAge: 600000 });
+    }, (msg) => { done(); toast(msg + ' Type your ZIP code instead.'); });
   }
 
   // The "Try" row under the search box: six examples, different on every load. One local
@@ -2216,19 +2243,22 @@
       const parsed = NLQ.parse(q.value, vocab());
       const hint = document.getElementById('nl-hint');
       hint.hidden = !parsed.understood.length;
-      hint.innerHTML = parsed.understood.length ? `Press <kbd>Enter</kbd> to apply: <b>${esc(parsed.understood.join(' · '))}</b>${parsed.rest ? ` and search “${esc(parsed.rest)}”` : ''}` : '';
+      hint.innerHTML = parsed.understood.length ? `Press <kbd>Enter</kbd> to apply: <b>${esc(parsed.understood.map(nearYouLabel).join(' · '))}</b>${parsed.rest ? ` and search “${esc(parsed.rest)}”` : ''}` : '';
       t = setTimeout(() => { if (!parsed.understood.length) updateFilters((f) => { f.q = q.value.trim(); }); }, 200);
     });
     document.getElementById('q-form').addEventListener('submit', (e) => {
       e.preventDefault();
       clearTimeout(t);
       const parsed = NLQ.parse(q.value, vocab());
-      updateFilters((f) => {
-        mergeParsed(f, parsed);
-        f.q = parsed.understood.length ? parsed.rest : q.value.trim();
-      });
-      q.value = S.f.q;
+      const typed = q.value.trim();
       document.getElementById('nl-hint').hidden = true;
+      withNearMe(parsed, () => {
+        updateFilters((f) => {
+          mergeParsed(f, parsed);
+          f.q = parsed.understood.length ? parsed.rest : typed;
+        });
+        q.value = S.f.q;
+      });
     });
     document.getElementById('sort-select').addEventListener('change', (e) => updateFilters((f) => { f.sort = e.target.value; }));
     refreshSearch();
@@ -2239,7 +2269,7 @@
     const p = parsed.filters;
     for (const k of ARRAY_KEYS) if (p[k]) f[k] = [...new Set([...f[k], ...p[k]])];
     for (const [k, vals] of Object.entries(p.ex || {})) f.ex[k] = [...new Set([...(f.ex[k] || []), ...vals])];
-    for (const k of ['priceMin', 'priceMax', 'milesMax', 'near', 'sort']) if (p[k] != null) f[k] = p[k];
+    for (const k of ['priceMin', 'priceMax', 'milesMax', 'near', 'radius', 'sort']) if (p[k] != null) f[k] = p[k];
     for (const k of BOOL_KEYS) if (p[k]) f[k] = true;
   }
 

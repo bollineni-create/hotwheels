@@ -37,6 +37,36 @@
     [/(super cruise|self[- ]driving|hands[- ]free( driving)?|autopilot)/, 'Hands-Free Driving'], [/wireless charg(ing|er)/, 'Wireless Charging'],
     [/power (liftgate|tailgate)/, 'Power Liftgate'],
   ];
+  // Makes the parser always knows, so "aston martins near me" works even before
+  // the live source has sent its own list of makes.
+  const KNOWN_MAKES = ['Acura', 'Alfa Romeo', 'Aston Martin', 'Audi', 'Bentley', 'BMW', 'Buick', 'Cadillac', 'Chevrolet', 'Chrysler', 'Dodge',
+    'Ferrari', 'Fiat', 'Ford', 'Genesis', 'GMC', 'Honda', 'Hyundai', 'Infiniti', 'Jaguar', 'Jeep', 'Kia', 'Lamborghini', 'Land Rover', 'Lexus',
+    'Lincoln', 'Lotus', 'Lucid', 'Maserati', 'Mazda', 'McLaren', 'Mercedes-Benz', 'Mitsubishi', 'Nissan', 'Polestar', 'Porsche', 'Ram',
+    'Rivian', 'Rolls-Royce', 'Subaru', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo'];
+  // What people actually type for a make.
+  const MAKE_ALIASES = {
+    'mercedes benz': 'Mercedes-Benz', mercedes: 'Mercedes-Benz', benz: 'Mercedes-Benz', merc: 'Mercedes-Benz', amg: 'Mercedes-Benz',
+    chevy: 'Chevrolet', vw: 'Volkswagen', volkswagon: 'Volkswagen', bimmer: 'BMW', beemer: 'BMW', caddy: 'Cadillac', caddie: 'Cadillac',
+    lambo: 'Lamborghini', 'rolls royce': 'Rolls-Royce', rolls: 'Rolls-Royce', 'range rover': 'Land Rover', landy: 'Land Rover',
+    'alfa romeo': 'Alfa Romeo', alfa: 'Alfa Romeo', aston: 'Aston Martin', 'aston martin': 'Aston Martin',
+    'land rover': 'Land Rover', mclaren: 'McLaren', 'mc laren': 'McLaren', 'mini cooper': 'MINI',
+  };
+  // Category words that stand for a set of makes, bodies or fuels. Each only applies when
+  // the query didn't already name that thing ("luxury bmw" stays BMW).
+  const LUXURY = ['Acura', 'Alfa Romeo', 'Aston Martin', 'Audi', 'Bentley', 'BMW', 'Cadillac', 'Genesis', 'Infiniti', 'Jaguar', 'Land Rover',
+    'Lexus', 'Lincoln', 'Lucid', 'Maserati', 'Mercedes-Benz', 'Polestar', 'Porsche', 'Rolls-Royce', 'Tesla', 'Volvo'];
+  const EXOTIC = ['Aston Martin', 'Bentley', 'Ferrari', 'Lamborghini', 'Lotus', 'Maserati', 'McLaren', 'Rolls-Royce'];
+  const RELIABLE = ['Toyota', 'Lexus', 'Honda', 'Mazda', 'Subaru'];
+  const CATEGORIES = [
+    { re: /\b(exotics?|super ?cars?|hyper ?cars?)\b/, key: 'make', values: EXOTIC, label: 'exotic brands' },
+    { re: /\b(luxury|luxurious|premium|high[- ]end|upscale|fancy)\b/, key: 'make', values: LUXURY, label: 'luxury brands' },
+    { re: /\b(reliable|dependable)\b/, key: 'make', values: RELIABLE, label: 'reliable brands' },
+    { re: /\b(sports? ?cars?|sporty|performance|fast)\b/, key: 'body', values: ['Coupe', 'Convertible'], label: 'sports cars' },
+    { re: /\bfamily( cars?| vehicles?| haulers?)?\b/, key: 'body', values: ['SUV', 'Minivan'], label: 'family haulers' },
+    { re: /\b(fuel[- ]efficient|efficient|economical|good (on gas|gas mileage|mpg)|high mpg|gas savers?|great mpg)\b/, key: 'fuel', values: ['Hybrid', 'Plug-in Hybrid', 'Electric'], label: 'hybrids & EVs' },
+    { re: /\b(off[- ]?road(ers?|ing)?|overland(ing)?|trail rigs?)\b/, key: 'drivetrain', values: ['4WD'], label: '4WD' },
+  ];
+
   const STOP = new Set(('a an the and or with w for sale cars car vehicles vehicle show me find i want looking that has have having ' +
     'in near around under over below above less more than between to from of on by any some please only miles mi price priced ' +
     'interior exterior color colored seats seat').split(' '));
@@ -59,11 +89,15 @@
       if (m.make === 'Tesla') aliases.add(name.replace('model ', 'model'));
       return { key: m.make ? `${m.make} ${m.model}` : m.model, make: m.make, trims: (m.trims || []).map((t) => t[0]), aliases: [...aliases].filter((a) => a.length > 1) };
     });
-    const makes = [...new Set(data.models.map((m) => m.make).concat(data.makes || []).filter(Boolean))];
+    // Live makes first so their spelling wins, then the demo's, then the built-in list.
+    const seen = new Set();
+    const makes = (data.makes || []).concat(data.models.map((m) => m.make), KNOWN_MAKES)
+      .filter((mk) => mk && !seen.has(mk.toLowerCase()) && seen.add(mk.toLowerCase()));
+    const makeAliases = Object.entries(MAKE_ALIASES).map(([a, mk]) => [a, makes.find((x) => x.toLowerCase() === mk.toLowerCase()) || mk]);
     const cities = [...new Set(data.cities.map((c) => `${c[0]}, ${c[1]}`))];
     const paints = [...new Set(data.paints || [])];
     const upfitters = [...new Set(data.upfitters || [])];
-    return { models, makes, cities, paints, upfitters, currentYear: data.currentYear || 2026 };
+    return { models, makes, makeAliases, cities, paints, upfitters, currentYear: data.currentYear || 2026 };
   }
 
   // Escape for use inside a RegExp.
@@ -148,6 +182,15 @@
       understood.push(`near ${m[1]}`);
     }
 
+    // "Near me": the app fills in your home ZIP code, or asks the device where you are.
+    if (!f.near) {
+      if ((m = take(/\bwithin\s+(\d{1,4})\s*(?:mi|miles)\s+(?:of|from|around)\s+(?:me|here|my (?:area|location|place|house|home))\b/))) {
+        f.nearMe = true; f.radius = +m[1]; understood.push(`within ${m[1]} mi of you`);
+      } else if ((m = take(/\b(?:near|around|close to|by|in)\s+(?:me|here|my (?:area|location|place|house|home|town|city))\b|\b(?:nearby|close by|locally|local)\b/))) {
+        f.nearMe = true; understood.push('near you');
+      }
+    }
+
     // Years: "2022", "2020+", "2019-2021", "2020 or newer"
     const cy = vocab.currentYear + 1;
     const span = (a, b) => { for (let y = a; y <= b; y++) (f.year = f.year || []).push(String(y)); };
@@ -196,6 +239,13 @@
         add('model', md.key);
       }
     }
+    for (const [alias, mk] of [...(vocab.makeAliases || [])].sort((a, b) => b[0].length - a[0].length)) {
+      const re = wordRe(alias);
+      if (re.test(t)) {
+        t = t.replace(re, '$1 ');
+        if (!foundModels.some((md) => md.make === mk)) add('make', mk);
+      }
+    }
     for (const mk of vocab.makes) {
       const re = wordRe(mk.toLowerCase());
       if (re.test(t)) {
@@ -242,6 +292,15 @@
     for (const [re, v] of FEATURES) {
       const full = new RegExp(`\\b${re.source}\\b`);
       if ((m = take(full))) add('features', v);
+    }
+
+    for (const c of CATEGORIES) {
+      if (!(m = take(c.re))) continue;
+      // "luxury bmw", "family suv": the specific word already said it.
+      const named = c.key === 'make' ? (f.make || f.model) : f[c.key];
+      if (named && named.length) continue;
+      for (const v of c.values) add(c.key, v, null);
+      understood.splice(understood.length - c.values.length, c.values.length, c.label);
     }
 
     if ((m = take(/\b(cheap|cheapest|affordable|inexpensive)\b/))) { f.sort = 'price-asc'; understood.push('cheapest first'); }
