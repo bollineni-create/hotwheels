@@ -510,7 +510,11 @@
       return out;
     }
     const compact = q.toUpperCase().replace(/[\s-]/g, '');
-    if (/[*?_]/.test(compact) && /^[A-Z0-9*?_.]{3,17}$/.test(compact)) {
+    // Words like "family suv under 30k" squash into something VIN-shaped; a VIN never has
+    // I, O or Q, and several words that read as a plain-English search aren't one.
+    const vinLike = !/[IOQ]/.test(compact.replace(/[*?_]/g, '')) && !(/\s/.test(q) && NLQ.parse(q, vocab()).understood.length);
+    if (!vinLike) { /* plain words, not a VIN */ }
+    else if (/[*?_]/.test(compact) && /^[A-Z0-9*?_.]{3,17}$/.test(compact)) {
       const n = ALL.filter((l) => !l.sold && Market.vinMatches(l.vin, compact)).length;
       out.push({ icon: '#', label: `VIN pattern ${compact}`, sub: `${plural(n, 'match')} · wildcards match any character`, href: searchHref({ vin: compact }) });
     } else if (/^[A-Z0-9]{11,17}$/.test(compact) && /\d/.test(compact)) {
