@@ -506,7 +506,7 @@
   // quietly falls back to the parser.
   let ASK_OK = null; // false once the route is known to be missing or off
   // Bumped when the server's prompt changes, so the CDN's cached answers from the old prompt aren't reused.
-  const ASK_VERSION = 3;
+  const ASK_VERSION = 4;
   const ASK_CACHE = new Map();
   // Same normalizing as the server, so a repeat question is the same cached URL.
   const askKey = (q) => String(q).toLowerCase().replace(/\s+/g, ' ').replace(/[?!.]+$/, '').trim();
