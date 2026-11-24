@@ -531,6 +531,22 @@
     ASK_CACHE.set(k, data);
     return data;
   }
+  // Questions only Ask Gridline can answer, shown as tap-to-try chips once the route answers.
+  const ASK_EXAMPLES = ['Something reliable for a road trip with two dogs', 'Best first car for a teenager under $15k',
+    'Jeep Wrangler but more reliable', 'A truck that can tow a boat but isn’t huge', 'EV with 300 miles of range',
+    'What should I drive for Uber?', 'Fun weekend car under $40k', 'Good in snow for a family of five',
+    'Quiet luxury sedan for a long commute', 'Cheapest way into a Porsche', 'SUV that fits three car seats',
+    'Something like a Miata but with a roof'];
+  // Asks the server once whether Ask Gridline is on here, then adds the example chips to the home page.
+  fetch('api/status', { headers: { Accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null)).then((st) => {
+    if (!st || st.ai !== true) { if (st && st.ai === false) ASK_OK = false; return; }
+    if (ASK_OK !== false) ASK_OK = true;
+    const row = document.getElementById('ask-row');
+    if (row && !row.children.length) row.innerHTML = askRowHtml();
+  }).catch(() => {});
+  const askRowHtml = () => `<span class="muted small">Or ask</span>${askChipsHtml()}`;
+  const askChipsHtml = () => shuffle(ASK_EXAMPLES).slice(0, 2)
+    .map((q) => `<button class="chip-link ask-chip" type="button" data-action="ask" data-q="${esc(q)}"><span aria-hidden="true">✦</span> ${esc(q)}</button>`).join('');
   const ASK_SORT = { 'best-deal': 'best', 'price-asc': 'price-asc', 'price-desc': 'price-desc', 'miles-asc': 'miles-asc', 'year-desc': 'year-desc', newest: 'newest' };
   // Claude's answer, in the same shape NLQ.parse returns.
   function askToParsed(a, opts = {}) {
@@ -583,7 +599,8 @@
     const out = [];
     if (!q) {
       for (const s of store.get().saved.slice(0, 4)) out.push({ icon: '🎯', label: s.name, sub: huntNewCount(s) ? `Hunt · ${huntNewCount(s)} new` : 'Hunt', href: '#/hunt/' + s.id });
-      for (const p of quickFor().slice(0, 6)) out.push({ icon: '↗', label: p.label, sub: 'Try a plain-English search', href: p.href });
+      if (ASK_OK === true) for (const q of shuffle(ASK_EXAMPLES).slice(0, 2)) out.push({ icon: '✦', label: q, sub: 'Ask Gridline · answered like a person would', ask: q, href: searchHref({ q }) });
+      for (const p of quickFor().slice(0, ASK_OK === true ? 4 : 6)) out.push({ icon: '↗', label: p.label, sub: 'Try a plain-English search', href: p.href });
       return out;
     }
     const compact = q.toUpperCase().replace(/[\s-]/g, '');
@@ -2259,6 +2276,7 @@
         <div class="home-top-inner">
           <p class="eyebrow">${eyebrow}</p>
           <div id="hero-search" class="home-search"></div>
+          <div class="ask-row" id="ask-row">${ASK_OK === true ? askRowHtml() : ''}</div>
           ${market}
           <div class="quick"><span class="muted">Try</span>${tryChips(localQuick).map((q) => `<a class="chip-link" href="${q.href}">${esc(q.label)}</a>`).join('')}</div>
         </div>
@@ -3916,6 +3934,8 @@
       }
     } else if (a === 'locate') {
       locateMe(el);
+    } else if (a === 'ask') {
+      askAndGo(el.dataset.q, searchHref({ q: el.dataset.q }));
     } else if (a === 'set-zip') {
       if (setHomeZip(el.dataset.zip)) renderHome('local');
     } else if (a === 'edit-zip') {
