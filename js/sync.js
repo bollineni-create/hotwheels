@@ -250,17 +250,25 @@
   // state() (Gridline's saved state), commit(fn) (changes it and saves), makeHunt, now(), and
   // onStatus(), called whenever status() would answer differently.
   function createEngine(o) {
-    const now = o.now || (() => Date.now());
+    // A device whose clock is far off would always win or always lose: the server's Date header
+    // corrects it, only past two minutes so ordinary drift changes nothing.
+    let skew = 0;
+    const now = o.now || (() => Date.now() + skew);
     let meta = null; // { code, version, doc, shadow, syncedAt, dirty }
     let keys = null; // { id, key } for meta.code
     let phase = 'idle', problem = null, applying = false;
     let queue = Promise.resolve();
-    let timer = null;
+    let timer = null, pending = false;
 
+    // What was synced when sync last stopped here: linking again starts from it, so a change made
+    // to an existing car or hunt in between counts as newer than the other devices' copies.
+    let kept = null;
     try { meta = JSON.parse(o.storage.get() || 'null'); } catch (e) { meta = null; }
-    if (meta && !normalizeCode(meta.code)) meta = null;
+    if (meta && !normalizeCode(meta.code)) { if (meta.kept && meta.kept.doc) kept = meta.kept; meta = null; }
 
-    const persist = () => { try { if (meta) o.storage.set(JSON.stringify(meta)); else o.storage.remove(); } catch (e) { /* private mode */ } };
+    const persist = () => { try { if (meta) o.storage.set(JSON.stringify(meta)); else if (kept) o.storage.set(JSON.stringify({ code: null, kept })); else o.storage.remove(); } catch (e) { /* private mode */ } };
+    const stop = () => { if (meta) kept = { doc: meta.doc, shadow: meta.shadow }; meta = null; keys = null; };
+    const fresh = (code, dirty) => { const k = kept; kept = null; return { code, version: null, doc: k ? k.doc : emptyDoc(), shadow: k ? k.shadow : null, syncedAt: null, dirty, _kept: k }; };
     const tell = (p, err) => { phase = p; problem = err || null; if (o.onStatus) o.onStatus(); };
     const status = () => ({ on: !!meta, code: meta ? formatCode(meta.code) : null, phase, problem, syncedAt: meta ? meta.syncedAt || null : null });
     // One thing at a time: a save never overlaps a read of the same file.
@@ -275,8 +283,12 @@
           headers: Object.assign({ Authorization: 'Bearer ' + keys.id }, body ? { 'Content-Type': 'application/json' } : {}),
           body: body ? JSON.stringify(body) : undefined,
           cache: 'no-store',
+          // A small save can outlive the page that sent it (leaving, or locking the phone).
+          keepalive: !!body && JSON.stringify(body).length < 60000,
         });
       } catch (e) { throw failure('offline', MESSAGES.offline); }
+      const at = Date.parse((r.headers && r.headers.get && r.headers.get('date')) || '');
+      if (Number.isFinite(at)) skew = Math.abs(at - Date.now()) > 120000 ? at - Date.now() : 0;
       const data = await r.json().catch(() => null);
       if (r.ok || r.status === 404 || r.status === 409) return { status: r.status, data: data || {} };
       const reason = (data && data.reason) || 'offline';
@@ -339,7 +351,7 @@
       const r = await request('GET');
       if (r.status === 404) {
         // This device has synced before, so the save was erased from another one.
-        if (meta.version) { meta = null; keys = null; throw failure('erased', MESSAGES.erased); }
+        if (meta.version) { stop(); persist(); throw failure('erased', MESSAGES.erased); }
         return push(3);
       }
       if (r.data.version !== meta.version) fold(await read(r.data.payload), r.data.version);
@@ -380,16 +392,18 @@
       // (bollineni.co keeps one code for all its apps) and nothing is synced for Gridline under it yet.
       create(code) {
         if (meta) return Promise.resolve(status());
-        meta = { code: normalizeCode(code) || newCode(), version: null, doc: emptyDoc(), shadow: null, syncedAt: null, dirty: true };
+        meta = fresh(normalizeCode(code) || newCode(), true);
+        const k = meta._kept; delete meta._kept;
         keys = null;
-        return run(async () => { keys = await derive(meta.code); await push(0); }).then(status, (e) => { meta = null; keys = null; persist(); tell('idle'); throw e; });
+        return run(async () => { keys = await derive(meta.code); await push(0); }).then(status, (e) => { meta = null; keys = null; kept = k; persist(); tell('idle'); throw e; });
       },
       // Joins the devices already syncing under a code. Refused if nothing is saved under it.
       join(typed) {
         const code = normalizeCode(typed);
         if (!code) return Promise.reject(failure('code', MESSAGES.code));
         if (meta) return Promise.reject(failure('code', 'Turn sync off before entering a different code.'));
-        meta = { code, version: null, doc: emptyDoc(), shadow: null, syncedAt: null, dirty: false };
+        meta = fresh(code, false);
+        const k = meta._kept; delete meta._kept;
         keys = null;
         let joined = false;
         return run(async () => {
@@ -403,7 +417,7 @@
           joined = true;
           meta.syncedAt = now();
           if (meta.dirty) await push(3).catch(() => {});
-        }).then(status, (e) => { if (joined) return status(); meta = null; keys = null; persist(); tell('idle'); throw e; });
+        }).then(status, (e) => { if (joined) return status(); meta = null; keys = null; kept = k; persist(); tell('idle'); throw e; });
       },
       // Follows a code the site already uses: joins it, or starts Gridline's save under it.
       adopt(code) {
@@ -411,7 +425,7 @@
       },
       // Stops syncing here. What is saved on this device and on the others stays.
       leave() {
-        return serial(async () => { clearTimeout(timer); meta = null; keys = null; persist(); tell('idle'); });
+        return serial(async () => { clearTimeout(timer); stop(); persist(); tell('idle'); });
       },
       // Removes the synced copy from the server and stops syncing here. Other devices keep what
       // they have and stop syncing the next time they check.
@@ -420,7 +434,7 @@
           if (!meta) return;
           await request('DELETE');
           clearTimeout(timer);
-          meta = null; keys = null; persist(); tell('idle');
+          stop(); persist(); tell('idle');
         });
       },
       // Gridline calls this after every change to its saved state.
@@ -429,7 +443,15 @@
         if (!note()) return;
         persist();
         clearTimeout(timer);
-        timer = setTimeout(() => { run(() => push(3)).catch(() => {}); }, o.delay == null ? 1500 : o.delay);
+        pending = true;
+        timer = setTimeout(() => { pending = false; run(() => push(3)).catch(() => {}); }, o.delay == null ? 1500 : o.delay);
+      },
+      // Leaving the page or locking the phone: send a change still waiting out its delay now.
+      flush() {
+        if (!pending || !meta) return Promise.resolve();
+        clearTimeout(timer);
+        pending = false;
+        return run(() => push(3)).catch(() => {});
       },
       // Fetches what other devices changed and sends what this one did.
       sync() { return meta ? run(pull) : Promise.resolve(); },

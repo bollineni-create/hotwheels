@@ -4326,7 +4326,12 @@
     });
     document.addEventListener('visibilitychange', go);
     window.addEventListener('focus', go);
-    setInterval(go, 3 * 60000);
+    // Back online: send what was saved offline now (a hidden tab gets this too).
+    window.addEventListener('online', () => { if (syncEngine.status().on) { last = Date.now(); syncEngine.sync().catch(onSyncProblem); } });
+    // Leaving or locking the phone: send the last change now instead of on the next open.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) syncEngine.flush(); });
+    window.addEventListener('pagehide', () => syncEngine.flush());
+    setInterval(go, 60000);
   }
 
   /* ---------- Theme ---------- */

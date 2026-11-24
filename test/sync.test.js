@@ -230,9 +230,23 @@ test('turning sync off keeps everything here; erasing removes the synced copy an
   assert.equal(srv.files.size, 0);
   await assert.rejects(a.engine.sync(), { reason: 'erased' });
   assert.equal(a.engine.status().on, false);
-  assert.equal(a.kept, null);
+  // Off, but what was synced is kept (with no code) so linking again merges by real times.
+  assert.equal(JSON.parse(a.kept).code, null);
   assert.deepEqual(a.s.favs, { car1: 1 });
   assert.equal(srv.files.size, 0, 'a device that learns of the erasure does not put the copy back');
+});
+
+test('a change made while sync was off wins over older copies when linking again', async () => {
+  const srv = server(), clock = { t: 1000 };
+  const a = device(srv, clock), b = device(srv, clock);
+  a.s.favs = { car1: 1, car2: 1 };
+  const { code } = await a.engine.create();
+  clock.t = 2000; await b.engine.join(code);
+  await b.engine.leave();
+  clock.t = 3000; b.s.favs = { car1: 9 }; // car1 changed and car2 removed while off
+  clock.t = 4000; await b.engine.join(code);
+  await a.engine.sync();
+  assert.deepEqual(a.s.favs, { car1: 9 });
 });
 
 test('only saves in the shape Gridline keeps are applied', () => {
