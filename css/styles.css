@@ -1179,3 +1179,8 @@ section.cat { scroll-margin-top: 108px; }
 /* Ask anything: how Gridline read the question, above the result count. */
 .ask-note { display: flex; gap: 6px; align-items: baseline; margin: 0 0 6px; font-size: .9rem; color: var(--text); }
 .ask-note span { color: var(--accent); }
+/* Ask Gridline example questions in the Try row. */
+.ask-chip { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--text); }
+.ask-chip span { color: var(--accent); }
+.ask-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin: 10px 0 2px; }
+.ask-row:empty { display: none; }
