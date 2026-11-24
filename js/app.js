@@ -506,14 +506,14 @@
   // quietly falls back to the parser.
   let ASK_OK = null; // false once the route is known to be missing or off
   // Bumped when the server's prompt changes, so the CDN's cached answers from the old prompt aren't reused.
-  const ASK_VERSION = 2;
+  const ASK_VERSION = 3;
   const ASK_CACHE = new Map();
   // Same normalizing as the server, so a repeat question is the same cached URL.
   const askKey = (q) => String(q).toLowerCase().replace(/\s+/g, ' ').replace(/[?!.]+$/, '').trim();
   function needsAsk(q, parsed) {
     if (ASK_OK === false || location.protocol === 'file:') return false;
     const t = q.trim();
-    if (t.split(/\s+/).length < 2 || t.length > 240) return false;
+    if (t.split(/\s+/).length < 2 || t.length > 160) return false;
     if (/^[A-HJ-NPR-Z0-9*?_]{11,17}$/i.test(t.replace(/[\s-]/g, ''))) return false;
     return Boolean(parsed.rest) || !parsed.understood.length;
   }
@@ -525,14 +525,15 @@
     catch (e) { ASK_OK = false; throw new Error('off'); }
     const data = await r.json().catch(() => null);
     if (r.status === 429) throw new Error((data && data.error) || 'Too many questions for now.');
-    if (!r.ok || !data || typeof data !== 'object') { if (r.status !== 502) ASK_OK = false; throw new Error('off'); }
+    // Only a missing or switched-off route turns Ask off for the visit; one bad question doesn't.
+    if (!r.ok || !data || typeof data !== 'object') { if (r.status === 404 || r.status === 503) ASK_OK = false; throw new Error('off'); }
     ASK_OK = true;
     ASK_CACHE.set(k, data);
     return data;
   }
   const ASK_SORT = { 'best-deal': 'best', 'price-asc': 'price-asc', 'price-desc': 'price-desc', 'miles-asc': 'miles-asc', 'year-desc': 'year-desc', newest: 'newest' };
   // Claude's answer, in the same shape NLQ.parse returns.
-  function askToParsed(a) {
+  function askToParsed(a, opts = {}) {
     const f = { ex: {} };
     const set = (k, v) => { if (v && v.length) f[k] = v; };
     const models = (a.models || []).map((m) => `${m.make} ${m.model}`);
@@ -551,7 +552,7 @@
     if (a.near) f.near = a.near; else if (a.nearMe) f.nearMe = true;
     // A question with no place starts from your market, closest first, like the rest of Gridline.
     // The chip comes off in one tap for a nationwide search.
-    else if (!(a.states && a.states.length) && homeZip()) {
+    else if (opts.home !== false && !(a.states && a.states.length) && homeZip()) {
       f.near = homeZip();
       f.radius = homeRadius();
       if (!a.sort) f.sort = 'distance';
@@ -2383,12 +2384,14 @@
       // A question the parser can't read narrows the current search through Claude.
       if (needsAsk(typed, parsed)) {
         toast('Reading your question…');
-        askAI(typed).then((a) => {
+        // Claude sees the search on screen, so "but cheaper" or "only hybrids" has something to change,
+        // and its answer is the whole updated search rather than more filters piled on.
+        const current = describeFilters(S.f).slice(0, 220);
+        askAI(`Current search: ${current}. Change: ${typed}`).then((a) => {
           if (a.offTopic) throw new Error('That doesn’t look like a car search.');
-          const asked = askToParsed(a);
+          const asked = askToParsed(a, { home: false });
           withNearMe(asked, () => {
-            const f = Object.assign({}, S.f, { ex: S.f.ex });
-            for (const k of ARRAY_KEYS) f[k] = [...(S.f[k] || [])];
+            const f = Object.assign(Market.emptyFilters(), { ex: {}, near: S.f.near, radius: S.f.radius, sort: S.f.sort });
             mergeParsed(f, asked);
             f.q = '';
             location.hash = '#/search?' + paramsFromFilters(f).toString() + (a.note ? '&note=' + encodeURIComponent(a.note) : '');
