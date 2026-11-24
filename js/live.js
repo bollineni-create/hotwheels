@@ -109,9 +109,19 @@
   const TIERS = [[10, 60], [40, 120], [200, 600], [500, 3000]]; // [per 10 s, per 60 s]
   const TIER_TTL = 7 * 864e5;
   const PRIORITY = { first: 0, page: 1, later: 2, background: 3 };
-  const maxInflight = (L) => (!L.caps ? 4 : L.caps.cap10 >= 200 ? 16 : L.caps.cap10 >= 40 ? 8 : 4);
-  const spacingMs = (L) => (L.caps && L.caps.cap10 >= 40 ? 25 : 150); // between request starts, so a queue never arrives as one burst
-  const tierKey = (p) => `gridline:tier:${p}`;
+  // On the site's shared key, bollineni.co's relay (api/relay.js) also limits each visitor to 30
+  // uncached calls a minute. That limit is the relay's, not Visor's: it is paced under here and its
+  // refusals never teach the lane a tier. (They used to, and walked a visitor down to 3 requests per
+  // 10 s for a week, so Your Market took half a minute to load.)
+  const SHARED_KEY = '__server__';
+  const RELAY_CAPS = { cap10: 15, cap60: 28 };
+  const isRelayRefusal = (r, message) => r.status === 429 && /^Too many requests\. Retry after \d+ seconds\.$/.test(message || '');
+  const capsOf = (L) => (!L.shared ? L.caps : L.caps ? { cap10: Math.min(L.caps.cap10, RELAY_CAPS.cap10), cap60: Math.min(L.caps.cap60, RELAY_CAPS.cap60) } : RELAY_CAPS);
+  const maxInflight = (L) => { const c = capsOf(L); return !c ? 4 : c.cap10 >= 200 ? 16 : c.cap10 >= 40 ? 8 : 4; };
+  const spacingMs = (L) => { const c = capsOf(L); return c && c.cap10 >= 40 ? 25 : 150; }; // between request starts, so a queue never arrives as one burst
+  // tier2: tiers learned before relay refusals were told apart can be far too low, so they're dropped.
+  const tierKey = (p) => `gridline:tier2:${p}`;
+  safe(() => Object.keys(localStorage).filter((k) => k.startsWith('gridline:tier:')).forEach((k) => localStorage.removeItem(k)));
   const loadTier = (p) => safe(() => { const t = JSON.parse(localStorage.getItem(tierKey(p))); return t && t.cap10 && Date.now() - t.t < TIER_TTL ? t : null; }, null);
   const lanes = {};
   let seq = 0;
@@ -122,11 +132,12 @@
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   // The earliest moment one more request fits the tier's windows (the sent list holds the last 60 s).
   function windowFree(L, now) {
-    if (!L.caps) return now;
+    const c = capsOf(L);
+    if (!c) return now;
     let at = now;
     const in10 = L.sent.filter((t) => now - t < 10000);
-    if (in10.length >= L.caps.cap10) at = Math.max(at, in10[in10.length - L.caps.cap10] + 10050);
-    if (L.sent.length >= L.caps.cap60) at = Math.max(at, L.sent[L.sent.length - L.caps.cap60] + 60050);
+    if (in10.length >= c.cap10) at = Math.max(at, in10[in10.length - c.cap10] + 10050);
+    if (L.sent.length >= c.cap60) at = Math.max(at, L.sent[L.sent.length - c.cap60] + 60050);
     return at;
   }
   function pump(p) {
@@ -243,6 +254,7 @@
 
   async function fetchJson(p, path, query, key, cacheKey, priority) {
     const L = lane(p);
+    L.shared = key === SHARED_KEY;
     for (let attempt = 0; ; attempt++) {
       await slot(p, priority);
       let r;
@@ -260,7 +272,7 @@
       }
       const err = (json && (typeof json.error === 'object' ? json.error : { message: json.error, code: json.code })) || {};
       if (r.status === 429 && attempt < RETRIES) {
-        learnTier(p);
+        if (!isRelayRefusal(r, err.message)) learnTier(p);
         // Wait what the API names (longer when it keeps refusing this one), so a burst of cards settles instead of failing.
         const ms = retrySeconds(r, err.message) * 1000 * Math.max(1, attempt);
         L.pausedUntil = Math.max(L.pausedUntil, Date.now() + ms);

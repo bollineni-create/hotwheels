@@ -574,9 +574,15 @@ test('live requests go out by priority, the tier is learned from a refusal, and 
   const fresh = () => { delete require.cache[require.resolve('../js/live.js')]; return require('../js/live.js'); };
   let Live = fresh();
   const seen = [];
-  let refuse = false;
+  let refuse = false, relayRefuse = false;
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
+    if (relayRefuse) {
+      // bollineni.co's relay limiting one visitor: not Visor's tier, so nothing is learned from it.
+      relayRefuse = false;
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+      return res.end(JSON.stringify({ error: { message: 'Too many requests. Retry after 1 seconds.' } }));
+    }
     seen.push(u.searchParams.get('facets'));
     if (refuse && seen.length === 12) {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
@@ -596,12 +602,16 @@ test('live requests go out by priority, the tier is learned from a refusal, and 
     await Promise.all(later.concat(first));
     assert.deepEqual(seen, ['make', 'state', 'drivetrain', 'model', 'body_type', 'trim', 'year', 'fuel_type']);
     assert.equal(Live.tier('visor'), null, 'no refusal yet, so no tier assumed');
+    relayRefuse = true;
+    await facet('cylinders', Live.PRIORITY.first);
+    assert.equal(Live.tier('visor'), null, "the site relay's per-visitor limit doesn't set a tier");
+    seen.pop();
     // The twelfth request within ten seconds is refused: that's Tier 1 (10 per 10 s), remembered on the device.
     refuse = true;
     await Promise.all(['transmission', 'exterior_color', 'base_interior_color', 'dealer_type'].map((n) => facet(n, Live.PRIORITY.first)));
     assert.equal(seen.length, 13, 'the refused request was sent again');
     assert.deepEqual([Live.tier('visor').cap10, Live.tier('visor').cap60], [10, 60]);
-    assert.deepEqual(JSON.parse(store.get('gridline:tier:visor')).cap10, 10);
+    assert.deepEqual(JSON.parse(store.get('gridline:tier2:visor')).cap10, 10);
     // Replies are on disk: a fresh client (a restart) answers from them without a request, and starts at the learned tier.
     const before = seen.length;
     Live = fresh();
