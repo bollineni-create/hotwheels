@@ -421,6 +421,7 @@
     document.getElementById('saved-count').classList.toggle('pill-new', news > 0);
     document.getElementById('saved-count').title = news ? `${news} new in your hunts` : '';
     set('compare-count', s.compare.length);
+    updateRail();
   }
 
   function badge(text, cls, tip) {
@@ -822,7 +823,8 @@
     view = { name };
     if (name !== 'home') stopPanelCycle();
     app.innerHTML = html;
-    document.querySelectorAll('.main-nav a').forEach((a) => a.classList.toggle('active', a.dataset.nav === name));
+    const nav = name === 'home' && /^#\/(insights|national|rare-specs|capsules)/.test(location.hash) ? 'insights' : name === 'home' && location.hash.startsWith('#/rewind') ? 'rewind' : name === 'hunt' ? 'saved' : name;
+    document.querySelectorAll('.rail-nav a[data-nav]').forEach((a) => { a.classList.toggle('active', a.dataset.nav === nav); if (a.dataset.nav === nav) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     document.body.dataset.view = name;
   }
 
@@ -4256,6 +4258,7 @@
   // Another device's changes just arrived: show them, unless that would interrupt typing or reading.
   function afterSyncApplied() {
     applyTheme(store.get().theme);
+    applyDesignSystem(prefs().ds || '');
     if (['home', 'saved', 'compare', 'hunt', 'settings'].includes(view.name) && !typing()) route();
   }
   function onSyncProblem(e) {
@@ -4342,6 +4345,241 @@
     store.update((s) => { s.theme = next; });
   });
 
+  /* ---------- One-app views (draft): Map, Showroom and Desk ---------- */
+  // Three views over the same market as Home and Search. They read the demo market's listings and
+  // sales; with live data on they say so, since a live feed doesn't carry the whole country's history.
+
+  const viewNote = () => (isLive() ? `<p class="ds-note">This view reads the demo market for now. Your live feed powers Home and Search.</p>` : '');
+  const usedPriced = () => LISTINGS.filter((l) => l.condition !== 'New' && priced(l));
+  const lum = (hex) => { const n = parseInt(String(hex || '#888888').slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+  const inkOn = (hex) => (lum(hex) > 0.55 ? '#111' : '#fff');
+  const segOf = (l) => (modelOf(`${l.make} ${l.model}`) || {}).seg || 'Other';
+  const cutIn = (l, days) => { const c = Market.lastChange(l); return c && c.delta < 0 && c.daysAgo <= days ? c : null; };
+
+  /* ----- Map: every state by price vs fair, days to sell or price cuts ----- */
+
+  const ATLAS_M = [
+    { id: 'gap', label: 'Price vs. fair', lo: 'Cheaper than fair', hi: 'Pricier than fair' },
+    { id: 'days', label: 'Days to sell', lo: 'Sells faster', hi: 'Sells slower' },
+    { id: 'cuts', label: 'Price cuts', lo: 'More cars cut', hi: 'Fewer cut' },
+  ];
+  let ATLAS = null;
+  function atlasStats() {
+    if (ATLAS) return ATLAS;
+    const deltas = Market.stateDeltas(LISTINGS, delta);
+    const sold = Market.groupBy(SOLD.filter((l) => l.condition !== 'New'), (l) => l.state);
+    const out = {};
+    for (const [st, g] of Market.groupBy(usedPriced(), (l) => l.state)) {
+      const s = sold.get(st) || [];
+      const cuts = g.filter((l) => cutIn(l, 7)).length;
+      out[st] = { n: g.length, delta: (deltas[st] || {}).delta, days: s.length >= 5 ? Market.median(s.map((l) => l.sold.daysToSell)) : null,
+        sold: s.length, cuts, cutShare: g.length ? cuts / g.length : null };
+    }
+    return (ATLAS = out);
+  }
+
+  function renderAtlas(params) {
+    const S = atlasStats();
+    const m = ATLAS_M.find((x) => x.id === params.get('m')) || ATLAS_M[0];
+    const origin = CTX.origin;
+    const asked = params.get('st');
+    const st = S[asked] ? asked : origin && S[origin[1]] ? origin[1] : Object.keys(S).sort((a, b) => S[b].n - S[a].n)[0];
+    const vals = Object.values(S);
+    const natDays = Market.median(vals.filter((x) => x.days != null).map((x) => x.days)) || 1;
+    const natCut = Market.median(vals.filter((x) => x.cutShare != null).map((x) => x.cutShare)) || 0.01;
+    const cell = (s) => {
+      const d = S[s];
+      if (!d || d.n < 5) return null;
+      let cls, value;
+      if (m.id === 'gap') { if (d.delta == null) return null; cls = deltaClass(d.delta); value = signedPct(d.delta, 1); }
+      else if (m.id === 'days') { if (d.days == null) return null; cls = paceClass(d.days / natDays - 1); value = `${Math.round(d.days)}d`; }
+      else { cls = paceClass(-(d.cutShare / natCut - 1)); value = pct(d.cutShare); }
+      return { cls, value, title: `${stateName(s)}: ${value}`, href: `#/atlas?m=${m.id}&st=${s}`, selected: s === st };
+    };
+    const d = S[st];
+    const picks = usedPriced().filter((l) => l.state === st && expected(l)).sort((a, b) => delta(a) - delta(b)).slice(0, 4);
+    const stat = (v, label) => `<div class="atlas-stat"><b>${v}</b><span>${label}</span></div>`;
+    setView('atlas', `<section class="section view-atlas">
+      ${viewNote()}
+      <div class="view-head"><div><p class="eyebrow">Used cars, state by state</p><h1>The market on a map</h1></div>
+        <div class="seg-tabs" role="tablist" aria-label="What the map shows">${ATLAS_M.map((x) => `<a role="tab" aria-selected="${x.id === m.id}" href="#/atlas?m=${x.id}&st=${st}">${esc(x.label)}</a>`).join('')}</div></div>
+      <div class="atlas-grid">
+        <div class="card atlas-map">${Charts.geoMap(cell, { labels: true, aria: `States shaded by ${m.label.toLowerCase()}` })}
+          <div class="legend diverging"><span><i class="key d-great"></i>${esc(m.lo)}</span><span><i class="key d-fair"></i>Typical</span><span><i class="key d-over"></i>${esc(m.hi)}</span><span class="muted small">Tap a state</span></div></div>
+        <aside class="card atlas-side" aria-label="${esc(stateName(st))}">
+          <p class="eyebrow">Selected state</p><h2>${esc(stateName(st))}</h2>
+          <div class="atlas-stats">
+            ${stat(d.delta != null ? signedPct(d.delta, 1) : '—', 'median vs. fair price')}
+            ${stat(d.days != null ? `${Math.round(d.days)}d` : '—', 'median days to sell')}
+            ${stat(num(d.cuts), 'price cuts this week')}
+            ${stat(num(d.n), 'used cars for sale')}
+          </div>
+          <p class="eyebrow">Priced lowest for what they are</p>
+          <ul class="rank-list">${picks.map((l) => { const t = marketText(l); return `<li><a href="#/car/${esc(l.id)}"><span><b>${esc(title(l))} ${esc(l.trim)}</b><small>${kMiles(l.miles)} · ${esc(l.city)}</small></span><span class="r"><b>${money(l.price)}</b><small class="good">${money(-t.diff)} below</small></span></a></li>`; }).join('') || '<li class="muted">No used cars with a fair price here yet.</li>'}</ul>
+          <a class="btn primary block" href="${searchHref({ state: st, condition: ['Used', 'Certified'] })}">Shop ${esc(stateName(st))} →</a>
+        </aside>
+      </div></section>`);
+  }
+
+  /* ----- Showroom: shop by factory paint and body ----- */
+
+  function renderShowroom(params) {
+    const used = usedPriced().filter((l) => expected(l));
+    const byPaint = new Map();
+    for (const l of used) { const p = byPaint.get(l.extColor) || { name: l.extColor, hex: l.extHex, n: 0 }; p.n++; byPaint.set(l.extColor, p); }
+    const paints = [...byPaint.values()].sort((a, b) => b.n - a.n).slice(0, 24);
+    const paint = byPaint.has(params.get('paint')) ? params.get('paint') : null;
+    const bodies = ['All', ...[...new Set(used.map((l) => l.body))].sort()];
+    const body = bodies.includes(params.get('body')) ? params.get('body') : 'All';
+    const href = (o) => { const q = new URLSearchParams(); const p = 'paint' in o ? o.paint : paint, b = o.body || body; if (p) q.set('paint', p); if (b !== 'All') q.set('body', b); const s = q.toString(); return `#/showroom${s ? '?' + s : ''}`; };
+    const all = used.filter((l) => (!paint || l.extColor === paint) && (body === 'All' || l.body === body));
+    // Near your ZIP first (250 miles); the whole country when that leaves too few to browse.
+    const near = CTX.origin ? all.filter((l) => distanceTo(l) <= 250) : [];
+    const local = near.length >= 6;
+    const pool = local ? near : all;
+    const cars = pool.sort((a, b) => delta(a) - delta(b)).slice(0, 24);
+    const card = (l) => {
+      const t = marketText(l), r = rarity(l), fg = inkOn(l.extHex), dist = distanceTo(l);
+      return `<a class="sr-card" href="#/car/${esc(l.id)}">
+        <div class="sr-paint" style="background:${esc(l.extHex)};color:${fg}">
+          <div class="sr-top"><span class="sr-model">${esc(l.model.length <= 3 ? `${l.make} ${l.model}` : l.model)}</span><span class="sr-year">${l.year}<br>${esc(l.make)}</span></div>
+          ${Charts.car(l.body, l.extHex, { label: `${l.extColor} ${l.model}`, cls: 'sr-art' })}
+        </div>
+        <div class="sr-body">
+          <div class="sr-row"><span>${esc(l.trim)} · ${kMiles(l.miles)}</span><b class="sr-price">${money(l.price)}</b></div>
+          <div class="sr-tags"><span class="sr-save">${money(-t.diff)} under fair</span><span class="sr-rare">${num(r.extCount)} of ${num(r.total)} ${esc(l.model)}s in this paint</span></div>
+          <span class="muted small">${esc(l.extColor)} · ${esc(l.city)}, ${esc(l.state)}${dist != null ? ` · ${num(dist)} mi` : ''}</span>
+        </div></a>`;
+    };
+    setView('showroom', `<section class="section view-showroom">
+      ${viewNote()}
+      <div class="view-head"><div><p class="eyebrow">${num(used.length)} used cars with a fair price</p><h1>Shop by paint</h1></div></div>
+      <div class="sr-paints" role="group" aria-label="Factory paints">${paints.map((p) => `<a href="${href({ paint: p.name === paint ? null : p.name })}" aria-pressed="${p.name === paint}" class="sr-chip" style="background:${esc(p.hex)};color:${inkOn(p.hex)}"><b>${num(p.n)}</b><span>${esc(p.name)}</span></a>`).join('')}</div>
+      <div class="sr-bar"><div class="seg-tabs" role="group" aria-label="Body style">${bodies.map((b) => `<a aria-selected="${b === body}" href="${href({ body: b })}">${esc(b === 'All' ? 'All' : b + 's')}</a>`).join('')}</div>
+        <span class="eyebrow">${num(pool.length)} match ${local ? 'within 250 mi of ' + esc(CTX.origin[0]) : 'nationwide'}${paint ? ` · ${esc(paint)} · <a href="${href({ paint: null })}">clear paint</a>` : ''} · biggest saving first</span></div>
+      <div class="sr-grid">${cars.map(card).join('') || `<p class="muted">Nothing in that paint and body right now. <a href="${searchHref({ q: (paint || '') + ' ' + (body === 'All' ? '' : body) })}">Search for it</a> and hunt it.</p>`}</div>
+    </section>`);
+  }
+
+  /* ----- Desk: the market as an index, with movers and your hunts ----- */
+
+  let DESK = null;
+  function deskData() {
+    if (DESK) return DESK;
+    const used = usedPriced();
+    const soldBy = Market.groupBy(SOLD.filter((l) => l.condition !== 'New'), segOf);
+    const steps = [90, 75, 60, 45, 30, 15, 0];
+    const snaps = steps.map((d) => Market.groupBy(Market.snapshot(LISTINGS, SOLD, d).filter((l) => l.condition !== 'New' && l.price > 0), segOf));
+    const rows = [];
+    for (const [seg, g] of Market.groupBy(used, segOf)) {
+      if (g.length < 20) continue;
+      const old = g.filter((l) => l.daysListed >= 30);
+      const now = Market.median(old.map((l) => l.price)), then = Market.median(old.map((l) => Market.priceOn(l, 30)));
+      const sold = soldBy.get(seg) || [];
+      const sold30 = sold.filter((l) => l.sold.daysAgo < 30).length;
+      rows.push({ seg, n: g.length, med: Market.median(g.map((l) => l.price)), chg: then ? now / then - 1 : 0,
+        days: sold.length ? Market.median(sold.map((l) => l.sold.daysToSell)) : null, supply: sold30 ? g.length / (sold30 / 30) : null,
+        spark: snaps.map((m) => Market.median(((m.get(seg)) || []).map((l) => l.price)) || 0) });
+    }
+    const old = used.filter((l) => l.daysListed >= 30);
+    const cuts = LISTINGS.map((l) => cutIn(l, 7)).filter(Boolean);
+    DESK = {
+      rows,
+      index: Market.median(used.map((l) => l.price)),
+      indexChg: Market.median(old.map((l) => l.price)) / Market.median(old.map((l) => Market.priceOn(l, 30))) - 1,
+      forSale: LISTINGS.length, sold30: SOLD.filter((l) => l.sold.daysAgo < 30).length,
+      cuts: cuts.length, avgCut: cuts.length ? Market.mean(cuts.map((c) => -c.delta)) : 0,
+      movers: Market.priceMovers(LISTINGS, 20),
+    };
+    return DESK;
+  }
+  const sparkSvg = (vals, cls) => {
+    const v = vals.filter((x) => x > 0);
+    if (v.length < 2) return '';
+    const lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1;
+    const pts = vals.map((x, i) => `${(i * (120 / (vals.length - 1))).toFixed(1)},${(26 - ((x || lo) - lo) / span * 22).toFixed(1)}`).join(' ');
+    return `<svg class="spark ${cls}" viewBox="0 0 120 30" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+  };
+  const DESK_COLS = [['med', 'Median'], ['chg', '30-day change'], ['days', 'Days to sell'], ['supply', 'Days of supply'], ['n', 'For sale']];
+
+  function renderDesk(params) {
+    const D = deskData();
+    const key = DESK_COLS.some((c) => c[0] === params.get('sort')) ? params.get('sort') : 'chg';
+    const dir = params.get('dir') === 'desc' ? -1 : 1;
+    const rows = [...D.rows].sort((a, b) => ((a[key] == null ? Infinity : a[key]) - (b[key] == null ? Infinity : b[key])) * dir);
+    const chg = (v) => `<span class="${v < 0 ? 'good' : v > 0 ? 'warn' : ''}">${v < 0 ? '▼' : v > 0 ? '▲' : ''} ${signedPct(v, 1)}</span>`;
+    const movers = D.movers.length > 6 ? D.movers.slice(0, 4).concat(D.movers.slice(-2).reverse()) : D.movers;
+    const tape = [...D.movers].sort((a, b) => b.count - a.count).slice(0, 12);
+    const hunts = store.get().saved;
+    setView('desk', `<div class="tape" aria-label="Biggest models, 30-day price change"><div class="tape-inner">${tape.map((m) => `<a href="${searchHref({ model: `${m.make} ${m.model}`, year: m.year })}">${m.year} ${esc(`${m.make} ${m.model}`).toUpperCase()} <b>${money(m.fNow.at(m.mid))}</b> <span class="${m.change < 0 ? 'good' : 'warn'}">${m.change < 0 ? '▼' : '▲'} ${money(Math.abs(m.change))}</span></a>`).join('')}</div></div>
+      <section class="section view-desk">
+      ${viewNote()}
+      <div class="view-head"><div><p class="eyebrow">The used market as an index · ▼ means cheaper for buyers</p><h1>Market desk</h1></div></div>
+      <div class="desk-kpis">
+        <div class="card"><span class="eyebrow">Median used price</span><b>${money(D.index)}</b>${chg(D.indexChg)} <small class="muted">30 days</small></div>
+        <div class="card"><span class="eyebrow">Cars for sale</span><b>${num(D.forSale)}</b><small class="muted">new and used</small></div>
+        <div class="card"><span class="eyebrow">Sold · 30 days</span><b>${num(D.sold30)}</b><small class="muted">across the country</small></div>
+        <div class="card"><span class="eyebrow">Price cuts · 7 days</span><b>${num(D.cuts)}</b><small class="muted">average ${money(D.avgCut)}</small></div>
+      </div>
+      <div class="desk-grid">
+        <div class="card desk-table"><div class="desk-head"><h2>Segment index</h2><span class="muted small">Tap a column to sort</span></div>
+          <div class="table-scroll"><table><thead><tr><th scope="col">Segment</th>${DESK_COLS.map(([k, label]) => `<th scope="col"><a class="sort${k === key ? ' on' : ''}" href="#/desk?sort=${k}&dir=${k === key && dir > 0 ? 'desc' : 'asc'}">${label}${k === key ? (dir > 0 ? ' ↑' : ' ↓') : ''}</a></th>`).join('')}<th scope="col">90 days</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr><th scope="row"><a href="${searchHref({ q: r.seg, condition: ['Used', 'Certified'] })}">${esc(r.seg)}</a></th><td>${money(r.med)}</td><td>${chg(r.chg)}</td><td>${r.days != null ? Math.round(r.days) + 'd' : '—'}</td><td>${r.supply != null ? Math.round(r.supply) + 'd' : '—'}</td><td>${num(r.n)}</td><td>${sparkSvg(r.spark, r.chg < 0 ? 'good' : 'warn')}</td></tr>`).join('')}</tbody></table></div></div>
+        <aside class="desk-side">
+          <div class="card"><div class="desk-head"><h2>Biggest 30-day moves</h2></div>
+            <ul class="rank-list">${movers.map((m) => `<li><a href="${searchHref({ model: `${m.make} ${m.model}`, year: m.year, condition: ['Used', 'Certified'] })}"><span><b>${m.year} ${esc(m.make)} ${esc(m.model)}</b><small>${plural(m.count, 'listing')} · at ${kMiles(m.mid)}</small></span><span class="r"><b class="${m.change < 0 ? 'good' : 'warn'}">${m.change < 0 ? '▼' : '▲'} ${money(Math.abs(m.change))}</b><small>${money(m.fNow.at(m.mid))}</small></span></a></li>`).join('')}</ul></div>
+          <div class="card desk-hunts"><div class="desk-head"><h2>Your hunts</h2><a href="#/saved">All →</a></div>
+            ${hunts.length ? `<ul class="rank-list">${hunts.slice(0, 5).map((h) => { const n = huntNewCount(h); return `<li><a href="#/hunt/${esc(h.id)}"><span><b>${esc(h.name)}</b></span><span class="r">${n ? `<b class="good">${n} new</b>` : '<small class="muted">Quiet</small>'}</span></a></li>`; }).join('')}</ul>` : `<p class="muted">Search for anything and press <b>Hunt this</b>. Gridline watches it and tells you when a match lists or drops its price.</p>`}</div>
+        </aside>
+      </div></section>`);
+  }
+
+  /* ----- The side rail: your ZIP, counts, and the design system ----- */
+
+  const DESIGN_SYSTEMS = [
+    { id: '', name: 'Gridline', note: 'Today’s look' },
+    { id: 'paddock', scheme: 'light', name: 'Paddock', note: 'Motorsport timing', font: 'Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600;700' },
+    { id: 'glovebox', scheme: 'light', name: 'Glovebox', note: 'Soft and friendly', font: 'Plus+Jakarta+Sans:wght@400;500;600;700;800' },
+    { id: 'blueprint', scheme: 'dark', name: 'Blueprint', note: 'Engineering drawing', font: 'Chivo:wght@400;600;800&family=Chivo+Mono:wght@400;500;700' },
+    { id: 'concours', scheme: 'dark', name: 'Concours', note: 'Collector’s catalogue', font: 'Bodoni+Moda:opsz,wght@6..96,400;6..96,600&family=Jost:wght@300;400;500;600' },
+    { id: 'signal', scheme: 'light', name: 'Signal', note: 'Swiss, search-first', font: 'Schibsted+Grotesk:wght@400;500;600;700;800;900' },
+  ];
+  function applyDesignSystem(id) {
+    const ds = DESIGN_SYSTEMS.find((d) => d.id === id) || DESIGN_SYSTEMS[0];
+    // A design system brings its own light or dark palette; Gridline's own look follows your theme.
+    if (ds.id) { document.documentElement.dataset.ds = ds.id; document.documentElement.dataset.theme = ds.scheme; }
+    else { delete document.documentElement.dataset.ds; applyTheme(store.get().theme); }
+    if (ds.font && !document.getElementById('ds-font-' + ds.id)) {
+      const link = document.createElement('link');
+      link.id = 'ds-font-' + ds.id; link.rel = 'stylesheet';
+      link.href = `https://fonts.googleapis.com/css2?family=${ds.font}&display=swap`;
+      document.head.appendChild(link);
+    }
+    document.querySelectorAll('[data-ds-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.dsPick === ds.id)));
+  }
+  function railHtml() {
+    return `<div class="rail-ds"><p class="rail-label">Design system <span class="rail-draft">Draft</span></p>
+      <div class="ds-pick" role="group" aria-label="Design system">${DESIGN_SYSTEMS.map((d) => `<button type="button" data-ds-pick="${d.id}" aria-pressed="false" title="${esc(d.note)}"><i class="ds-dot ds-dot-${d.id || 'gridline'}" aria-hidden="true"></i>${esc(d.name)}</button>`).join('')}</div></div>`;
+  }
+  function updateRail() {
+    const z = document.getElementById('rail-zip');
+    if (!z) return;
+    const o = CTX.origin;
+    z.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span>${o ? `${esc(o[0])}, ${esc(o[1])} · ${esc(o[4])}` : 'Set your ZIP'}</span>`;
+  }
+  (function mountRail() {
+    const slot = document.getElementById('rail-ds');
+    if (slot) slot.innerHTML = railHtml();
+    document.getElementById('rail') && document.getElementById('rail').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-ds-pick]');
+      if (!b) return;
+      store.update((s) => { s.prefs.ds = b.dataset.dsPick; });
+      applyDesignSystem(b.dataset.dsPick);
+    });
+    applyDesignSystem(prefs().ds || '');
+    updateRail();
+  })();
+
   /* ---------- Router ---------- */
 
   function route() {
@@ -4358,6 +4596,9 @@
       return renderHome('insights');
     }
     if (parts.length === 1 && HOME_CATS.some((c) => c.id === parts[0])) return renderHome(parts[0]);
+    if (parts[0] === 'atlas') return renderAtlas(params);
+    if (parts[0] === 'showroom') return renderShowroom(params);
+    if (parts[0] === 'desk') return renderDesk(params);
     if (parts[0] === 'search') return renderSearch(params);
     if (parts[0] === 'car') return renderCar(parts[1], params);
     if (parts[0] === 'vin') return renderVin(parts[1] || '');
@@ -4379,6 +4620,7 @@
   }
 
   applyTheme(store.get().theme);
+  applyDesignSystem(prefs().ds || '');
   applyModeUi();
   mountSearchBox(document.getElementById('header-search'), { size: 'sm', placeholder: 'Search…' });
   footerLinks();
