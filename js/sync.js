@@ -266,7 +266,7 @@
     try { meta = JSON.parse(o.storage.get() || 'null'); } catch (e) { meta = null; }
     if (meta && !normalizeCode(meta.code)) { if (meta.kept && meta.kept.doc) kept = meta.kept; meta = null; }
 
-    const persist = () => { try { if (meta) o.storage.set(JSON.stringify(meta)); else if (kept) o.storage.set(JSON.stringify({ code: null, kept })); else o.storage.remove(); } catch (e) { /* private mode */ } };
+    const persist = () => { try { if (meta) { meta.savedAt = Date.now(); o.storage.set(JSON.stringify(meta)); } else if (kept) o.storage.set(JSON.stringify({ code: null, kept })); else o.storage.remove(); } catch (e) { /* private mode */ } };
     const stop = () => { if (meta) kept = { doc: meta.doc, shadow: meta.shadow }; meta = null; keys = null; };
     const fresh = (code, dirty) => { const k = kept; kept = null; return { code, version: null, doc: k ? k.doc : emptyDoc(), shadow: k ? k.shadow : null, syncedAt: null, dirty, _kept: k }; };
     const tell = (p, err) => { phase = p; problem = err || null; if (o.onStatus) o.onStatus(); };
