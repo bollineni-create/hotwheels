@@ -166,6 +166,8 @@ button, input, select { font: inherit; color: inherit; }
 .sb-kbd { margin-right: 14px; border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; font: 600 .8rem var(--mono); color: var(--muted); }
 .searchbox.sm { box-shadow: none; background: var(--surface-2); border-color: transparent; }
 .sb-list { position: absolute; z-index: 50; top: calc(100% + 6px); left: 0; right: 0; margin: 0; padding: 6px; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); max-height: 420px; overflow: auto; text-align: left; }
+/* In the top layer (popover) the list is placed by JS against the search box, in viewport coordinates. */
+.sb-list[popover] { position: fixed; inset: auto; right: auto; bottom: auto; color: var(--text); }
 .sb-list li { display: flex; gap: 12px; align-items: center; padding: 9px 10px; border-radius: 9px; cursor: pointer; }
 .sb-list li.active, .sb-list li:hover { background: var(--surface-2); }
 .sb-i { width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); display: grid; place-items: center; color: var(--muted); flex: none; font-size: .9rem; }
