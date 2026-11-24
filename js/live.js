@@ -110,13 +110,13 @@
   const TIER_TTL = 7 * 864e5;
   const PRIORITY = { first: 0, page: 1, later: 2, background: 3 };
   // On the site's shared key, bollineni.co's relay (api/relay.js) also limits each visitor to 30
-  // uncached calls a minute. That limit is the relay's, not Visor's: it is paced under here and its
-  // refusals never teach the lane a tier. (They used to, and walked a visitor down to 3 requests per
-  // 10 s for a week, so Your Market took half a minute to load.)
-  const SHARED_KEY = '__server__';
-  const RELAY_CAPS = { cap10: 15, cap60: 28 };
+  // uncached calls a minute. That limit is the relay's, not Visor's, so its refusals never teach the
+  // lane a tier (they used to, and walked a visitor down to 3 requests per 10 s for a week). It isn't
+  // paced for ahead of time either: most calls are answered by the CDN and never reach the relay, so
+  // counting every call against 30 a minute held a fresh home page for over a minute. A refusal just
+  // pauses for the seconds it names and the request tries again.
   const isRelayRefusal = (r, message) => r.status === 429 && /^Too many requests\. Retry after \d+ seconds\.$/.test(message || '');
-  const capsOf = (L) => (!L.shared ? L.caps : L.caps ? { cap10: Math.min(L.caps.cap10, RELAY_CAPS.cap10), cap60: Math.min(L.caps.cap60, RELAY_CAPS.cap60) } : RELAY_CAPS);
+  const capsOf = (L) => L.caps;
   const maxInflight = (L) => { const c = capsOf(L); return !c ? 4 : c.cap10 >= 200 ? 16 : c.cap10 >= 40 ? 8 : 4; };
   const spacingMs = (L) => { const c = capsOf(L); return c && c.cap10 >= 40 ? 25 : 150; }; // between request starts, so a queue never arrives as one burst
   // tier2: tiers learned before relay refusals were told apart can be far too low, so they're dropped.
@@ -254,7 +254,6 @@
 
   async function fetchJson(p, path, query, key, cacheKey, priority) {
     const L = lane(p);
-    L.shared = key === SHARED_KEY;
     for (let attempt = 0; ; attempt++) {
       await slot(p, priority);
       let r;
