@@ -624,11 +624,37 @@
       open(items.length > 0);
       setActive(active);
     }
+    // Suggestions open in the browser's top layer (popover), which sits above every z-index on the
+    // page. Safari paints the sticky, backdrop-blurred tab bar over the hero no matter how the hero's
+    // z-index is raised, so stacking-order fixes alone can't keep the list on top there.
+    const topLayer = typeof list.showPopover === 'function';
+    if (topLayer) { list.setAttribute('popover', 'manual'); list.hidden = false; }
+    const place = () => {
+      const r = form.getBoundingClientRect();
+      list.style.left = `${r.left}px`;
+      list.style.width = `${r.width}px`;
+      list.style.top = `${r.bottom + 6}px`;
+      list.style.maxHeight = `${Math.max(160, Math.min(420, innerHeight - r.bottom - 18))}px`;
+    };
+    const follow = () => (form.isConnected ? place() : open(false));
     function open(v) {
-      list.hidden = !v;
-      // Lift the hero over the sticky tab bar while suggestions show (a class, since Safari doesn't reliably re-run :has() on [hidden]).
-      list.closest('.home-top')?.classList.toggle('sb-open', v);
       input.setAttribute('aria-expanded', String(v));
+      if (!topLayer) {
+        list.hidden = !v;
+        list.closest('.home-top')?.classList.toggle('sb-open', v);
+        return;
+      }
+      const isOpen = list.matches(':popover-open');
+      if (v) {
+        place();
+        if (!isOpen) list.showPopover();
+        addEventListener('scroll', follow, true);
+        addEventListener('resize', follow);
+      } else {
+        if (isOpen) list.hidePopover();
+        removeEventListener('scroll', follow, true);
+        removeEventListener('resize', follow);
+      }
     }
     function setActive(i) {
       active = i;
