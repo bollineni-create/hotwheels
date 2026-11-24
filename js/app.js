@@ -2245,7 +2245,7 @@
       ${homeTopHtml()}
       ${catNavHtml(homeCats())}
       <div id="home-tab">${tabHtml()}</div>`);
-    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Search models, VINs, dealers, or saved searches…', placeholders: ['Search models, VINs or dealers…', 'Search cars or VINs…', 'Search cars…'] });
+    mountSearchBox(document.getElementById('hero-search'), { size: 'lg', placeholder: 'Ask anything: “luxury EVs under 25k near me”, a model or a VIN', placeholders: ['Try “luxury EVs under 25k near me”', 'Try “aston martins near me”', 'Try “EVs under 25k”', 'Ask for any car…'] });
     mountTab();
     if (!zip) requestAnimationFrame(() => { const i = document.getElementById('zip-input'); if (i && matchMedia('(min-width: 861px)').matches) i.focus(); });
     window.scrollTo(0, 0);

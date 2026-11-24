@@ -706,3 +706,35 @@ test('natural-language search understands near me, nicknames and categories', ()
   r = NLQ.parse('minivan', vocab);
   assert.deepEqual(r.filters.body, ['Minivan']);
 });
+
+test('natural-language search ignores filler words and reads more budget phrasings', () => {
+  const v = NLQ.build({ models: [{ make: 'Mercedes-Benz', model: 'G-Class' }, { make: 'Chevrolet', model: 'Corvette' }], cities: [], makes: [] });
+  let r = NLQ.parse('what is the cheapest ev near me', v);
+  assert.deepEqual(r.filters.fuel, ['Electric']);
+  assert.equal(r.filters.nearMe, true);
+  assert.equal(r.rest, '');
+
+  r = NLQ.parse('show me the best muscle cars around 30k', v);
+  assert.deepEqual(r.filters.make, ['Chevrolet', 'Dodge', 'Ford']);
+  assert.deepEqual(r.filters.body, ['Coupe', 'Convertible']);
+  assert.equal(r.filters.priceMin, 25500);
+  assert.equal(r.filters.priceMax, 34500);
+  assert.equal(r.rest, '');
+
+  r = NLQ.parse('g wagon 50k or more', v);
+  assert.deepEqual(r.filters.model, ['Mercedes-Benz G-Class']);
+  assert.equal(r.filters.priceMin, 50000);
+
+  r = NLQ.parse('vette for 40k', v);
+  assert.deepEqual(r.filters.model, ['Chevrolet Corvette']);
+  assert.equal(r.filters.priceMax, 40000);
+
+  r = NLQ.parse('commuter cars 15k budget', v);
+  assert.equal(r.filters.priceMax, 15000);
+  assert.deepEqual(r.filters.body, ['Sedan']);
+
+  // A bare year next to "for" stays a year, not a $2,022 budget.
+  r = NLQ.parse('tesla for 2022', v);
+  assert.deepEqual(r.filters.year, ['2022']);
+  assert.equal(r.filters.priceMax, undefined);
+});
