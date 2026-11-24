@@ -800,7 +800,7 @@
     const cat = cats.find((c) => c.id === id) || HOME_CATS.find((c) => c.id === id);
     return `<div class="insight-head cat-head">
         <div><h2>${(o && o.title) || esc(cat.title)}</h2>${o && o.eyebrow ? `<p class="eyebrow">${o.eyebrow}</p>` : ''}</div>
-        ${o && o.extra ? `<div class="cat-switch">${o.extra}</div>` : ''}
+        <div class="cat-switch">${(o && o.extra) || ''}${tabPillsHtml(id)}</div>
       </div>`;
   }
   const catNavHtml = (cats) => `<nav class="cat-nav" aria-label="Home sections"><div class="cat-nav-inner">${
@@ -834,11 +834,26 @@
 
   // The heading row. The pills name the panels either side of this one in the ring; while the next
   // panel is due to come around on its own, its pill wears a ring that fills up.
+  // Every tab in the strip, in strip order: the carousel's panels, then the sections.
+  function tabRing() {
+    return homePanels().map((p) => ({ id: p.id, label: p.label(), route: p.route, panel: true }))
+      .concat(homeCats().filter((c) => c.id !== 'insights').map((c) => ({ id: c.id, label: c.short, route: c.id, panel: false })));
+  }
+  // The ‹ previous and next › pills walk the whole strip and wrap at the ends. Between two panels
+  // they turn the carousel in place; anywhere else they switch tabs.
+  function tabPillsHtml(id) {
+    const ring = tabRing(), n = ring.length, i = ring.findIndex((t) => t.id === id);
+    if (i < 0 || n < 2) return '';
+    const here = ring[i];
+    const pill = (t, dir) => {
+      const inPlace = here.panel && t.panel;
+      const target = inPlace ? `data-action="panel" data-panel="${t.id}"` : `data-action="tab" data-tab="${t.id}"`;
+      return `<a class="cat-pill${dir > 0 ? ' next' : ''}" href="#/${t.route}" ${target} aria-label="${dir < 0 ? 'Previous' : 'Next'}: ${esc(t.label)}">${dir < 0 ? '<span aria-hidden="true">‹</span> ' : ''}${esc(t.label)}${dir > 0 ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
+    };
+    return (n > 2 ? pill(ring[(i + n - 1) % n], -1) : '') + pill(ring[(i + 1) % n], 1);
+  }
   function marketHeadHtml() {
-    const panels = homePanels();
-    const n = panels.length, i = panels.indexOf(panelById(PANEL.id));
-    const pill = (p, dir) => `<a class="cat-pill${dir > 0 ? ' next' : ''}" href="#/${p.route}" data-action="panel" data-panel="${p.id}" aria-label="${dir < 0 ? 'Previous' : 'Next'}: ${esc(p.label())}">${dir < 0 ? '<span aria-hidden="true">‹</span> ' : ''}${esc(p.label())}${dir > 0 ? ' <span aria-hidden="true">›</span>' : ''}</a>`;
-    const pills = (n > 2 ? pill(panels[(i + n - 1) % n], -1) : '') + (n > 1 ? pill(panels[(i + 1) % n], 1) : '');
+    const pills = tabPillsHtml(panelById(PANEL.id).id);
     const eyebrow = isLive()
       ? `Live · ${esc(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(homeZip() ? placeLabel(homeZip()) : 'nationwide')}`
       : `Week of ${esc(weekOf)}`;
@@ -883,6 +898,8 @@
   function startPanelCycle() {
     stopPanelCycle();
     if (!PANEL.auto || !document.getElementById('market-panel') || homePanels().length < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const nextPill = document.querySelector('#market-head .cat-pill.next');
+    if (!nextPill || nextPill.dataset.action !== 'panel') return;
     let elapsed = 0, last = performance.now();
     const tick = (now) => {
       if (view.name !== 'home') return;
