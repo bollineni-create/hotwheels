@@ -505,6 +505,8 @@
   // Where that route doesn't exist (GitHub Pages, the Mac app, a local server) the search
   // quietly falls back to the parser.
   let ASK_OK = null; // false once the route is known to be missing or off
+  // Bumped when the server's prompt changes, so the CDN's cached answers from the old prompt aren't reused.
+  const ASK_VERSION = 2;
   const ASK_CACHE = new Map();
   // Same normalizing as the server, so a repeat question is the same cached URL.
   const askKey = (q) => String(q).toLowerCase().replace(/\s+/g, ' ').replace(/[?!.]+$/, '').trim();
@@ -519,7 +521,7 @@
     const k = askKey(q);
     if (ASK_CACHE.has(k)) return ASK_CACHE.get(k);
     let r;
-    try { r = await fetch('api/ask?q=' + encodeURIComponent(k), { headers: { Accept: 'application/json' } }); }
+    try { r = await fetch('api/ask?v=' + ASK_VERSION + '&q=' + encodeURIComponent(k), { headers: { Accept: 'application/json' } }); }
     catch (e) { ASK_OK = false; throw new Error('off'); }
     const data = await r.json().catch(() => null);
     if (r.status === 429) throw new Error((data && data.error) || 'Too many questions for now.');
@@ -535,8 +537,10 @@
     const set = (k, v) => { if (v && v.length) f[k] = v; };
     const models = (a.models || []).map((m) => `${m.make} ${m.model}`);
     set('model', models);
-    if (!models.length) set('make', a.makes);
-    set('body', a.body); set('fuel', a.fuel); set('drivetrain', a.drivetrain); set('transmission', a.transmission);
+    // Picked models already say the body style; adding one too can hide a model the source files
+    // differently (an Outback listed as an SUV, not a wagon).
+    if (!models.length) { set('make', a.makes); set('body', a.body); }
+    set('fuel', a.fuel); set('drivetrain', a.drivetrain); set('transmission', a.transmission);
     set('condition', a.condition); set('colorFamily', a.colors); set('features', a.features); set('state', a.states);
     if (a.yearMin || a.yearMax) {
       const hi = a.yearMax || CURRENT_YEAR + 1, lo = a.yearMin || hi - 20;
@@ -545,6 +549,13 @@
     }
     for (const k of ['priceMin', 'priceMax', 'milesMax', 'radius']) if (a[k] != null) f[k] = a[k];
     if (a.near) f.near = a.near; else if (a.nearMe) f.nearMe = true;
+    // A question with no place starts from your market, closest first, like the rest of Gridline.
+    // The chip comes off in one tap for a nationwide search.
+    else if (!(a.states && a.states.length) && homeZip()) {
+      f.near = homeZip();
+      f.radius = homeRadius();
+      if (!a.sort) f.sort = 'distance';
+    }
     if (a.sort && ASK_SORT[a.sort]) f.sort = ASK_SORT[a.sort];
     if (a.belowMarket) f.belowMarket = true;
     return { filters: f, understood: [a.note || 'Your question'], rest: '' };
@@ -2369,6 +2380,25 @@
       const parsed = NLQ.parse(q.value, vocab());
       const typed = q.value.trim();
       document.getElementById('nl-hint').hidden = true;
+      // A question the parser can't read narrows the current search through Claude.
+      if (needsAsk(typed, parsed)) {
+        toast('Reading your question…');
+        askAI(typed).then((a) => {
+          if (a.offTopic) throw new Error('That doesn’t look like a car search.');
+          const asked = askToParsed(a);
+          withNearMe(asked, () => {
+            const f = Object.assign({}, S.f, { ex: S.f.ex });
+            for (const k of ARRAY_KEYS) f[k] = [...(S.f[k] || [])];
+            mergeParsed(f, asked);
+            f.q = '';
+            location.hash = '#/search?' + paramsFromFilters(f).toString() + (a.note ? '&note=' + encodeURIComponent(a.note) : '');
+          });
+        }).catch((e) => {
+          if (e.message !== 'off') toast(e.message);
+          updateFilters((f) => { f.q = typed; });
+        });
+        return;
+      }
       withNearMe(parsed, () => {
         updateFilters((f) => {
           mergeParsed(f, parsed);
