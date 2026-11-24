@@ -499,6 +499,71 @@
     </article>`;
   }
 
+  /* ---------- Ask anything ---------- */
+  // The free parser in nlq.js reads most searches. A question it can't fully read goes to
+  // Claude through bollineni.co (/gridline/api/ask), which hands back Gridline filters.
+  // Where that route doesn't exist (GitHub Pages, the Mac app, a local server) the search
+  // quietly falls back to the parser.
+  let ASK_OK = null; // false once the route is known to be missing or off
+  const ASK_CACHE = new Map();
+  // Same normalizing as the server, so a repeat question is the same cached URL.
+  const askKey = (q) => String(q).toLowerCase().replace(/\s+/g, ' ').replace(/[?!.]+$/, '').trim();
+  function needsAsk(q, parsed) {
+    if (ASK_OK === false || location.protocol === 'file:') return false;
+    const t = q.trim();
+    if (t.split(/\s+/).length < 2 || t.length > 240) return false;
+    if (/^[A-HJ-NPR-Z0-9*?_]{11,17}$/i.test(t.replace(/[\s-]/g, ''))) return false;
+    return Boolean(parsed.rest) || !parsed.understood.length;
+  }
+  async function askAI(q) {
+    const k = askKey(q);
+    if (ASK_CACHE.has(k)) return ASK_CACHE.get(k);
+    let r;
+    try { r = await fetch('api/ask?q=' + encodeURIComponent(k), { headers: { Accept: 'application/json' } }); }
+    catch (e) { ASK_OK = false; throw new Error('off'); }
+    const data = await r.json().catch(() => null);
+    if (r.status === 429) throw new Error((data && data.error) || 'Too many questions for now.');
+    if (!r.ok || !data || typeof data !== 'object') { if (r.status !== 502) ASK_OK = false; throw new Error('off'); }
+    ASK_OK = true;
+    ASK_CACHE.set(k, data);
+    return data;
+  }
+  const ASK_SORT = { 'best-deal': 'best', 'price-asc': 'price-asc', 'price-desc': 'price-desc', 'miles-asc': 'miles-asc', 'year-desc': 'year-desc', newest: 'newest' };
+  // Claude's answer, in the same shape NLQ.parse returns.
+  function askToParsed(a) {
+    const f = { ex: {} };
+    const set = (k, v) => { if (v && v.length) f[k] = v; };
+    const models = (a.models || []).map((m) => `${m.make} ${m.model}`);
+    set('model', models);
+    if (!models.length) set('make', a.makes);
+    set('body', a.body); set('fuel', a.fuel); set('drivetrain', a.drivetrain); set('transmission', a.transmission);
+    set('condition', a.condition); set('colorFamily', a.colors); set('features', a.features); set('state', a.states);
+    if (a.yearMin || a.yearMax) {
+      const hi = a.yearMax || CURRENT_YEAR + 1, lo = a.yearMin || hi - 20;
+      f.year = [];
+      for (let y = Math.max(lo, hi - 40); y <= hi; y++) f.year.push(String(y));
+    }
+    for (const k of ['priceMin', 'priceMax', 'milesMax', 'radius']) if (a[k] != null) f[k] = a[k];
+    if (a.near) f.near = a.near; else if (a.nearMe) f.nearMe = true;
+    if (a.sort && ASK_SORT[a.sort]) f.sort = ASK_SORT[a.sort];
+    if (a.belowMarket) f.belowMarket = true;
+    return { filters: f, understood: [a.note || 'Your question'], rest: '' };
+  }
+  // Runs the question through Claude, then opens the results with a line on how it was read.
+  async function askAndGo(q, fallbackHref) {
+    toast('Reading your question…');
+    try {
+      const a = await askAI(q);
+      if (a.offTopic) { toast('That doesn’t look like a car search, so here are plain matches.'); location.hash = fallbackHref; return; }
+      const parsed = askToParsed(a);
+      const note = a.note ? '&note=' + encodeURIComponent(a.note) : '';
+      withNearMe(parsed, () => { location.hash = nlHref(parsed) + note; });
+    } catch (e) {
+      if (e.message !== 'off') toast(e.message);
+      location.hash = fallbackHref;
+    }
+  }
+
   /* ---------- Search box with typeahead ---------- */
 
   function suggestions(raw) {
@@ -566,6 +631,10 @@
       for (const s of store.get().saved.filter((s) => hit(s.name)).slice(0, 2)) out.push({ icon: '🎯', label: s.name, sub: 'Hunt', href: '#/hunt/' + s.id });
     }
     out.push({ icon: '↵', label: `Search all listings for “${q}”`, sub: 'Matches model, trim, color, feature, dealer, city or VIN', href: searchHref({ q }) });
+    if (needsAsk(q, parsed)) {
+      const fallback = out.find((o) => o.parsed) || out[out.length - 1];
+      out.unshift({ icon: '✦', label: `Ask Gridline: “${q}”`, sub: 'Reads the whole question, like a person would', ask: q, href: fallback.href });
+    }
     return out.slice(0, 10);
   }
 
@@ -666,7 +735,8 @@
       const s = items[i];
       open(false);
       input.blur();
-      if (s && s.parsed && s.parsed.filters.nearMe && !homeZip()) withNearMe(s.parsed, () => { location.hash = nlHref(s.parsed); });
+      if (s && s.ask) askAndGo(s.ask, s.href);
+      else if (s && s.parsed && s.parsed.filters.nearMe && !homeZip()) withNearMe(s.parsed, () => { location.hash = nlHref(s.parsed); });
       else if (s) location.hash = s.href;
       else if (input.value.trim()) location.hash = searchHref({ q: input.value.trim() });
     }
@@ -2262,7 +2332,7 @@
     ['sold-recent', 'Recently sold'], ['sold-fastest', 'Sold fastest']];
 
   function renderSearch(params) {
-    S = { f: filtersFromParams(params), shown: PAGE, layout: ['grid', 'table', 'map'].includes(params.get('layout')) ? params.get('layout') : S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
+    S = { f: filtersFromParams(params), note: params.get('note') || '', shown: PAGE, layout: ['grid', 'table', 'map'].includes(params.get('layout')) ? params.get('layout') : S ? S.layout : 'grid', filtersOpen: false, exMode: {}, finder: '' };
     setView('search', `
       <div class="search-layout">
         <aside class="filters" id="filters" aria-label="Filters"></aside>
@@ -2657,7 +2727,7 @@
       S.f.belowMarket || S.f.dropsOnly ? '“Below market only” and “Has price cuts” apply to demo data only.' : '',
     ].filter(Boolean) : [];
     const head = `${activeChips()}
-      <div class="results-summary" aria-live="polite">${sentenceHtml(sum.count)}
+      <div class="results-summary" aria-live="polite">${S.note ? `<p class="ask-note"><span aria-hidden="true">✦</span> ${esc(S.note)}</p>` : ''}${sentenceHtml(sum.count)}
         <p class="muted">${esc(describeFilters(S.f))}${when ? ` · as of ${dateDaysAgo(when)}` : ''}${live ? ` · <span class="live-src">Live listings</span>` : ''}</p>
         ${liveNotes.map((n) => `<p class="live-note">${n}</p>`).join('')}
       </div>`;
