@@ -51,6 +51,14 @@
     'alfa romeo': 'Alfa Romeo', alfa: 'Alfa Romeo', aston: 'Aston Martin', 'aston martin': 'Aston Martin',
     'land rover': 'Land Rover', mclaren: 'McLaren', 'mc laren': 'McLaren', 'mini cooper': 'MINI',
   };
+  // What people call a model, matched against the model names the data actually has.
+  const MODEL_NICKNAMES = [
+    [/^G[- ]?Class$/i, ['g wagon', 'g-wagon', 'gwagon', 'g wagen', 'g-wagen', 'g class']], [/^Corvette$/i, ['vette']],
+    [/^Range Rover$/i, ['rangie']], [/^Wrangler$/i, ['jeep wrangler']], [/^Civic Type R$/i, ['type r', 'ctr']],
+    [/^GT-R$/i, ['gtr', 'godzilla']], [/^Model S$/i, ['model s']], [/^Cybertruck$/i, ['cyber truck']],
+    [/^Mustang Mach-E$/i, ['mach e', 'mach-e', 'mache']], [/^F-150 Lightning$/i, ['lightning', 'f150 lightning']],
+    [/^F-150$/i, ['f150', 'f 150']], [/^Bronco$/i, ['bronco']], [/^4Runner$/i, ['4 runner', 'forerunner']],
+  ];
   // Category words that stand for a set of makes, bodies or fuels. Each only applies when
   // the query didn't already name that thing ("luxury bmw" stays BMW).
   const LUXURY = ['Acura', 'Alfa Romeo', 'Aston Martin', 'Audi', 'Bentley', 'BMW', 'Cadillac', 'Genesis', 'Infiniti', 'Jaguar', 'Land Rover',
@@ -62,14 +70,21 @@
     { re: /\b(luxury|luxurious|premium|high[- ]end|upscale|fancy)\b/, key: 'make', values: LUXURY, label: 'luxury brands' },
     { re: /\b(reliable|dependable)\b/, key: 'make', values: RELIABLE, label: 'reliable brands' },
     { re: /\b(sports? ?cars?|sporty|performance|fast)\b/, key: 'body', values: ['Coupe', 'Convertible'], label: 'sports cars' },
+    { re: /\bmuscle ?cars?\b/, key: 'make', values: ['Chevrolet', 'Dodge', 'Ford'], label: 'muscle cars', body: ['Coupe', 'Convertible'] },
     { re: /\bfamily( cars?| vehicles?| haulers?)?\b/, key: 'body', values: ['SUV', 'Minivan'], label: 'family haulers' },
+    { re: /\b(commuters?|daily drivers?|first cars?|student cars?)\b/, key: 'body', values: ['Sedan'], label: 'commuters' },
     { re: /\b(fuel[- ]efficient|efficient|economical|good (on gas|gas mileage|mpg)|high mpg|gas savers?|great mpg)\b/, key: 'fuel', values: ['Hybrid', 'Plug-in Hybrid', 'Electric'], label: 'hybrids & EVs' },
     { re: /\b(off[- ]?road(ers?|ing)?|overland(ing)?|trail rigs?)\b/, key: 'drivetrain', values: ['4WD'], label: '4WD' },
   ];
 
   const STOP = new Set(('a an the and or with w for sale cars car vehicles vehicle show me find i want looking that has have having ' +
     'in near around under over below above less more than between to from of on by any some please only miles mi price priced ' +
-    'interior exterior color colored seats seat').split(' '));
+    'interior exterior color colored seats seat ' +
+    // Question and filler words, so "what's the best ev near me" doesn't leave "what's best" as a text match.
+    'what whats what\'s which where who is are there theres there\'s can could would should do does get give gimme list need ' +
+    'looking look searching search buy buying shop shopping best top good nice great decent solid my us we you your one ones ' +
+    'available listings listing options option something kind type sort like ideas idea recommend recommendations ' +
+    'right now today currently also just maybe preferably ideally around about').split(' '));
 
   const money = (raw, k) => {
     let v = parseFloat(String(raw).replace(/[$,]/g, ''));
@@ -87,6 +102,7 @@
       if (m.model === '2') ['polestar 2', 'polestar'].forEach((a) => aliases.add(a));
       if (m.model === '1500') { aliases.delete('1500'); aliases.add('ram 1500'); aliases.add('ram'); }
       if (m.make === 'Tesla') aliases.add(name.replace('model ', 'model'));
+      for (const [re, nicks] of MODEL_NICKNAMES) if (re.test(m.model)) nicks.forEach((a) => aliases.add(a));
       return { key: m.make ? `${m.make} ${m.model}` : m.model, make: m.make, trims: (m.trims || []).map((t) => t[0]), aliases: [...aliases].filter((a) => a.length > 1) };
     });
     // Live makes first so their spelling wins, then the demo's, then the built-in list.
@@ -173,6 +189,25 @@
     }
     if ((m = take(/\b(?:over|above|more than|at least|>)\s*\$?([\d,.]+)\s*(k|grand|thousand)?\b/))) {
       f.priceMin = money(m[1], m[2]);
+      understood.push(`over $${f.priceMin.toLocaleString('en-US')}`);
+    }
+    // Other ways people say a budget. A number only counts as money with a $ or a k/grand, so
+    // "2020 or newer" and "for 2022" stay years.
+    const amt = '(?:\\$\\s*([\\d,.]+)\\s*(k|grand|thousand)?|([\\d,.]+)\\s*(k|grand|thousand))';
+    const amount = (m, i) => money(m[i] || m[i + 2], m[i + 1] || m[i + 3]);
+    if (f.priceMax == null && f.priceMin == null && (m = take(new RegExp(`\\b(?:around|about|roughly|near|close to|~)\\s*${amt}`)))) {
+      const v = amount(m, 1);
+      f.priceMin = Math.round(v * 0.85 / 500) * 500;
+      f.priceMax = Math.round(v * 1.15 / 500) * 500;
+      understood.push(`$${f.priceMin.toLocaleString('en-US')}–$${f.priceMax.toLocaleString('en-US')}`);
+    }
+    if (f.priceMax == null && ((m = take(new RegExp(`${amt}\\s*(?:or less|or under|or cheaper|and under|and below|max(?:imum)?|tops|budget|or below)\\b`)))
+      || (m = take(new RegExp(`\\b(?:budget(?: of| is)?|for|at|spend(?:ing)?|max(?:imum)?(?: of)?)\\s*${amt}`))))) {
+      f.priceMax = amount(m, 1);
+      understood.push(`under $${f.priceMax.toLocaleString('en-US')}`);
+    }
+    if (f.priceMin == null && (m = take(new RegExp(`${amt}\\s*(?:or more|and up|and above|plus|\\+)`)))) {
+      f.priceMin = amount(m, 1);
       understood.push(`over $${f.priceMin.toLocaleString('en-US')}`);
     }
 
@@ -299,8 +334,10 @@
       // "luxury bmw", "family suv": the specific word already said it.
       const named = c.key === 'make' ? (f.make || f.model) : f[c.key];
       if (named && named.length) continue;
+      const before = understood.length;
       for (const v of c.values) add(c.key, v, null);
-      understood.splice(understood.length - c.values.length, c.values.length, c.label);
+      if (c.body && !(f.body && f.body.length)) for (const v of c.body) add('body', v, null);
+      understood.splice(before, understood.length - before, c.label);
     }
 
     if ((m = take(/\b(cheap|cheapest|affordable|inexpensive)\b/))) { f.sort = 'price-asc'; understood.push('cheapest first'); }

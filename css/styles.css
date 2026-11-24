@@ -1175,3 +1175,7 @@ section.cat { scroll-margin-top: 108px; }
   .header-inner { gap: 6px; padding: 10px 10px; }
   .main-nav a { padding: 6px 4px; font-size: .78rem; }
 }
+
+/* Ask anything: how Gridline read the question, above the result count. */
+.ask-note { display: flex; gap: 6px; align-items: baseline; margin: 0 0 6px; font-size: .9rem; color: var(--text); }
+.ask-note span { color: var(--accent); }
